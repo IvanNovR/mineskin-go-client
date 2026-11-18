@@ -17,11 +17,11 @@ func exampleServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v2/queue":
-			fmt.Fprint(w, `{"success":true,"job":{"id":"job1","status":"waiting"}}`)
+			_, _ = fmt.Fprint(w, `{"success":true,"job":{"id":"job1","status":"waiting"}}`)
 		case "/v2/queue/job1":
-			fmt.Fprintf(w, `{"success":true,"job":{"id":"job1","status":"completed","result":%q}}`, exampleSkinID)
+			_, _ = fmt.Fprintf(w, `{"success":true,"job":{"id":"job1","status":"completed","result":%q}}`, exampleSkinID)
 		case "/v2/generate", "/v2/skins/" + exampleSkinID:
-			fmt.Fprintf(w, `{"success":true,"skin":{"uuid":%q,"name":"Steve"}}`, exampleSkinID)
+			_, _ = fmt.Fprintf(w, `{"success":true,"skin":{"uuid":%q,"name":"Steve"}}`, exampleSkinID)
 		default:
 			http.NotFound(w, r)
 		}

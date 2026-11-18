@@ -2,6 +2,7 @@ package mineskin
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -57,7 +58,7 @@ func parseMultipart(t *testing.T, b *requestBody) []multipartPart {
 	var parts []multipartPart
 	for {
 		p, err := mr.NextPart()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			return parts
 		}
 		if err != nil {

@@ -107,7 +107,7 @@ func TestWaitForJobRejectsInvalidInputWithoutRequest(t *testing.T) {
 		"empty id": {context.Background(), Job{}},
 		"dot":      {context.Background(), Job{ID: "."}},
 		"dot dot":  {context.Background(), Job{ID: ".."}},
-		"nil ctx":  {nil, Job{ID: "j1"}}, //nolint:staticcheck // nil ctx is the case under test
+		"nil ctx":  {nil, Job{ID: "j1"}},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

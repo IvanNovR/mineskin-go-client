@@ -21,7 +21,7 @@ func writeJSON(status int, body string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
+		_, _ = w.Write([]byte(body)) //nolint:gosec // G705: test server writes fixed JSON fixtures
 	}
 }
 

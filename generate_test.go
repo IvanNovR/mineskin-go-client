@@ -192,7 +192,7 @@ func TestGenerateHonoursTimeout(t *testing.T) {
 		t.Fatal("error = nil, want timeout")
 	}
 	var netErr interface{ Timeout() bool }
-	if !errors.Is(err, context.DeadlineExceeded) && !(errors.As(err, &netErr) && netErr.Timeout()) {
+	if !errors.Is(err, context.DeadlineExceeded) && (!errors.As(err, &netErr) || !netErr.Timeout()) {
 		t.Errorf("error = %v, want deadline exceeded or net timeout", err)
 	}
 	if time.Since(start) > 5*time.Second {

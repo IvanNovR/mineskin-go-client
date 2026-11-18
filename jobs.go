@@ -8,7 +8,12 @@ import (
 	"time"
 )
 
-const fieldJobs = "jobs"
+const (
+	fieldJobs = "jobs"
+
+	defaultJobFailedCode    = "job_failed"
+	defaultJobFailedMessage = "Job failed"
+)
 
 // JobStatus is the state of a queued generation job.
 type JobStatus string
@@ -189,4 +194,29 @@ func validateJobID(id string) error {
 		return newInvalidInputError("job id is empty or a dot segment")
 	}
 	return nil
+}
+
+// JobSkin returns the skin of a job. A failed job gives a *JobFailedError
+// without a request, even if the response embeds a skin. An embedded skin is
+// returned without a request; otherwise the skin named by the job result is
+// fetched with GetSkin and its errors are returned unchanged. A job without a
+// result gives ErrJobNotCompleted, and a nil response gives ErrInvalidInput.
+func (c *Client) JobSkin(ctx context.Context, r *JobResponse) (*SkinInfo, error) {
+	if r == nil {
+		return nil, newInvalidInputError("job response is nil")
+	}
+	if r.Job.Status == JobStatusFailed {
+		return nil, newJobFailedError(r)
+	}
+	if r.Skin != nil {
+		return r.Skin, nil
+	}
+	if r.Job.Result == (UUID{}) {
+		return nil, ErrJobNotCompleted
+	}
+	resp, err := c.GetSkin(ctx, r.Job.Result.String())
+	if err != nil {
+		return nil, err
+	}
+	return &resp.Skin, nil
 }

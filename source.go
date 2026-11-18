@@ -18,7 +18,26 @@ const (
 	uploadFileName    = "skin.png"
 	uploadContentType = "image/png"
 	jsonContentType   = "application/json"
+
+	// maxUploadBytes is the largest upload the client accepts (1 MiB).
+	maxUploadBytes = 1 << 20
 )
+
+// newUploadTooLargeError is the error for an upload over maxUploadBytes.
+func newUploadTooLargeError() error {
+	return newInvalidInputError("skin upload exceeds the 1 MiB limit")
+}
+
+// readUpload reads r up to maxUploadBytes. It reads at most one byte more, so
+// an endless stream is never buffered. It returns false when r holds more than
+// maxUploadBytes.
+func readUpload(r io.Reader) (data []byte, withinLimit bool, err error) {
+	data, err = io.ReadAll(io.LimitReader(r, maxUploadBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	return data, len(data) <= maxUploadBytes, nil
+}
 
 // Source is where a skin is generated from. Create one with FromURL, FromUser,
 // FromReader, FromFile or FromImage. The interface is sealed.
@@ -111,16 +130,21 @@ type readerSource struct{ r io.Reader }
 
 // FromReader uploads the PNG data read from r. The reader is read once and
 // never closed by the client, so a FromReader Source is used up after one send
-// (retrying or reusing it sends no data). The data is buffered in memory.
+// (retrying or reusing it sends no data). The data is buffered in memory and
+// limited to 1 MiB; more gives ErrInvalidInput and no request is sent. At most
+// 1 MiB plus one byte is read from r.
 func FromReader(r io.Reader) Source { return readerSource{r: r} }
 
 func (s readerSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
 	if s.r == nil {
 		return nil, newInvalidInputError("reader source is nil")
 	}
-	data, err := io.ReadAll(s.r)
+	data, ok, err := readUpload(s.r)
 	if err != nil {
 		return nil, wrapClientError("read skin upload", err)
+	}
+	if !ok {
+		return nil, newUploadTooLargeError()
 	}
 	return newMultipartBody(data, opts)
 }
@@ -128,37 +152,42 @@ func (s readerSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
 type fileSource struct{ path string }
 
 // FromFile uploads the file at path. The file is opened, read and closed on
-// every send, so the Source can be reused.
+// every send, so the Source can be reused. A file larger than 1 MiB gives
+// ErrInvalidInput and no request is sent.
 func FromFile(path string) Source { return fileSource{path: path} }
 
 func (s fileSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
 	if s.path == "" {
 		return nil, newInvalidInputError("file path is empty")
 	}
-	data, err := readFile(s.path)
+	data, ok, err := readFile(s.path)
 	if err != nil {
 		return nil, wrapClientError("read skin file", err)
+	}
+	if !ok {
+		return nil, newUploadTooLargeError()
 	}
 	return newMultipartBody(data, opts)
 }
 
-// readFile opens, reads and closes the file at path.
-func readFile(path string) ([]byte, error) {
+// readFile opens, reads (up to maxUploadBytes) and closes the file at path.
+func readFile(path string) ([]byte, bool, error) {
 	f, err := os.Open(path) //nolint:gosec // G304: path supplied by the caller by design
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	data, readErr := io.ReadAll(f)
+	data, ok, readErr := readUpload(f)
 	closeErr := f.Close()
 	if readErr != nil {
-		return nil, readErr
+		return nil, false, readErr
 	}
-	return data, closeErr
+	return data, ok, closeErr
 }
 
 type imageSource struct{ img image.Image }
 
-// FromImage uploads img, PNG-encoded in memory.
+// FromImage uploads img, PNG-encoded in memory. An encoded image larger than
+// 1 MiB gives ErrInvalidInput and no request is sent.
 func FromImage(img image.Image) Source { return imageSource{img: img} }
 
 func (s imageSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
@@ -168,6 +197,9 @@ func (s imageSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, s.img); err != nil {
 		return nil, wrapClientError("encode skin image", err)
+	}
+	if buf.Len() > maxUploadBytes {
+		return nil, newUploadTooLargeError()
 	}
 	return newMultipartBody(buf.Bytes(), opts)
 }

@@ -85,10 +85,21 @@ func (p *jobPoller) attemptOf(pj *pendingJob) int {
 	return pj.attempts
 }
 
+// isPending reports whether pj is still the pending entry for its id.
+func (p *jobPoller) isPending(pj *pendingJob) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pending[pj.id] == pj
+}
+
 // fetchJob sends GET /v2/queue/{id} for pj and finishes it on error or when
 // the response is done (or force is set). Otherwise it records the latest job
-// state.
+// state. A job that is no longer pending (all waiters left or it finished) is
+// skipped without a request.
 func (p *jobPoller) fetchJob(ctx context.Context, pj *pendingJob, force bool) {
+	if !p.isPending(pj) {
+		return
+	}
 	p.logger.Debug("polling job", "job", pj.id, "attempt", p.attemptOf(pj), "path", queuePath+"/{id}")
 	resp, err := p.fetch.GetJob(ctx, pj.id)
 	if err != nil {

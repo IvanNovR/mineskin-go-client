@@ -103,3 +103,25 @@ func TestPollerIntervalCancelledJobIsNotRescheduled(t *testing.T) {
 		t.Errorf("GetJob calls = %v, want none for a job that left", gets)
 	}
 }
+
+func TestPollerSkipsJobsThatLeftDuringTick(t *testing.T) {
+	var p *jobPoller
+	var pjs []*pendingJob
+	f := &fakeFetcher{}
+	f.getFn = func(id string) (*JobResponse, error) {
+		for _, pj := range pjs {
+			if pj.id != id {
+				p.leave(pj) // the only waiter of the other due job cancels
+			}
+		}
+		return jobResp(id, JobStatusWaiting, UUID{}), nil
+	}
+	p = newTestPoller(t, f, PollOptions{})
+	pjs = addJobs(p, 2)
+
+	p.tick(pollerT0.Add(time.Second))
+
+	if gets, _ := f.counts(); len(gets) != 1 {
+		t.Errorf("GetJob calls = %v, want exactly 1 (job that left must be skipped)", gets)
+	}
+}

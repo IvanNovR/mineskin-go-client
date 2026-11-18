@@ -27,6 +27,10 @@ const (
 // Client is a MineSkin API client. It is immutable after NewClient returns and
 // safe for concurrent use by multiple goroutines.
 //
+// The only background goroutine is the job poller used by WaitForJob. It is
+// started lazily by the first wait and exits by itself once no wait is
+// pending; a later wait starts it again. There is no Close method.
+//
 // Go's HTTP client already strips the Authorization header when a redirect
 // leads to a different host, and this client refuses redirects from https to
 // http and stops after 10 redirects.
@@ -37,6 +41,7 @@ type Client struct {
 	httpClient *http.Client
 	logger     *slog.Logger
 	polling    PollOptions
+	poller     *jobPoller
 }
 
 // NewClient creates a Client from the given options. Invalid configuration
@@ -82,7 +87,7 @@ func NewClient(opts ...Option) (*Client, error) {
 
 	logConfig(cfg.logger, baseURL, userAgent, apiKey)
 
-	return &Client{
+	c := &Client{
 		baseURL:   baseURL,
 		userAgent: userAgent,
 		apiKey:    apiKey,
@@ -93,7 +98,9 @@ func NewClient(opts ...Option) (*Client, error) {
 		},
 		logger:  cfg.logger,
 		polling: polling,
-	}, nil
+	}
+	c.poller = newJobPoller(c, polling, cfg.logger)
+	return c, nil
 }
 
 // normalizeBaseURL validates raw and returns it without trailing slashes.

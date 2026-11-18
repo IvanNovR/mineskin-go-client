@@ -45,8 +45,12 @@ type jobPoller struct {
 	logger *slog.Logger
 	now    func() time.Time
 
+	// wakeCh has capacity 1; a send means "recompute the schedule".
+	wakeCh chan struct{}
+
 	mu      sync.Mutex
 	pending map[string]*pendingJob
+	running bool // whether the run goroutine is alive; guarded by mu
 }
 
 // newJobPoller returns a poller using f and opts, which must already have
@@ -61,6 +65,7 @@ func newJobPoller(f jobFetcher, opts PollOptions, logger *slog.Logger) *jobPolle
 		logger:  logger,
 		now:     time.Now,
 		pending: make(map[string]*pendingJob),
+		wakeCh:  make(chan struct{}, 1),
 	}
 }
 
@@ -94,6 +99,7 @@ func (p *jobPoller) leave(pj *pendingJob) {
 	pj.waiters--
 	if pj.waiters <= 0 && p.pending[pj.id] == pj {
 		delete(p.pending, pj.id)
+		p.wake() // let an idle run loop notice and exit
 	}
 }
 

@@ -7,7 +7,9 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
+	"time"
 )
 
 // roundTripFunc adapts a function to http.RoundTripper.
@@ -69,5 +71,27 @@ func parseMultipart(t *testing.T, b *requestBody) []multipartPart {
 			name: p.FormName(), filename: p.FileName(),
 			contentType: p.Header.Get("Content-Type"), data: data,
 		})
+	}
+}
+
+// fastPolling makes jobs poll every millisecond with a 1 ms first delay.
+func fastPolling() Option {
+	return WithJobPolling(PollOptions{
+		InitialDelay: time.Millisecond,
+		Interval:     func(int) time.Duration { return time.Millisecond },
+		MaxAttempts:  1000,
+	})
+}
+
+// waitGoroutinesSettle waits up to 2 s for the goroutine count to fall back to
+// before or lower. Close servers and idle connections first.
+func waitGoroutinesSettle(t *testing.T, before int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for runtime.NumGoroutine() > before {
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutines = %d, want <= %d (leak)", runtime.NumGoroutine(), before)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

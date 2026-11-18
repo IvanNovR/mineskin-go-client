@@ -34,7 +34,7 @@ func WithUserAgent(userAgent string) Option {
 }
 
 // WithBaseURL sets the API base URL. It must be an absolute http or https URL
-// with a host and without query or fragment; trailing slashes are trimmed.
+// with a host and without credentials, query or fragment; trailing slashes are trimmed.
 // A path prefix such as "http://localhost:8080/prefix" is allowed.
 func WithBaseURL(baseURL string) Option {
 	return func(c *config) { c.baseURL = baseURL }

@@ -9,6 +9,7 @@ linters:
     - noctx
     - misspell
     - revive
+    - nolintlint
   settings:
     revive:
       rules:

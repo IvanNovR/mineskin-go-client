@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // ResponseSource identifies what generated a non-JSON error response.
@@ -26,8 +27,11 @@ const (
 )
 
 const (
-	snippetMaxRunes = 200
-	snippetEllipsis = "..."
+	// snippetInputMaxBytes caps the body prefix examined for the snippet and
+	// source detection, bounding regex work on huge bodies.
+	snippetInputMaxBytes = 64 << 10
+	snippetMaxRunes      = 200
+	snippetEllipsis      = "..."
 
 	statusCloudflareOriginMin  = 520 // 520-527: the status is the Cloudflare error code
 	statusCloudflareOriginMax  = 527
@@ -98,9 +102,12 @@ type origin struct {
 // newUnexpectedResponseError builds the error from the response status,
 // headers and body. cause may be nil.
 func newUnexpectedResponseError(status int, h http.Header, body []byte, cause error) *UnexpectedResponseError {
+	if len(body) > snippetInputMaxBytes {
+		body = body[:snippetInputMaxBytes]
+	}
 	text := string(body)
-	server := h.Get(headerServer)
-	cfRay := h.Get(headerCFRay)
+	server := stripControl(h.Get(headerServer))
+	cfRay := stripControl(h.Get(headerCFRay))
 	// Behind Cloudflare every response has these headers, so they only say the
 	// response passed through Cloudflare, not that Cloudflare generated it.
 	viaCloudflare := cfRay != "" || strings.EqualFold(server, serverCloudflare)
@@ -161,11 +168,22 @@ func summarize(body string) string {
 	if m := htmlTitlePattern.FindStringSubmatch(body); m != nil {
 		text = m[1]
 	}
-	text = strings.TrimSpace(whitespaceRun.ReplaceAllString(text, " "))
+	text = strings.TrimSpace(stripControl(whitespaceRun.ReplaceAllString(text, " ")))
 	if runes := []rune(text); len(runes) > snippetMaxRunes {
 		return string(runes[:snippetMaxRunes]) + snippetEllipsis
 	}
 	return text
+}
+
+// stripControl removes control characters, such as ANSI escape sequences, so
+// that attacker-controlled response text cannot manipulate a terminal or log.
+func stripControl(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
 }
 
 // parseRetryAfter parses the delta-seconds form of Retry-After. The HTTP-date

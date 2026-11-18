@@ -3,10 +3,12 @@ package mineskin
 import (
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -69,8 +71,11 @@ func NewClient(opts ...Option) (*Client, error) {
 		userAgent = DefaultUserAgent
 	}
 	apiKey := strings.TrimSpace(cfg.apiKey)
+	if err := validateHeaderValues(userAgent, apiKey); err != nil {
+		return nil, err
+	}
 
-	logConfig(cfg.logger, userAgent, apiKey)
+	logConfig(cfg.logger, baseURL, userAgent, apiKey)
 
 	return &Client{
 		baseURL:   baseURL,
@@ -94,6 +99,9 @@ func normalizeBaseURL(raw string) (string, error) {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return "", newInvalidInputError("base URL scheme must be http or https")
 	}
+	if u.User != nil {
+		return "", newInvalidInputError("base URL must not contain credentials")
+	}
 	if u.Host == "" {
 		return "", newInvalidInputError("base URL must include a host")
 	}
@@ -105,7 +113,7 @@ func normalizeBaseURL(raw string) (string, error) {
 
 // logConfig emits the construction warnings and the debug key id. It never
 // logs the key or its secret part.
-func logConfig(l *slog.Logger, userAgent, apiKey string) {
+func logConfig(l *slog.Logger, baseURL, userAgent, apiKey string) {
 	if userAgent == DefaultUserAgent {
 		l.Warn("Using the default User-Agent, please set a custom one (e.g. AppName/Version)")
 	}
@@ -113,11 +121,46 @@ func logConfig(l *slog.Logger, userAgent, apiKey string) {
 		l.Warn("Creating MineSkin client without API key, get one at https://account.mineskin.org/keys")
 		return
 	}
+	if sendsKeyOverPlainHTTP(baseURL) {
+		l.Warn("Sending the API key over plain HTTP to a non-loopback host; use https")
+	}
 	if strings.HasPrefix(apiKey, apiKeyPrefix) {
 		if parts := strings.SplitN(apiKey, "_", 3); len(parts) == 3 {
 			l.Debug("Using MineSkin API key", "key_id", parts[1])
 		}
 	}
+}
+
+// validateHeaderValues rejects a User-Agent or API key with control
+// characters, which could inject headers. The messages never echo the values.
+func validateHeaderValues(userAgent, apiKey string) error {
+	if hasControlChar(userAgent) {
+		return newInvalidInputError("User-Agent must not contain control characters")
+	}
+	if hasControlChar(apiKey) {
+		return newInvalidInputError("API key must not contain control characters")
+	}
+	return nil
+}
+
+// hasControlChar reports whether s contains a control character.
+func hasControlChar(s string) bool {
+	return strings.IndexFunc(s, unicode.IsControl) >= 0
+}
+
+// sendsKeyOverPlainHTTP reports whether baseURL uses http with a host that is
+// neither "localhost" nor a loopback IP address.
+func sendsKeyOverPlainHTTP(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Scheme != "http" {
+		return false
+	}
+	host := u.Hostname()
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback()
 }
 
 // checkRedirect refuses redirects from https to http and stops after

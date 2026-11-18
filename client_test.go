@@ -264,3 +264,74 @@ func hops(n int) []string {
 	}
 	return out
 }
+
+func TestNewClientRejectsUserinfoInBaseURL(t *testing.T) {
+	for _, raw := range []string{"https://user:hunter2@example.com", "https://user@example.com", "https://:pw@example.com"} {
+		_, err := NewClient(WithBaseURL(raw))
+		if !errors.Is(err, ErrInvalidInput) {
+			t.Fatalf("%q: err = %v, want ErrInvalidInput", raw, err)
+		}
+		for _, leak := range []string{"hunter2", "user", "pw@"} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("error echoes userinfo %q: %v", leak, err)
+			}
+		}
+	}
+}
+
+func TestNewClientWarnsOnPlainHTTPWithKey(t *testing.T) {
+	const key = "msk_abc_secretpart"
+	tests := []struct {
+		name, url, key string
+		wantWarn       bool
+	}{
+		{"remote http with key", "http://api.example.com", key, true},
+		{"remote http no key", "http://api.example.com", "", false},
+		{"https with key", "https://api.example.com", key, false},
+		{"localhost", "http://localhost:8080", key, false},
+		{"ipv4 loopback", "http://127.0.0.1:8080", key, false},
+		{"ipv4 loopback range", "http://127.5.5.5", key, false},
+		{"ipv6 loopback", "http://[::1]:8080", key, false},
+		{"remote ip", "http://10.0.0.1", key, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if _, err := NewClient(WithBaseURL(tt.url), WithAPIKey(tt.key), WithUserAgent("A/1"), WithLogger(captureLogger(&buf))); err != nil {
+				t.Fatal(err)
+			}
+			out := buf.String()
+			if got := strings.Contains(out, "plain HTTP"); got != tt.wantWarn {
+				t.Errorf("warn = %v, want %v; log: %s", got, tt.wantWarn, out)
+			}
+			if strings.Contains(out, "secretpart") || strings.Contains(out, key) {
+				t.Errorf("log leaks key: %s", out)
+			}
+		})
+	}
+}
+
+func TestNewClientRejectsControlCharacters(t *testing.T) {
+	const key = "msk_abc_secretpart"
+	tests := map[string][]Option{
+		"key CR":       {WithAPIKey(key + "\rX-Evil: 1")},
+		"key LF":       {WithAPIKey("a\nb" + key)},
+		"key NUL":      {WithAPIKey(key + "\x00x")},
+		"key DEL":      {WithAPIKey(key + "\x7fx")},
+		"UA CR":        {WithUserAgent("App/1\r\nX-Evil: 1")},
+		"UA ESC":       {WithUserAgent("App/\x1b[0m")},
+		"UA and key":   {WithUserAgent("A\n"), WithAPIKey(key + "\n" + key)},
+		"UA tab inner": {WithUserAgent("App\t1")},
+	}
+	for name, opts := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := NewClient(opts...)
+			if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
+				t.Fatalf("err = %v, want ErrInvalidInput", err)
+			}
+			if strings.Contains(err.Error(), "secretpart") {
+				t.Errorf("error contains key: %v", err)
+			}
+		})
+	}
+}

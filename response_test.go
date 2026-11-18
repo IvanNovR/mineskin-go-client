@@ -308,3 +308,17 @@ func TestHandleResponseUnexpectedIsClientError(t *testing.T) {
 		t.Errorf("must match ErrClient: %v", err)
 	}
 }
+
+func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
+	body := append([]byte("\xef\xbb\xbf"), `{"success":true,"user":"x"}`...)
+	meta, err := handleResponse(rawResponse{Status: 200, Body: body}, userDecoder)
+	if err != nil || !meta.Success {
+		t.Fatalf("meta = %+v err = %v", meta, err)
+	}
+	body = append([]byte("\xef\xbb\xbf"), `{"success":false,"errors":[{"code":"c","message":"m"}]}`...)
+	_, err = handleResponse(rawResponse{Status: 400, Body: body}, nil)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Errorf("err = %v, want *APIError", err)
+	}
+}

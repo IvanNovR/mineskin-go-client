@@ -3,6 +3,8 @@ package mineskin
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -247,6 +249,31 @@ func TestGetSkinWrongTypedPayloadOnErrorResponseIsAPIError(t *testing.T) {
 			}
 			if tc.is != nil && !errors.Is(err, tc.is) {
 				t.Errorf("err = %v, want %v", err, tc.is)
+			}
+		})
+	}
+}
+
+func TestGeneratorInfoDurationBounds(t *testing.T) {
+	maxMillis := int64(math.MaxInt64 / int64(time.Millisecond))
+	tests := map[string]struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		"max ok":       {in: fmt.Sprintf(`{"duration":%d}`, maxMillis), want: time.Duration(maxMillis) * time.Millisecond},
+		"overflow":     {in: fmt.Sprintf(`{"duration":%d}`, maxMillis+1), wantErr: true},
+		"int64 max":    {in: fmt.Sprintf(`{"duration":%d}`, int64(math.MaxInt64)), wantErr: true},
+		"negative":     {in: `{"duration":-1}`, wantErr: true},
+		"zero":         {in: `{"duration":0}`},
+		"min negative": {in: fmt.Sprintf(`{"duration":%d}`, int64(math.MinInt64)), wantErr: true},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			var g GeneratorInfo
+			err := g.UnmarshalJSON([]byte(tc.in))
+			if (err != nil) != tc.wantErr || (!tc.wantErr && g.Duration != tc.want) {
+				t.Errorf("Duration = %v, err = %v", g.Duration, err)
 			}
 		})
 	}

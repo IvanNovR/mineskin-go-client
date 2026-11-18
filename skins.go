@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"time"
@@ -13,6 +14,9 @@ import (
 const (
 	skinsPathPrefix = "/v2/skins/"
 	fieldSkin       = "skin"
+
+	// maxDurationMillis is the largest millisecond count a time.Duration holds.
+	maxDurationMillis = int64(math.MaxInt64 / int64(time.Millisecond))
 )
 
 // Variant is the model of a skin: classic (wide arms) or slim.
@@ -79,7 +83,8 @@ type GeneratorInfo struct {
 
 // UnmarshalJSON decodes the generator object, interpreting integers as
 // milliseconds. A null value leaves g unchanged; a non-integer timestamp or
-// duration is an error.
+// duration is an error, as is a negative duration or one too large for a
+// time.Duration.
 func (g *GeneratorInfo) UnmarshalJSON(b []byte) error {
 	if bytes.Equal(bytes.TrimSpace(b), []byte("null")) {
 		return nil
@@ -104,6 +109,9 @@ func (g *GeneratorInfo) UnmarshalJSON(b []byte) error {
 		out.Timestamp = time.UnixMilli(ts)
 	}
 	if durOK {
+		if dur < 0 || dur > maxDurationMillis {
+			return fmt.Errorf("duration %d ms is out of range", dur)
+		}
 		out.Duration = time.Duration(dur) * time.Millisecond
 	}
 	*g = out

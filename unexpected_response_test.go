@@ -308,3 +308,56 @@ func TestUnexpectedResponseErrorUnwrapAndAs(t *testing.T) {
 		t.Error("Unwrap without cause must be nil")
 	}
 }
+
+func TestUnexpectedResponseErrorLargeBodyIsCapped(t *testing.T) {
+	tests := map[string]struct {
+		body       string
+		wantSnip   string
+		wantSource ResponseSource
+	}{
+		"title near start": {
+			body:       "<html><head><title>502 Bad Gateway</title></head>" + strings.Repeat("x", 10<<20),
+			wantSnip:   "502 Bad Gateway",
+			wantSource: SourceUnknown,
+		},
+		"nginx footer near start": {
+			body:       "<html><center>nginx/1.28.0</center>" + strings.Repeat("y", 10<<20),
+			wantSnip:   "<html><center>nginx/1.28.0</center>" + strings.Repeat("y", snippetMaxRunes-len("<html><center>nginx/1.28.0</center>")) + snippetEllipsis,
+			wantSource: SourceNginx,
+		},
+		"plain": {
+			body:       strings.Repeat("a", 10<<20),
+			wantSnip:   strings.Repeat("a", snippetMaxRunes) + snippetEllipsis,
+			wantSource: SourceUnknown,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			e := newUnexpectedResponseError(502, nil, []byte(tc.body), nil)
+			if e.BodySnippet != tc.wantSnip || e.Source != tc.wantSource {
+				t.Errorf("snippet = %.60q source = %q", e.BodySnippet, e.Source)
+			}
+		})
+	}
+	if snippetInputMaxBytes != 64<<10 {
+		t.Errorf("snippetInputMaxBytes = %d", snippetInputMaxBytes)
+	}
+}
+
+func TestUnexpectedResponseErrorStripsControlCharacters(t *testing.T) {
+	h := hdr("server", "nginx/1.\x1b[31m28\x07", "cf-ray", "abc\x1b[0m-FRA")
+	e := newUnexpectedResponseError(502, h, []byte("<title>a\x1b[31mred\x00\x7f</title>\r\nx"), nil)
+	if e.BodySnippet != "a[31mred" {
+		t.Errorf("BodySnippet = %q", e.BodySnippet)
+	}
+	if e.ServerSoftware != "nginx/1.[31m28" {
+		t.Errorf("ServerSoftware = %q", e.ServerSoftware)
+	}
+	if e.CFRay != "abc[0m-FRA" {
+		t.Errorf("CFRay = %q", e.CFRay)
+	}
+	body := newUnexpectedResponseError(502, nil, []byte("a\tb\r\nc\x1bd"), nil)
+	if body.BodySnippet != "a b cd" {
+		t.Errorf("whitespace must collapse before stripping: %q", body.BodySnippet)
+	}
+}

@@ -19,5 +19,7 @@ cover:
 lint:
 	@golangci-lint run ./...
 
+# test-live sources .env as shell code (. ./.env): only use a trusted file and
+# quote values that contain spaces.
 test-live:
 	@test -f .env || { echo ".env missing (copy .env.example)"; exit 1; }; set -a; . ./.env; set +a; go test -tags live -race -count=1 -run '^TestLive' ./...

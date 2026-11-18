@@ -27,6 +27,9 @@ const (
 	parseFailureMessage = "failed to parse response"
 )
 
+// utf8BOM is the byte order mark some proxies prepend to JSON bodies.
+var utf8BOM = []byte("\xef\xbb\xbf")
+
 // ResponseMeta describes the envelope of a MineSkin API response.
 type ResponseMeta struct {
 	// Status is the HTTP status code.
@@ -60,7 +63,7 @@ type rawResponse struct {
 
 // handleResponse turns a raw response into its metadata or an error. It
 // mirrors the Java client: the HTTP status is only used when the body has no
-// success field. decodeBody decodes the endpoint specific fields; it receives
+// success field. A leading UTF-8 byte order mark is ignored. decodeBody decodes the endpoint specific fields; it receives
 // the top-level JSON fields and the complete body.
 //
 // The steps are, in order: a body that is not a JSON object gives an
@@ -69,11 +72,12 @@ type rawResponse struct {
 // gives an *APIError without decoding the payload; a failing decodeBody on a
 // successful response gives a parse error; otherwise the metadata is returned.
 func handleResponse(raw rawResponse, decodeBody func(obj map[string]json.RawMessage, body []byte) error) (ResponseMeta, error) {
-	if !looksLikeJSONObject(raw.Body) {
+	body := bytes.TrimPrefix(raw.Body, utf8BOM)
+	if !looksLikeJSONObject(body) {
 		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, nil)
 	}
 	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw.Body, &obj); err != nil {
+	if err := json.Unmarshal(body, &obj); err != nil {
 		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, err)
 	}
 	meta, err := decodeEnvelope(raw, obj)
@@ -84,7 +88,7 @@ func handleResponse(raw rawResponse, decodeBody func(obj map[string]json.RawMess
 		return ResponseMeta{}, newAPIError(meta)
 	}
 	if decodeBody != nil {
-		if err := decodeBody(obj, raw.Body); err != nil {
+		if err := decodeBody(obj, body); err != nil {
 			return ResponseMeta{}, wrapClientError(parseFailureMessage, err)
 		}
 	}

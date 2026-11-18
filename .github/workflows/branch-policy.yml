@@ -1,0 +1,39 @@
+# Branch policy: pull requests into main may only come from `dev` (releases)
+# or `hotfix/*` (urgent fixes) in this repository. Feature work targets `dev`.
+# The `branch-policy` job is a required status check in the "Protect main"
+# ruleset. No checkout and no third-party actions; PR fields reach the script
+# only through env:, never through ${{ }} inside run:.
+name: Branch policy
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+jobs:
+  branch-policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Check source branch
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [ "$HEAD_REPO" != "$BASE_REPO" ]; then
+            echo "::error::Pull requests into main must come from this repository, not from a fork."
+            exit 1
+          fi
+          case "$HEAD_REF" in
+            dev|hotfix/*)
+              echo "Source branch is allowed to target main."
+              ;;
+            *)
+              echo "::error::Pull requests into main must come from 'dev' or 'hotfix/*'. Target 'dev' instead."
+              exit 1
+              ;;
+          esac

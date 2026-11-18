@@ -20,7 +20,9 @@ var (
 	ErrNotFound = errors.New("mineskin: not found")
 )
 
-// ErrMaxAttempts and ErrJobNotCompleted are sentinels that also match ErrClient.
+// ErrMaxAttempts and ErrJobNotCompleted match ErrClient directly, unlike the
+// classification sentinels ErrNotFound and ErrInvalidInput, which are matched
+// only by the errors that carry that classification (wrapped errors).
 var (
 	// ErrMaxAttempts matches the error returned when job polling gave up after
 	// the maximum number of attempts.

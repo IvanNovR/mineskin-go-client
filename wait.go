@@ -14,6 +14,15 @@ import "context"
 // ErrMaxAttempts. When ctx ends, the error matches both ctx.Err() and
 // ErrClient; the job stops being polled unless another waiter still needs it.
 // Errors of the status requests are returned as they are.
+//
+// Waiters on the same job share pointers inside the returned response (for
+// example Skin and the ResponseMeta lists): the copy is shallow, so treat the
+// result as read-only.
+//
+// When more than a few jobs are pending, the poller checks them with one list
+// request. A job reported done by the list is completed with whatever the
+// follow-up GET returns, so a completed job may carry no result yet and
+// JobSkin on it may return ErrJobNotCompleted.
 func (c *Client) WaitForJob(ctx context.Context, job Job) (*JobResponse, error) {
 	if ctx == nil {
 		return nil, newInvalidInputError("context is nil")

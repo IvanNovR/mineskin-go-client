@@ -48,10 +48,16 @@ type Source interface {
 // GenerateOptions are the optional settings of a generate request. Zero values
 // (including VariantAuto) are not sent. A nil *GenerateOptions is valid.
 type GenerateOptions struct {
-	Name       string
-	Variant    Variant
+	// Name is the name of the skin; empty is not sent.
+	Name string
+	// Variant is the skin model. VariantAuto (the zero value) is not sent. Other
+	// values are sent as they are and not validated client-side.
+	Variant Variant
+	// Visibility is who can see the skin. Empty is not sent. Values are sent as
+	// they are and not validated client-side.
 	Visibility Visibility
-	Cape       UUID
+	// Cape is the UUID of a cape to apply; the zero UUID is not sent.
+	Cape UUID
 }
 
 // formFields returns the set options as ordered name/value pairs: name,
@@ -131,7 +137,8 @@ type readerSource struct{ r io.Reader }
 // FromReader uploads the PNG data read from r. The reader is read once and
 // never closed by the client, so a FromReader Source is used up after one send
 // (retrying or reusing it sends no data). The data is buffered in memory and
-// limited to 1 MiB; more gives ErrInvalidInput and no request is sent. At most
+// limited to 1 MiB (a nil reader gives ErrInvalidInput, but a typed nil such
+// as a nil *os.File wrapped in io.Reader is not detected and fails when read); more gives ErrInvalidInput and no request is sent. At most
 // 1 MiB plus one byte is read from r.
 func FromReader(r io.Reader) Source { return readerSource{r: r} }
 

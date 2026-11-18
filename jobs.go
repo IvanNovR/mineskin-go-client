@@ -111,7 +111,9 @@ func isPollDone(j Job) bool {
 		(j.Status == JobStatusCompleted && j.Result != UUID{})
 }
 
-// JobResponse is the response to a job lookup.
+// JobResponse is the response to a job lookup. Responses returned by
+// WaitForJob may share pointers (Skin, ResponseMeta lists) with other waiters
+// on the same job; treat them as read-only.
 type JobResponse struct {
 	ResponseMeta
 	// Job is the requested job.

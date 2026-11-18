@@ -104,9 +104,12 @@ func TestListJobsDecodes(t *testing.T) {
 		t.Errorf("jobs = %+v", got.Jobs)
 	}
 	for _, j := range got.Jobs {
-		if j.Breadcrumb != "crumb-l" {
-			t.Errorf("job %q breadcrumb = %q", j.ID, j.Breadcrumb)
+		if j.Breadcrumb != "" {
+			t.Errorf("job %q breadcrumb = %q, want empty", j.ID, j.Breadcrumb)
 		}
+	}
+	if got.Breadcrumb != "crumb-l" {
+		t.Errorf("list meta breadcrumb = %q, want crumb-l", got.Breadcrumb)
 	}
 
 	for name, body := range map[string]string{

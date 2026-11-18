@@ -161,7 +161,8 @@ func (c *Client) GetJob(ctx context.Context, id string) (*JobResponse, error) {
 	return &out, nil
 }
 
-// ListJobs lists the jobs in the queue.
+// ListJobs lists the jobs in the queue. The Breadcrumb of the returned jobs is
+// empty; the breadcrumb of the list request is on the ResponseMeta.
 func (c *Client) ListJobs(ctx context.Context) (*JobListResponse, error) {
 	out := JobListResponse{Jobs: []Job{}}
 	meta, err := c.get(ctx, queuePath, func(obj map[string]json.RawMessage, _ []byte) error {
@@ -182,9 +183,6 @@ func (c *Client) ListJobs(ctx context.Context) (*JobListResponse, error) {
 		return nil, err
 	}
 	out.ResponseMeta = meta
-	for i := range out.Jobs {
-		out.Jobs[i].Breadcrumb = meta.Breadcrumb
-	}
 	return &out, nil
 }
 

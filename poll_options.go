@@ -1,6 +1,7 @@
 package mineskin
 
 import (
+	"fmt"
 	"math"
 	"time"
 )
@@ -15,7 +16,9 @@ const (
 )
 
 // PollInterval returns the wait before the given check attempt (1-based).
-// A negative result fails the wait with ErrInvalidInput.
+// A result of zero or less fails the wait with ErrInvalidInput, and a panic
+// in the function fails it with an error matching ErrClient. The function is
+// called without any client lock held but must not call back into the client.
 type PollInterval func(attempt int) time.Duration
 
 // ConstantInterval returns a PollInterval that always waits d. It returns an
@@ -68,7 +71,10 @@ func ExponentialInterval(initial, max time.Duration, multiplier float64, freeAtt
 type PollOptions struct {
 	// InitialDelay is the wait before the first status check.
 	InitialDelay time.Duration
-	// Interval gives the wait between later checks.
+	// Interval gives the wait between later checks. It must return a
+	// positive duration: zero or less fails the wait with ErrInvalidInput. A
+	// panic is recovered and fails the wait with an error matching ErrClient.
+	// nil selects a constant DefaultPollInterval.
 	Interval PollInterval
 	// MaxAttempts is the number of status checks before giving up.
 	MaxAttempts int
@@ -110,12 +116,18 @@ func (p PollOptions) firstDelay(eta, now time.Time) time.Duration {
 	return p.InitialDelay
 }
 
-// interval returns the wait before the given attempt, or an error matching
-// ErrInvalidInput if the configured PollInterval returns a negative value.
-func (p PollOptions) interval(attempt int) (time.Duration, error) {
-	d := p.Interval(attempt)
-	if d < 0 {
-		return 0, newInvalidInputError("poll interval returned negative duration")
+// interval returns the wait before the given attempt, or an error if the
+// configured PollInterval returns a value of zero or less (matching
+// ErrInvalidInput) or panics (matching ErrClient).
+func (p PollOptions) interval(attempt int) (d time.Duration, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			d, err = 0, wrapClientError("poll interval panicked", fmt.Errorf("%v", r))
+		}
+	}()
+	d = p.Interval(attempt)
+	if d <= 0 {
+		return 0, newInvalidInputError("poll interval must be greater than zero")
 	}
 	return d, nil
 }

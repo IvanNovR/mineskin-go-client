@@ -35,10 +35,8 @@ type pendingJob struct {
 // more than batchThreshold are pending.
 //
 // Locking invariant: mu guards the pending map and every pendingJob field
-// except id and done. mu is never held during I/O (GetJob/ListJobs). The one
-// user callback run under mu is PollInterval, called by collectDue so the
-// attempt count and next check time change atomically; it must not call back
-// into the client.
+// except id and done. mu is never held during I/O (GetJob/ListJobs) or while
+// a user callback (PollInterval) runs.
 type jobPoller struct {
 	fetch  jobFetcher
 	opts   PollOptions

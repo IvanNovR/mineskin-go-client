@@ -2,9 +2,13 @@ package mineskin
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/url"
 	"time"
 )
+
+const fieldJobs = "jobs"
 
 // JobStatus is the state of a queued generation job.
 type JobStatus string
@@ -100,4 +104,89 @@ func optionalMillisTime(v json.RawMessage) (time.Time, error) {
 func isPollDone(j Job) bool {
 	return j.Status == JobStatusFailed ||
 		(j.Status == JobStatusCompleted && j.Result != UUID{})
+}
+
+// JobResponse is the response to a job lookup.
+type JobResponse struct {
+	ResponseMeta
+	// Job is the requested job.
+	Job Job
+	// Skin is the resulting skin when the response embeds it, or nil.
+	Skin *SkinInfo
+}
+
+// JobListResponse is the response to listing jobs.
+type JobListResponse struct {
+	ResponseMeta
+	// Jobs are the queued jobs; empty, never nil, when there are none.
+	Jobs []Job
+}
+
+// GetJob fetches a job by its id. An empty id, ".", or ".." fails with
+// ErrInvalidInput without sending a request; any other id is escaped as a
+// single path segment.
+func (c *Client) GetJob(ctx context.Context, id string) (*JobResponse, error) {
+	if err := validateJobID(id); err != nil {
+		return nil, err
+	}
+	var out JobResponse
+	meta, err := c.get(ctx, queuePath+"/"+url.PathEscape(id), func(obj map[string]json.RawMessage, _ []byte) error {
+		if v := obj[fieldJob]; len(v) > 0 {
+			if err := json.Unmarshal(v, &out.Job); err != nil {
+				return err
+			}
+		}
+		if v := obj[fieldSkin]; len(v) > 0 && !bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+			var skin SkinInfo
+			if err := json.Unmarshal(v, &skin); err != nil {
+				return err
+			}
+			out.Skin = &skin
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	out.ResponseMeta = meta
+	out.Job.Breadcrumb = meta.Breadcrumb
+	if out.Skin != nil {
+		out.Skin.Breadcrumb = meta.Breadcrumb
+	}
+	return &out, nil
+}
+
+// ListJobs lists the jobs in the queue.
+func (c *Client) ListJobs(ctx context.Context) (*JobListResponse, error) {
+	out := JobListResponse{Jobs: []Job{}}
+	meta, err := c.get(ctx, queuePath, func(obj map[string]json.RawMessage, _ []byte) error {
+		v := obj[fieldJobs]
+		if len(v) == 0 {
+			return nil
+		}
+		var jobs []Job
+		if err := json.Unmarshal(v, &jobs); err != nil {
+			return err
+		}
+		if jobs != nil {
+			out.Jobs = jobs
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	out.ResponseMeta = meta
+	for i := range out.Jobs {
+		out.Jobs[i].Breadcrumb = meta.Breadcrumb
+	}
+	return &out, nil
+}
+
+// validateJobID rejects ids that are empty or would collapse the path.
+func validateJobID(id string) error {
+	if id == "" || id == "." || id == ".." {
+		return newInvalidInputError("job id is empty or a dot segment")
+	}
+	return nil
 }

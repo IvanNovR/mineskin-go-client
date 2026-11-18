@@ -21,7 +21,7 @@ const maxResponseBodyBytes = 10 << 20
 // holds the method and path only, never headers or the API key.
 func (c *Client) do(ctx context.Context, method, path string) (rawResponse, error) {
 	label := method + " " + path
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, http.NoBody)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, http.NoBody) //nolint:gosec // G704: the base URL is caller-configured and validated in NewClient
 	if err != nil {
 		return rawResponse{}, &clientError{msg: label, err: err, invalidInput: true}
 	}
@@ -32,7 +32,7 @@ func (c *Client) do(ctx context.Context, method, path string) (rawResponse, erro
 	}
 
 	start := time.Now()
-	resp, err := c.httpClient.Do(req)
+	resp, err := c.httpClient.Do(req) //nolint:gosec // G704: the base URL is caller-configured and validated in NewClient
 	if err != nil {
 		return rawResponse{}, wrapClientError(label, err)
 	}

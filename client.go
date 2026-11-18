@@ -27,6 +27,10 @@ const (
 // Client is a MineSkin API client. It is immutable after NewClient returns and
 // safe for concurrent use by multiple goroutines.
 //
+// The only background goroutine is the job poller used by WaitForJob. It is
+// started lazily by the first wait and exits by itself once no wait is
+// pending; a later wait starts it again. There is no Close method.
+//
 // Go's HTTP client already strips the Authorization header when a redirect
 // leads to a different host, and this client refuses redirects from https to
 // http and stops after 10 redirects.
@@ -36,6 +40,8 @@ type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	logger     *slog.Logger
+	polling    PollOptions
+	poller     *jobPoller
 }
 
 // NewClient creates a Client from the given options. Invalid configuration
@@ -53,6 +59,41 @@ func NewClient(opts ...Option) (*Client, error) {
 		}
 	}
 
+	r, err := cfg.resolve()
+	if err != nil {
+		return nil, err
+	}
+	logConfig(r.logger, r.baseURL, r.userAgent, r.apiKey)
+	c := &Client{
+		baseURL:   r.baseURL,
+		userAgent: r.userAgent,
+		apiKey:    r.apiKey,
+		httpClient: &http.Client{
+			Transport:     r.transport,
+			Timeout:       r.timeout,
+			CheckRedirect: checkRedirect,
+		},
+		logger:  r.logger,
+		polling: r.polling,
+	}
+	c.poller = newJobPoller(c, r.polling, r.logger)
+	return c, nil
+}
+
+// resolvedConfig is a validated config with defaults applied.
+type resolvedConfig struct {
+	baseURL   string
+	userAgent string
+	apiKey    string
+	timeout   time.Duration
+	transport http.RoundTripper
+	logger    *slog.Logger
+	polling   PollOptions
+}
+
+// resolve validates cfg and fills in defaults. Errors match ErrInvalidInput
+// and never contain the API key.
+func (cfg *config) resolve() (*resolvedConfig, error) {
 	baseURL, err := normalizeBaseURL(cfg.baseURL)
 	if err != nil {
 		return nil, err
@@ -60,34 +101,29 @@ func NewClient(opts ...Option) (*Client, error) {
 	if cfg.timeout <= 0 {
 		return nil, newInvalidInputError("timeout must be greater than zero")
 	}
-	if cfg.transport == nil {
-		cfg.transport = http.DefaultTransport
-	}
-	if cfg.logger == nil {
-		cfg.logger = slog.New(slog.DiscardHandler)
-	}
-	userAgent := strings.TrimSpace(cfg.userAgent)
-	if userAgent == "" {
-		userAgent = DefaultUserAgent
-	}
-	apiKey := strings.TrimSpace(cfg.apiKey)
-	if err := validateHeaderValues(userAgent, apiKey); err != nil {
+	polling, err := cfg.polling.withDefaults()
+	if err != nil {
 		return nil, err
 	}
-
-	logConfig(cfg.logger, baseURL, userAgent, apiKey)
-
-	return &Client{
-		baseURL:   baseURL,
-		userAgent: userAgent,
-		apiKey:    apiKey,
-		httpClient: &http.Client{
-			Transport:     cfg.transport,
-			Timeout:       cfg.timeout,
-			CheckRedirect: checkRedirect,
-		},
-		logger: cfg.logger,
-	}, nil
+	r := &resolvedConfig{
+		baseURL: baseURL, timeout: cfg.timeout, polling: polling,
+		transport: cfg.transport, logger: cfg.logger,
+		userAgent: strings.TrimSpace(cfg.userAgent),
+		apiKey:    strings.TrimSpace(cfg.apiKey),
+	}
+	if r.transport == nil {
+		r.transport = http.DefaultTransport
+	}
+	if r.logger == nil {
+		r.logger = slog.New(slog.DiscardHandler)
+	}
+	if r.userAgent == "" {
+		r.userAgent = DefaultUserAgent
+	}
+	if err := validateHeaderValues(r.userAgent, r.apiKey); err != nil {
+		return nil, err
+	}
+	return r, nil
 }
 
 // normalizeBaseURL validates raw and returns it without trailing slashes.

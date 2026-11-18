@@ -15,6 +15,7 @@ type config struct {
 	timeout   time.Duration
 	transport http.RoundTripper
 	logger    *slog.Logger
+	polling   PollOptions
 }
 
 // Option configures a Client. Options are applied in order by NewClient.
@@ -69,4 +70,11 @@ func WithTransport(rt http.RoundTripper) Option {
 // which discards all output. Credentials and request headers are never logged.
 func WithLogger(l *slog.Logger) Option {
 	return func(c *config) { c.logger = l }
+}
+
+// WithJobPolling sets how the client waits for jobs. Zero fields use the
+// defaults (see PollOptions); a negative InitialDelay or MaxAttempts makes
+// NewClient return an error matching ErrInvalidInput.
+func WithJobPolling(p PollOptions) Option {
+	return func(c *config) { c.polling = p }
 }

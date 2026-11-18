@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -41,7 +42,7 @@ func TestDoSendsHeaders(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := newTestClient(t, srv.URL, tt.opts...)
-			if _, err := c.do(context.Background(), http.MethodGet, "/v2/x"); err != nil {
+			if _, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil); err != nil {
 				t.Fatalf("do() error = %v", err)
 			}
 			if v := got.Get("Authorization"); v != tt.wantAuth {
@@ -67,7 +68,7 @@ func TestDoURLIsBasePlusPath(t *testing.T) {
 		okHandler(w, r)
 	})
 	c := newTestClient(t, srv.URL+"/")
-	raw, err := c.do(context.Background(), http.MethodGet, "/v2/skins/a%2Fb")
+	raw, err := c.do(context.Background(), http.MethodGet, "/v2/skins/a%2Fb", nil)
 	if err != nil {
 		t.Fatalf("do() error = %v", err)
 	}
@@ -87,7 +88,7 @@ func TestDoNilContextIsInvalidInput(t *testing.T) {
 	})
 	c := newTestClient(t, srv.URL)
 	var nilCtx context.Context
-	_, err := c.do(nilCtx, http.MethodGet, "/v2/x")
+	_, err := c.do(nilCtx, http.MethodGet, "/v2/x", nil)
 	if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
 		t.Fatalf("err = %v, want ErrInvalidInput and ErrClient", err)
 	}
@@ -98,7 +99,7 @@ func TestDoNilContextIsInvalidInput(t *testing.T) {
 
 func TestDoInvalidPathIsInvalidInput(t *testing.T) {
 	c := newTestClient(t, "http://example.invalid")
-	_, err := c.do(context.Background(), http.MethodGet, "/v2/\x7f")
+	_, err := c.do(context.Background(), http.MethodGet, "/v2/\x7f", nil)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("err = %v, want ErrInvalidInput", err)
 	}
@@ -119,7 +120,7 @@ func TestTimeoutWhileBodyStalls(t *testing.T) {
 
 	c := newTestClient(t, srv.URL, WithTimeout(80*time.Millisecond))
 	start := time.Now()
-	_, err := c.do(context.Background(), http.MethodGet, "/v2/x")
+	_, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
 	if err == nil {
 		t.Fatal("expected a timeout error")
 	}
@@ -154,7 +155,7 @@ func TestContextCancelReturnsCanceled(t *testing.T) {
 		<-started
 		cancel()
 	}()
-	_, err := c.do(ctx, http.MethodGet, "/v2/x")
+	_, err := c.do(ctx, http.MethodGet, "/v2/x", nil)
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrClient) {
 		t.Fatalf("err = %v, want Canceled and ErrClient", err)
 	}
@@ -172,7 +173,7 @@ func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
 	t.Cleanup(tlsSrv.Close)
 
 	c := newTestClient(t, tlsSrv.URL, WithTransport(tlsSrv.Client().Transport), WithAPIKey(testAPIKey))
-	_, err := c.do(context.Background(), http.MethodGet, "/v2/x")
+	_, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
 	if !errors.Is(err, ErrClient) {
 		t.Fatalf("err = %v, want ErrClient", err)
 	}
@@ -195,7 +196,7 @@ func TestRedirectHTTPSToHTTPSIsFollowed(t *testing.T) {
 	t.Cleanup(tlsSrv.Close)
 
 	c := newTestClient(t, tlsSrv.URL, WithTransport(tlsSrv.Client().Transport))
-	raw, err := c.do(context.Background(), http.MethodGet, "/v2/start")
+	raw, err := c.do(context.Background(), http.MethodGet, "/v2/start", nil)
 	if err != nil {
 		t.Fatalf("do() error = %v", err)
 	}
@@ -221,7 +222,7 @@ func TestWithTransportInterception(t *testing.T) {
 		return resp, err
 	})
 	c := newTestClient(t, srv.URL, WithTransport(wrapper))
-	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x"); err != nil {
+	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil); err != nil {
 		t.Fatalf("do() error = %v", err)
 	}
 	if seenHeader != "intercepted" || seenStatus != 200 {
@@ -249,7 +250,7 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := append([]Option{WithAPIKey(testAPIKey), WithLogger(captureLogger(&logs))}, tt.opts...)
 			c := newTestClient(t, closedURL, opts...)
-			_, err := c.do(context.Background(), http.MethodGet, "/v2/skins/abc")
+			_, err := c.do(context.Background(), http.MethodGet, "/v2/skins/abc", nil)
 			if !errors.Is(err, ErrClient) {
 				t.Fatalf("err = %v, want ErrClient", err)
 			}
@@ -282,7 +283,7 @@ func TestDoBodySizeLimit(t *testing.T) {
 				_, _ = w.Write(payload)
 			})
 			c := newTestClient(t, srv.URL, WithTimeout(30*time.Second))
-			raw, err := c.do(context.Background(), http.MethodGet, "/v2/x")
+			raw, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
 			if tt.wantErr {
 				if !errors.Is(err, ErrClient) {
 					t.Fatalf("err = %v, want ErrClient", err)
@@ -303,7 +304,7 @@ func TestDoLogsDebugWithoutSecrets(t *testing.T) {
 	})
 	var logs bytes.Buffer
 	c := newTestClient(t, srv.URL, WithAPIKey(testAPIKey), WithLogger(captureLogger(&logs)))
-	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x"); err != nil {
+	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil); err != nil {
 		t.Fatalf("do() error = %v", err)
 	}
 	out := logs.String()
@@ -379,5 +380,116 @@ func TestDoConcurrent(t *testing.T) {
 		if err != nil {
 			t.Errorf("concurrent get() error = %v", err)
 		}
+	}
+}
+
+func TestDoSendsBody(t *testing.T) {
+	payload := []byte(`{"url":"https://example.com/a.png"}`)
+	var gotMethod, gotType string
+	var gotLen int64
+	var gotBody []byte
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotType = r.Header.Get("Content-Type")
+		gotLen = r.ContentLength
+		gotBody, _ = io.ReadAll(r.Body)
+		okHandler(w, r)
+	})
+	c := newTestClient(t, srv.URL)
+	_, err := c.do(context.Background(), http.MethodPost, "/v2/queue",
+		&requestBody{contentType: "application/json", data: payload})
+	if err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	if gotMethod != http.MethodPost || gotType != "application/json" {
+		t.Errorf("method=%q content-type=%q", gotMethod, gotType)
+	}
+	if !bytes.Equal(gotBody, payload) || gotLen != int64(len(payload)) {
+		t.Errorf("body=%q len=%d", gotBody, gotLen)
+	}
+}
+
+func TestDoGetHasNoBody(t *testing.T) {
+	var gotType string
+	var gotBody []byte
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, gotTypePresent := r.Header["Content-Type"]
+		if gotTypePresent {
+			gotType = r.Header.Get("Content-Type")
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		okHandler(w, r)
+	})
+	c := newTestClient(t, srv.URL)
+	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil); err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	if gotType != "" || len(gotBody) != 0 {
+		t.Errorf("content-type=%q body=%q, want none", gotType, gotBody)
+	}
+}
+
+func TestPostHappyPath(t *testing.T) {
+	var gotBody []byte
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Mineskin-Breadcrumb", "bc")
+		_, _ = w.Write([]byte(`{"success":true,"user":"jeb"}`))
+	})
+	c := newTestClient(t, srv.URL)
+	var user string
+	meta, err := c.post(context.Background(), "/v2/x",
+		&requestBody{contentType: "application/json", data: []byte(`{"a":1}`)},
+		func(obj map[string]json.RawMessage, _ []byte) error {
+			return json.Unmarshal(obj["user"], &user)
+		})
+	if err != nil {
+		t.Fatalf("post() error = %v", err)
+	}
+	if user != "jeb" || !meta.Success || meta.Status != 200 || meta.Breadcrumb != "bc" {
+		t.Errorf("user=%q meta=%+v", user, meta)
+	}
+	if string(gotBody) != `{"a":1}` {
+		t.Errorf("server body = %q", gotBody)
+	}
+}
+
+func TestPostAPIError(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":"skin_not_found","message":"Skin not found"}]}`))
+	})
+	c := newTestClient(t, srv.URL)
+	_, err := c.post(context.Background(), "/v2/x", nil, noopDecoder)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 404 || apiErr.Code != "skin_not_found" {
+		t.Fatalf("err = %v, want 404 APIError", err)
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Error("expected ErrNotFound")
+	}
+}
+
+func TestDoPostRedirect307ReplaysBody(t *testing.T) {
+	payload := []byte(`{"user":"abc"}`)
+	var finalBody []byte
+	var finalMethod string
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/start" {
+			http.Redirect(w, r, "/v2/final", http.StatusTemporaryRedirect)
+			return
+		}
+		finalMethod = r.Method
+		finalBody, _ = io.ReadAll(r.Body)
+		okHandler(w, r)
+	})
+	c := newTestClient(t, srv.URL)
+	_, err := c.do(context.Background(), http.MethodPost, "/v2/start",
+		&requestBody{contentType: "application/json", data: payload})
+	if err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	if finalMethod != http.MethodPost || !bytes.Equal(finalBody, payload) {
+		t.Errorf("after redirect method=%q body=%q", finalMethod, finalBody)
 	}
 }

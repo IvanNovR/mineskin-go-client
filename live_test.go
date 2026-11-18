@@ -5,7 +5,10 @@ package mineskin
 import (
 	"context"
 	"crypto/rand"
+	"encoding/hex"
 	"errors"
+	"fmt"
+	"image"
 	"net/http"
 	"os"
 	"strings"
@@ -19,6 +22,7 @@ const (
 	defaultLiveSkinID = "c1a1982831874868a37f5be375d38d5b"
 
 	liveTimeout         = 30 * time.Second
+	liveGenTimeout      = 2 * time.Minute
 	liveMinTimestamp    = "2014-01-01T00:00:00Z"
 	liveMinDuration     = 100 * time.Millisecond
 	liveMaxDuration     = 10 * time.Minute
@@ -142,5 +146,122 @@ func TestLiveGetUserPaidGrants(t *testing.T) {
 	}
 	if g.PerMinute == nil || *g.PerMinute <= livePaidMinPerMinut {
 		t.Errorf("Grants.PerMinute = %v, want > %d", g.PerMinute, livePaidMinPerMinut)
+	}
+}
+
+const (
+	liveSkinSize     = 64
+	liveNameBytes    = 4
+	liveGenHTTPLimit = 60 * time.Second
+)
+
+// randomSkinImage returns a 64x64 image of random pixels.
+func randomSkinImage() image.Image {
+	img := image.NewNRGBA(image.Rect(0, 0, liveSkinSize, liveSkinSize))
+	if _, err := rand.Read(img.Pix); err != nil {
+		panic(fmt.Sprintf("rand.Read: %v", err))
+	}
+	return img
+}
+
+// randomSkinName returns a short random skin name.
+func randomSkinName(t *testing.T) string {
+	t.Helper()
+	var b [liveNameBytes]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("rand.Read() error = %v", err)
+	}
+	return "go" + hex.EncodeToString(b[:])
+}
+
+func liveGenContext(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), liveGenTimeout)
+	t.Cleanup(cancel)
+	return ctx
+}
+
+func TestLiveQueueURLAndWait(t *testing.T) {
+	key := os.Getenv("MINESKIN_API_KEY")
+	if strings.TrimSpace(key) == "" {
+		t.Skip("MINESKIN_API_KEY not set")
+	}
+	c, err := NewClient(WithAPIKey(key), WithUserAgent("mineskin-go-client-tests"),
+		WithJobPolling(PollOptions{MaxAttempts: 30, UseETA: true}))
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	ctx := liveGenContext(t)
+	name := randomSkinName(t)
+
+	q, err := c.Queue(ctx, FromURL(fmt.Sprintf("https://api.mineskin.org/random-image?t=%d", time.Now().Unix())),
+		&GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
+	if err != nil {
+		t.Fatalf("Queue() error = %v", err)
+	}
+	t.Logf("queued job: id=%s status=%s timestamp=%s (unix ms %d) eta=%s (unix ms %d)",
+		q.Job.ID, q.Job.Status, q.Job.Timestamp.UTC().Format(time.RFC3339), q.Job.Timestamp.UnixMilli(),
+		q.Job.ETA.UTC().Format(time.RFC3339), q.Job.ETA.UnixMilli())
+	if q.RateLimit != nil {
+		t.Logf("rateLimit: delay=%s next=%+v limit=%+v", q.RateLimit.Delay, q.RateLimit.Next, q.RateLimit.Limit)
+	}
+
+	res, err := c.WaitForJob(ctx, q.Job)
+	if err != nil {
+		t.Fatalf("WaitForJob() error = %v", err)
+	}
+	skin, err := c.JobSkin(ctx, res)
+	if err != nil {
+		t.Fatalf("JobSkin() error = %v", err)
+	}
+	if skin.Texture.Data.Value == "" || skin.Texture.Data.Signature == "" {
+		t.Error("texture value or signature is empty")
+	}
+	if skin.Name != name {
+		t.Errorf("Skin.Name = %q, want %q", skin.Name, name)
+	}
+
+	t.Run("list", func(t *testing.T) {
+		list, err := c.ListJobs(ctx)
+		if err != nil {
+			t.Fatalf("ListJobs() error = %v", err)
+		}
+		if len(list.Jobs) == 0 {
+			t.Fatal("ListJobs() returned no jobs")
+		}
+		for _, j := range list.Jobs {
+			if j.ID == q.Job.ID {
+				if !j.Status.IsDone() {
+					t.Errorf("listed job status = %q, want a done status", j.Status)
+				}
+				return
+			}
+		}
+		t.Errorf("job %s not found in ListJobs()", q.Job.ID)
+	})
+}
+
+func TestLiveGenerateUpload(t *testing.T) {
+	key := os.Getenv("MINESKIN_API_KEY")
+	if strings.TrimSpace(key) == "" {
+		t.Skip("MINESKIN_API_KEY not set")
+	}
+	c, err := NewClient(WithAPIKey(key), WithUserAgent("mineskin-go-client-tests"),
+		WithTimeout(liveGenHTTPLimit))
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	name := randomSkinName(t)
+
+	res, err := c.Generate(liveGenContext(t), FromImage(randomSkinImage()),
+		&GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	if res.Skin.Texture.Data.Value == "" || res.Skin.Texture.Data.Signature == "" {
+		t.Error("texture value or signature is empty")
+	}
+	if res.Skin.Name != name {
+		t.Errorf("Skin.Name = %q, want %q", res.Skin.Name, name)
 	}
 }

@@ -29,6 +29,11 @@ func (c *Client) WaitForJob(ctx context.Context, job Job) (*JobResponse, error) 
 	case <-pj.done:
 		return copyResult(pj)
 	case <-ctx.Done():
+		select {
+		case <-pj.done: // a finished result wins over a cancelled ctx
+			return copyResult(pj)
+		default:
+		}
 		c.poller.leave(pj)
 		return nil, wrapClientError("wait for job", ctx.Err())
 	}

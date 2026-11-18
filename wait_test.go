@@ -466,3 +466,43 @@ func TestPollerWakesForSoonerJob(t *testing.T) {
 	cancel()
 	<-slowDone
 }
+
+// doneAfterIdle is a context whose Done channel is closed, but only once the
+// poller has no pending jobs, so a finished job and a done ctx are both ready
+// when WaitForJob selects.
+type doneAfterIdle struct {
+	context.Context
+	p      *jobPoller
+	closed chan struct{}
+	calls  atomic.Int32
+}
+
+func (c *doneAfterIdle) Err() error {
+	if c.calls.Add(1) == 1 {
+		return nil // the entry check passes
+	}
+	return context.Canceled
+}
+
+func (c *doneAfterIdle) Done() <-chan struct{} {
+	for pendingCount(c.p) != 0 {
+		time.Sleep(time.Millisecond)
+	}
+	return c.closed
+}
+
+func TestWaitForJobFinishedResultWinsOverDoneContext(t *testing.T) {
+	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
+	c := newTestClient(t, srv.URL, fastPolling())
+	for i := 0; i < 30; i++ {
+		closed := make(chan struct{})
+		close(closed)
+		ctx := &doneAfterIdle{Context: waitCtx(t), p: c.poller, closed: closed}
+
+		got, err := c.WaitForJob(ctx, Job{ID: "j1"})
+
+		if err != nil || got.Job.Status != JobStatusCompleted {
+			t.Fatalf("iteration %d: got %v, err %v; want the finished result", i, got, err)
+		}
+	}
+}

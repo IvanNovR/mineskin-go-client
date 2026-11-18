@@ -36,6 +36,7 @@ type Client struct {
 	apiKey     string
 	httpClient *http.Client
 	logger     *slog.Logger
+	polling    PollOptions
 }
 
 // NewClient creates a Client from the given options. Invalid configuration
@@ -59,6 +60,10 @@ func NewClient(opts ...Option) (*Client, error) {
 	}
 	if cfg.timeout <= 0 {
 		return nil, newInvalidInputError("timeout must be greater than zero")
+	}
+	polling, err := cfg.polling.withDefaults()
+	if err != nil {
+		return nil, err
 	}
 	if cfg.transport == nil {
 		cfg.transport = http.DefaultTransport
@@ -86,7 +91,8 @@ func NewClient(opts ...Option) (*Client, error) {
 			Timeout:       cfg.timeout,
 			CheckRedirect: checkRedirect,
 		},
-		logger: cfg.logger,
+		logger:  cfg.logger,
+		polling: polling,
 	}, nil
 }
 

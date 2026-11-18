@@ -1,6 +1,10 @@
 package mineskin
 
 import (
+	"bytes"
+	"io"
+	"mime"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,4 +33,41 @@ func newTestClient(t *testing.T, baseURL string, opts ...Option) *Client {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 	return c
+}
+
+// multipartPart is one parsed multipart part.
+type multipartPart struct {
+	name        string
+	filename    string
+	contentType string
+	data        []byte
+}
+
+// parseMultipart parses b with the boundary from its Content-Type and returns
+// the parts in wire order.
+func parseMultipart(t *testing.T, b *requestBody) []multipartPart {
+	t.Helper()
+	mediaType, params, err := mime.ParseMediaType(b.contentType)
+	if err != nil || mediaType != "multipart/form-data" {
+		t.Fatalf("Content-Type = %q, want multipart/form-data (err %v)", b.contentType, err)
+	}
+	mr := multipart.NewReader(bytes.NewReader(b.data), params["boundary"])
+	var parts []multipartPart
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			return parts
+		}
+		if err != nil {
+			t.Fatalf("NextPart() error = %v", err)
+		}
+		data, err := io.ReadAll(p)
+		if err != nil {
+			t.Fatalf("read part: %v", err)
+		}
+		parts = append(parts, multipartPart{
+			name: p.FormName(), filename: p.FileName(),
+			contentType: p.Header.Get("Content-Type"), data: data,
+		})
+	}
 }

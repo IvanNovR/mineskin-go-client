@@ -3,3 +3,5 @@
 .claude/
 .codex/
 .pi/
+.env
+coverage.out

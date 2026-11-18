@@ -49,10 +49,6 @@ func liveContext(t *testing.T) context.Context {
 	return ctx
 }
 
-func normalizeID(s string) string {
-	return strings.ToLower(strings.ReplaceAll(s, "-", ""))
-}
-
 func TestLiveGetSkin(t *testing.T) {
 	c := liveClient(t)
 	id := os.Getenv("MINESKIN_TEST_SKIN_UUID")
@@ -68,8 +64,12 @@ func TestLiveGetSkin(t *testing.T) {
 	if !res.Success || res.Status != http.StatusOK {
 		t.Fatalf("Success = %v, Status = %d; want true, 200", res.Success, res.Status)
 	}
-	if got, want := normalizeID(res.Skin.UUID), normalizeID(id); got != want {
-		t.Errorf("Skin.UUID = %q, want %q", got, want)
+	want, err := ParseUUID(id)
+	if err != nil {
+		t.Fatalf("ParseUUID(%q) error = %v", id, err)
+	}
+	if res.Skin.UUID != want {
+		t.Errorf("Skin.UUID = %s, want %s", res.Skin.UUID, want)
 	}
 	if res.Skin.Texture.Data.Value == "" || res.Skin.Texture.Data.Signature == "" {
 		t.Error("texture value or signature is empty")
@@ -121,8 +121,8 @@ func TestLiveGetUser(t *testing.T) {
 	if !res.Success {
 		t.Errorf("Success = false, want true")
 	}
-	if res.User.UUID == "" {
-		t.Error("User.UUID is empty")
+	if res.User.UUID == (UUID{}) {
+		t.Error("User.UUID is zero")
 	}
 }
 

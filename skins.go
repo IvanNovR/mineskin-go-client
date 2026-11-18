@@ -133,7 +133,7 @@ func optionalInt64(v json.RawMessage) (n int64, ok bool, err error) {
 // SkinInfo describes a skin stored by MineSkin. Its UUID is the MineSkin skin
 // id, not a player UUID.
 type SkinInfo struct {
-	UUID       string        `json:"uuid"`
+	UUID       UUID          `json:"uuid"`
 	Name       string        `json:"name"`
 	Variant    Variant       `json:"variant"`
 	Visibility Visibility    `json:"visibility"`
@@ -152,16 +152,18 @@ type SkinResponse struct {
 	Skin SkinInfo
 }
 
-// GetSkin fetches a skin by its MineSkin skin id. The id is a MineSkin skin
-// id (a UUID in dashed or undashed form), not a player UUID. An empty id
-// fails with ErrInvalidInput without sending a request. The id is escaped as
-// a single path segment.
+// GetSkin fetches a skin by its MineSkin skin id. The id must be a UUID in
+// dashed or undashed form (any letter case); it is a MineSkin skin id, not a
+// player UUID. An invalid id, including an empty one, fails with
+// ErrInvalidInput without sending a request. The request always uses the
+// canonical dashed lower-case form.
 func (c *Client) GetSkin(ctx context.Context, id string) (*SkinResponse, error) {
-	if id == "" {
-		return nil, newInvalidInputError("skin id must not be empty")
+	parsed, err := ParseUUID(id)
+	if err != nil {
+		return nil, err
 	}
 	var skin SkinInfo
-	meta, err := c.get(ctx, skinsPathPrefix+url.PathEscape(id), func(obj map[string]json.RawMessage, _ []byte) error {
+	meta, err := c.get(ctx, skinsPathPrefix+url.PathEscape(parsed.String()), func(obj map[string]json.RawMessage, _ []byte) error {
 		return decodeSkin(obj[fieldSkin], &skin)
 	})
 	if err != nil {

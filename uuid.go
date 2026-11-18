@@ -73,3 +73,17 @@ func (u UUID) String() string {
 	hex.Encode(buf[24:], u[10:])
 	return string(buf[:])
 }
+
+// MarshalText implements encoding.TextMarshaler using the dashed form.
+func (u UUID) MarshalText() ([]byte, error) { return []byte(u.String()), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler. It accepts the forms
+// ParseUUID accepts and leaves u unchanged on error.
+func (u *UUID) UnmarshalText(text []byte) error {
+	parsed, err := ParseUUID(string(text))
+	if err != nil {
+		return err
+	}
+	*u = parsed
+	return nil
+}

@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const testSkinID = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
+
 const skinFixture = `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","name":"Steve","variant":"slim","visibility":"unlisted",
 "texture":{"data":{"value":"VAL","signature":"SIG"},"hash":{"skin":"sh","cape":"ch"},"url":{"skin":"su","cape":"cu"}},
 "generator":{"timestamp":1700000000123,"duration":1500},"views":7,"duplicate":true}}`
@@ -26,12 +28,12 @@ func TestGetSkinDecodesFullSkin(t *testing.T) {
 		w.Header().Set("MineSkin-Breadcrumb", "crumb1")
 		writeJSON(200, skinFixture)(w, r)
 	})
-	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), "abc")
+	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
 	if err != nil {
 		t.Fatalf("GetSkin() error = %v", err)
 	}
 	s := got.Skin
-	if s.UUID != "744c993e0e8a4f0b9b6a2f3c7a1b5d11" || s.Name != "Steve" || s.Variant != VariantSlim ||
+	if s.UUID.String() != testSkinID || s.Name != "Steve" || s.Variant != VariantSlim ||
 		s.Visibility != VisibilityUnlisted || s.Views != 7 || !s.Duplicate {
 		t.Errorf("skin = %+v", s)
 	}
@@ -49,13 +51,13 @@ func TestGetSkinDecodesFullSkin(t *testing.T) {
 
 func TestGetSkinMissingGeneratorIsZero(t *testing.T) {
 	for name, body := range map[string]string{
-		"absent": `{"success":true,"skin":{"uuid":"u"}}`,
-		"null":   `{"success":true,"skin":{"uuid":"u","generator":null}}`,
-		"empty":  `{"success":true,"skin":{"uuid":"u","generator":{}}}`,
+		"absent": `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1b5d11"}}`,
+		"null":   `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","generator":null}}`,
+		"empty":  `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","generator":{}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := newTestServer(t, writeJSON(200, body))
-			got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), "u")
+			got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -68,7 +70,7 @@ func TestGetSkinMissingGeneratorIsZero(t *testing.T) {
 
 func TestGetSkinKeepsUnknownAndEmptyVariant(t *testing.T) {
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"skin":{"variant":"","visibility":"weird"}}`))
-	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), "u")
+	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,41 +78,51 @@ func TestGetSkinKeepsUnknownAndEmptyVariant(t *testing.T) {
 		t.Errorf("skin = %+v", got.Skin)
 	}
 	srv2 := newTestServer(t, writeJSON(200, `{"success":true,"skin":{"variant":"future"}}`))
-	got, err = newTestClient(t, srv2.URL).GetSkin(context.Background(), "u")
+	got, err = newTestClient(t, srv2.URL).GetSkin(context.Background(), testSkinID)
 	if err != nil || got.Skin.Variant != Variant("future") {
 		t.Errorf("variant = %q err = %v", got.Skin.Variant, err)
 	}
 }
 
-func TestGetSkinEmptyIDNoRequest(t *testing.T) {
-	var hits atomic.Int32
-	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
-	_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), "")
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("err = %v, want ErrInvalidInput", err)
-	}
-	if hits.Load() != 0 {
-		t.Error("request was sent")
+func TestGetSkinRejectsInvalidIDsWithoutRequest(t *testing.T) {
+	for name, id := range map[string]string{
+		"dot":           ".",
+		"dot dot":       "..",
+		"special chars": "a/b?c#d e",
+		"control chars": "744c993e0e8a4f0b9b6a2f3c7a1b5d1\x00",
+		"newline":       "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d1\n",
+		"empty":         "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			var hits atomic.Int32
+			srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
+			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), id)
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("err = %v, want ErrInvalidInput", err)
+			}
+			if hits.Load() != 0 {
+				t.Error("request was sent")
+			}
+		})
 	}
 }
 
-func TestGetSkinPathEscaping(t *testing.T) {
-	tests := map[string]struct{ id, want string }{
-		"special chars": {"a/b?c#d e", "/v2/skins/a%2Fb%3Fc%23d%20e"},
-		"undashed":      {"744c993e0e8a4f0b9b6a2f3c7a1b5d11", "/v2/skins/744c993e0e8a4f0b9b6a2f3c7a1b5d11"},
-	}
-	for name, tc := range tests {
+func TestGetSkinSendsDashedForm(t *testing.T) {
+	for name, id := range map[string]string{
+		"undashed": "744c993e0e8a4f0b9b6a2f3c7a1b5d11",
+		"upper":    "744C993E-0E8A-4F0B-9B6A-2F3C7A1B5D11",
+	} {
 		t.Run(name, func(t *testing.T) {
 			var uri string
 			srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 				uri = r.RequestURI
 				writeJSON(200, skinFixture)(w, r)
 			})
-			if _, err := newTestClient(t, srv.URL).GetSkin(context.Background(), tc.id); err != nil {
+			if _, err := newTestClient(t, srv.URL).GetSkin(context.Background(), id); err != nil {
 				t.Fatal(err)
 			}
-			if uri != tc.want {
-				t.Errorf("RequestURI = %q, want %q", uri, tc.want)
+			if want := "/v2/skins/" + testSkinID; uri != want {
+				t.Errorf("RequestURI = %q, want %q", uri, want)
 			}
 		})
 	}
@@ -136,7 +148,7 @@ func TestGetSkinByUUIDSendsDashed(t *testing.T) {
 
 func TestGetSkinNotFoundIsAPIErrorNotParseError(t *testing.T) {
 	srv := newTestServer(t, writeJSON(404, `{"success":false,"errors":[{"code":"skin_not_found","message":"Skin not found"}]}`))
-	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), "x")
+	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
 	if got != nil {
 		t.Errorf("response = %+v, want nil", got)
 	}
@@ -154,7 +166,7 @@ func TestGetSkinNotFoundIsAPIErrorNotParseError(t *testing.T) {
 
 func TestGetSkinHTMLBadGateway(t *testing.T) {
 	srv := newTestServer(t, writeJSON(502, `<html>Bad Gateway</html>`))
-	_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), "x")
+	_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
 	var ue *UnexpectedResponseError
 	if !errors.As(err, &ue) {
 		t.Fatalf("err = %T %v, want *UnexpectedResponseError", err, err)
@@ -166,10 +178,12 @@ func TestGetSkinWrongTypedFieldsAreParseErrors(t *testing.T) {
 		"skin string":     `{"success":true,"skin":"x"}`,
 		"views string":    `{"success":true,"skin":{"views":"7"}}`,
 		"generator array": `{"success":true,"skin":{"generator":[1]}}`,
+		"bad uuid":        `{"success":true,"skin":{"uuid":"not-a-uuid"}}`,
+		"numeric uuid":    `{"success":true,"skin":{"uuid":5}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := newTestServer(t, writeJSON(200, body))
-			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), "x")
+			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
 			if !errors.Is(err, ErrClient) {
 				t.Errorf("err = %v, want ErrClient", err)
 			}
@@ -209,6 +223,30 @@ func TestGeneratorInfoUnmarshalJSON(t *testing.T) {
 			}
 			if g.Duration != tc.wantDur {
 				t.Errorf("Duration = %v", g.Duration)
+			}
+		})
+	}
+}
+
+func TestGetSkinWrongTypedPayloadOnErrorResponseIsAPIError(t *testing.T) {
+	tests := map[string]struct {
+		status int
+		body   string
+		is     error
+	}{
+		"404 skin string": {404, `{"success":false,"skin":"gone"}`, ErrNotFound},
+		"429 json error":  {429, `{"success":false,"skin":[1],"errors":[{"code":"rate_limit","message":"slow down"}]}`, nil},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			srv := newTestServer(t, writeJSON(tc.status, tc.body))
+			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
+			var apiErr *APIError
+			if !errors.As(err, &apiErr) || apiErr.Status != tc.status {
+				t.Fatalf("err = %T %v, want *APIError %d", err, err, tc.status)
+			}
+			if tc.is != nil && !errors.Is(err, tc.is) {
+				t.Errorf("err = %v, want %v", err, tc.is)
 			}
 		})
 	}

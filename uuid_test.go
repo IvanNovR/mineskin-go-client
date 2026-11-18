@@ -100,3 +100,18 @@ func TestUUIDStringRoundTrip(t *testing.T) {
 		t.Fatalf("round trip failed: %v %v", back, err)
 	}
 }
+
+func TestUUIDTextRoundTrip(t *testing.T) {
+	const dashed = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
+	var u UUID
+	if err := u.UnmarshalText([]byte("744C993E0E8A4F0B9B6A2F3C7A1B5D11")); err != nil {
+		t.Fatal(err)
+	}
+	b, err := u.MarshalText()
+	if err != nil || string(b) != dashed {
+		t.Errorf("MarshalText() = %q, %v", b, err)
+	}
+	if err := u.UnmarshalText([]byte("nope")); !errors.Is(err, ErrInvalidInput) {
+		t.Errorf("UnmarshalText(nope) err = %v", err)
+	}
+}

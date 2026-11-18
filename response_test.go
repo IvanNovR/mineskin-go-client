@@ -182,14 +182,22 @@ func TestHandleResponseDecodeBodyReceivesInputs(t *testing.T) {
 	}
 }
 
-func TestHandleResponseDecodeBodyFailureBeatsAPIError(t *testing.T) {
-	// Java builds the response (decoding the body) before the success check,
-	// so decodeBody runs, and its failure is reported as a parse error.
+func TestHandleResponseAPIErrorSkipsDecodeBody(t *testing.T) {
+	called := false
 	_, err := handleResponse(rawResponse{Status: 400, Body: []byte(`{"success":false}`)},
+		func(map[string]json.RawMessage, []byte) error { called = true; return errors.New("boom") })
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || called {
+		t.Errorf("want *APIError without decodeBody, got %v (called=%v)", err, called)
+	}
+}
+
+func TestHandleResponseSuccessWithBadPayloadIsParseError(t *testing.T) {
+	_, err := handleResponse(rawResponse{Status: 200, Body: []byte(`{"success":true}`)},
 		func(map[string]json.RawMessage, []byte) error { return errors.New("boom") })
 	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		t.Errorf("decodeBody failure must win over APIError: %v", err)
+	if err == nil || errors.As(err, &apiErr) || !errors.Is(err, ErrClient) {
+		t.Errorf("want parse error, got %v", err)
 	}
 }
 

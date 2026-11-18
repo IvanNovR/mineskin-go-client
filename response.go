@@ -65,8 +65,9 @@ type rawResponse struct {
 //
 // The steps are, in order: a body that is not a JSON object gives an
 // *UnexpectedResponseError; so does a body that fails to unmarshal; a failing
-// envelope or decodeBody gives a parse error matching ErrClient; an
-// unsuccessful response gives an *APIError; otherwise the metadata is returned.
+// envelope gives a parse error matching ErrClient; an unsuccessful response
+// gives an *APIError without decoding the payload; a failing decodeBody on a
+// successful response gives a parse error; otherwise the metadata is returned.
 func handleResponse(raw rawResponse, decodeBody func(obj map[string]json.RawMessage, body []byte) error) (ResponseMeta, error) {
 	if !looksLikeJSONObject(raw.Body) {
 		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, nil)
@@ -76,14 +77,16 @@ func handleResponse(raw rawResponse, decodeBody func(obj map[string]json.RawMess
 		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, err)
 	}
 	meta, err := decodeEnvelope(raw, obj)
-	if err == nil && decodeBody != nil {
-		err = decodeBody(obj, raw.Body)
-	}
 	if err != nil {
 		return ResponseMeta{}, wrapClientError(parseFailureMessage, err)
 	}
 	if !meta.Success {
 		return ResponseMeta{}, newAPIError(meta)
+	}
+	if decodeBody != nil {
+		if err := decodeBody(obj, raw.Body); err != nil {
+			return ResponseMeta{}, wrapClientError(parseFailureMessage, err)
+		}
 	}
 	return meta, nil
 }

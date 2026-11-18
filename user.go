@@ -30,8 +30,9 @@ type Grants struct {
 
 // UserInfo describes the current user.
 type UserInfo struct {
-	// UUID is the value of the "user" field of the response.
-	UUID string
+	// UUID is the value of the "user" field of the response; it is the zero
+	// UUID when the field is absent or null.
+	UUID UUID
 	// Grants are the grants of the user's API key.
 	Grants Grants
 }

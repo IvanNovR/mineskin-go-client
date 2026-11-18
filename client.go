@@ -59,6 +59,41 @@ func NewClient(opts ...Option) (*Client, error) {
 		}
 	}
 
+	r, err := cfg.resolve()
+	if err != nil {
+		return nil, err
+	}
+	logConfig(r.logger, r.baseURL, r.userAgent, r.apiKey)
+	c := &Client{
+		baseURL:   r.baseURL,
+		userAgent: r.userAgent,
+		apiKey:    r.apiKey,
+		httpClient: &http.Client{
+			Transport:     r.transport,
+			Timeout:       r.timeout,
+			CheckRedirect: checkRedirect,
+		},
+		logger:  r.logger,
+		polling: r.polling,
+	}
+	c.poller = newJobPoller(c, r.polling, r.logger)
+	return c, nil
+}
+
+// resolvedConfig is a validated config with defaults applied.
+type resolvedConfig struct {
+	baseURL   string
+	userAgent string
+	apiKey    string
+	timeout   time.Duration
+	transport http.RoundTripper
+	logger    *slog.Logger
+	polling   PollOptions
+}
+
+// resolve validates cfg and fills in defaults. Errors match ErrInvalidInput
+// and never contain the API key.
+func (cfg *config) resolve() (*resolvedConfig, error) {
 	baseURL, err := normalizeBaseURL(cfg.baseURL)
 	if err != nil {
 		return nil, err
@@ -70,37 +105,25 @@ func NewClient(opts ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.transport == nil {
-		cfg.transport = http.DefaultTransport
+	r := &resolvedConfig{
+		baseURL: baseURL, timeout: cfg.timeout, polling: polling,
+		transport: cfg.transport, logger: cfg.logger,
+		userAgent: strings.TrimSpace(cfg.userAgent),
+		apiKey:    strings.TrimSpace(cfg.apiKey),
 	}
-	if cfg.logger == nil {
-		cfg.logger = slog.New(slog.DiscardHandler)
+	if r.transport == nil {
+		r.transport = http.DefaultTransport
 	}
-	userAgent := strings.TrimSpace(cfg.userAgent)
-	if userAgent == "" {
-		userAgent = DefaultUserAgent
+	if r.logger == nil {
+		r.logger = slog.New(slog.DiscardHandler)
 	}
-	apiKey := strings.TrimSpace(cfg.apiKey)
-	if err := validateHeaderValues(userAgent, apiKey); err != nil {
+	if r.userAgent == "" {
+		r.userAgent = DefaultUserAgent
+	}
+	if err := validateHeaderValues(r.userAgent, r.apiKey); err != nil {
 		return nil, err
 	}
-
-	logConfig(cfg.logger, baseURL, userAgent, apiKey)
-
-	c := &Client{
-		baseURL:   baseURL,
-		userAgent: userAgent,
-		apiKey:    apiKey,
-		httpClient: &http.Client{
-			Transport:     cfg.transport,
-			Timeout:       cfg.timeout,
-			CheckRedirect: checkRedirect,
-		},
-		logger:  cfg.logger,
-		polling: polling,
-	}
-	c.poller = newJobPoller(c, polling, cfg.logger)
-	return c, nil
+	return r, nil
 }
 
 // normalizeBaseURL validates raw and returns it without trailing slashes.

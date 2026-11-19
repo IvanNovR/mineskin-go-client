@@ -117,6 +117,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.poller = poll.New(poll.Config[*JobResponse]{
 		Ctx: c.baseCtx, Clock: c.clock, Fetcher: jobSource{c}, Options: toPollOptions(r.polling),
 		Logger: r.logger, OnJobFailure: c.failureHook(),
+		GetLogAttrs: []any{"path", queuePath + "/{id}"}, ListLogAttrs: []any{"path", queuePath},
 	})
 	return c, nil
 }

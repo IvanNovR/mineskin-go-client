@@ -53,6 +53,10 @@ type Config[R any] struct {
 	// OnJobFailure is called the first time a job is seen failed; nil does
 	// nothing.
 	OnJobFailure func()
+	// GetLogAttrs and ListLogAttrs are opaque slog key/value pairs appended
+	// to the debug logs of a single-job check and of a list check. The
+	// poller does not interpret them.
+	GetLogAttrs, ListLogAttrs []any
 }
 
 // Poller polls pending jobs, sharing one list request between jobs when more
@@ -70,6 +74,8 @@ type Poller[R any] struct {
 	ctx context.Context
 	// onJobFailure is called when a job is seen failed; never nil.
 	onJobFailure func()
+	// getLogAttrs and listLogAttrs are extra debug log attributes.
+	getLogAttrs, listLogAttrs []any
 
 	// wakeCh has capacity 1; a send means "recompute the schedule".
 	wakeCh chan struct{}
@@ -97,6 +103,8 @@ func New[R any](cfg Config[R]) *Poller[R] {
 	return &Poller[R]{
 		ctx:          cfg.Ctx,
 		onJobFailure: onJobFailure,
+		getLogAttrs:  cfg.GetLogAttrs,
+		listLogAttrs: cfg.ListLogAttrs,
 		fetch:        cfg.Fetcher,
 		opts:         cfg.Options,
 		logger:       logger,
@@ -109,7 +117,8 @@ func New[R any](cfg Config[R]) *Poller[R] {
 // now returns the poller clock's current time.
 func (p *Poller[R]) now() time.Time { return p.clock.Now() }
 
-// Pending returns the number of jobs being polled.
+// Pending returns the number of jobs being polled. It exists for
+// observability and tests.
 func (p *Poller[R]) Pending() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -117,7 +126,7 @@ func (p *Poller[R]) Pending() int {
 }
 
 // Waiters returns the number of waiters on the pending job id, or 0 when it
-// is not pending.
+// is not pending. It exists for observability and tests.
 func (p *Poller[R]) Waiters(id string) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()

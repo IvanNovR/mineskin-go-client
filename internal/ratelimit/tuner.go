@@ -93,7 +93,8 @@ func NewTuner(cfg TunerConfig) *Tuner {
 func (t *Tuner) SetKick(kick func()) { t.kick = kick }
 
 // Limits returns the effective generate limits at now: the grants interval
-// plus the decayed penalty, capped at maxEffectiveInterval.
+// plus the decayed penalty, capped at maxEffectiveInterval. It is the
+// throttle's limits source and is exported for observability and tests.
 func (t *Tuner) Limits(now time.Time) throttle.Limits {
 	t.mu.Lock()
 	defer t.mu.Unlock()

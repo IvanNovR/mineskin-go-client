@@ -27,7 +27,8 @@ func (p *Poller[R]) wake() {
 	}
 }
 
-// Running reports whether the run goroutine is alive.
+// Running reports whether the run goroutine is alive. It exists for
+// observability and tests.
 func (p *Poller[R]) Running() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()

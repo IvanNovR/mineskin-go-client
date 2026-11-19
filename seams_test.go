@@ -1,6 +1,7 @@
 package mineskin
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
@@ -179,10 +180,17 @@ func TestSeamJobSourceGetDerivesState(t *testing.T) {
 		{"waiting", "waiting", poll.State{ID: "j1"}},
 		{"failed", "failed", poll.State{ID: "j1", Done: true, Failed: true}},
 		{"completed with result", "completed", poll.State{ID: "j1", Done: true}},
+		{"completed without result", "completed-no-result", poll.State{ID: "j1"}},
+		{"unknown status", "unknown", poll.State{ID: "j1"}},
+		{"unrecognised status", "weird", poll.State{ID: "j1"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			srv := newTestServer(t, writeJSON(200, jobJSON("j1", tt.status)))
+			body := jobJSON("j1", tt.status)
+			if tt.status == "completed-no-result" {
+				body = `{"success":true,"job":{"id":"j1","status":"completed"}}`
+			}
+			srv := newTestServer(t, writeJSON(200, body))
 			c := newTestClient(t, srv.URL)
 
 			resp, got, err := jobSource{c}.Get(context.Background(), "j1", nil)
@@ -258,5 +266,40 @@ func TestSeamMapPollErr(t *testing.T) {
 				t.Errorf("error %q lacks %q", got, tt.text)
 			}
 		})
+	}
+}
+
+// TestSeamSourceValuesMatchTransport pins the string values the root casts
+// from transport.Origin.Source to ResponseSource.
+func TestSeamSourceValuesMatchTransport(t *testing.T) {
+	pairs := []struct {
+		name string
+		raw  string
+		want ResponseSource
+	}{
+		{"cloudflare", transport.SourceCloudflare, SourceCloudflare},
+		{"nginx", transport.SourceNginx, SourceNginx},
+		{"unknown", transport.SourceUnknown, SourceUnknown},
+	}
+	for _, p := range pairs {
+		if ResponseSource(p.raw) != p.want {
+			t.Errorf("%s: transport %q != public %q", p.name, p.raw, p.want)
+		}
+	}
+}
+
+// TestPollDebugLogsCarryPath pins the "path" attribute of the poller debug
+// logs, which the client passes to internal/poll as opaque attributes.
+func TestPollDebugLogsCarryPath(t *testing.T) {
+	var buf bytes.Buffer
+	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
+	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)), pollOnce(3, func(int) time.Duration { return time.Millisecond }))
+
+	if _, err := c.WaitForJob(waitCtx(t), Job{ID: "j1"}); err != nil {
+		t.Fatalf("WaitForJob() error = %v", err)
+	}
+
+	if got := buf.String(); !strings.Contains(got, `msg="polling job"`) || !strings.Contains(got, "path=/v2/queue/{id}") {
+		t.Errorf("log lacks the polling job path attribute:\n%s", got)
 	}
 }

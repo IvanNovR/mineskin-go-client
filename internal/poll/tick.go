@@ -104,7 +104,7 @@ func (p *Poller[R]) fetchJob(ctx context.Context, w *Waiter[R], force bool) {
 	if !p.isPending(w) {
 		return
 	}
-	p.logger.Debug("polling job", "job", w.id, "attempt", p.attemptOf(w))
+	p.logger.Debug("polling job", append([]any{"job", w.id, "attempt", p.attemptOf(w)}, p.getLogAttrs...)...)
 	// The check may queue in the fetcher; re-check once it holds a slot.
 	resp, st, err := p.fetch.Get(ctx, w.id, func() bool { return p.isPending(w) })
 	if errors.Is(err, ErrSkipped) {
@@ -180,7 +180,7 @@ func (p *Poller[R]) fetchAll(ctx context.Context, jobs []*Waiter[R], force bool)
 // jobs missing from the list keep polling. Jobs that are done get a full GET,
 // whose response (or error) completes just that job.
 func (p *Poller[R]) checkViaList(ctx context.Context, due []*Waiter[R]) {
-	p.logger.Debug("polling jobs via list", "jobs", len(due))
+	p.logger.Debug("polling jobs via list", append([]any{"jobs", len(due)}, p.listLogAttrs...)...)
 	states, err := p.fetch.List(ctx)
 	if err != nil {
 		var zero R

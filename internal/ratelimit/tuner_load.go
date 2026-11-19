@@ -110,7 +110,8 @@ func (t *Tuner) Shutdown() {
 	t.mu.Unlock()
 }
 
-// Loaded reports whether one grants load attempt has finished.
+// Loaded reports whether one grants load attempt has finished. It exists for
+// observability and tests.
 func (t *Tuner) Loaded() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()

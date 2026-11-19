@@ -212,6 +212,16 @@ func (t *Throttle) Stats() Stats {
 	}
 }
 
+// EarliestStart returns the earliest time at which the time conditions (the
+// server deadline and the interval since the last start) allow a start. It
+// ignores free slots and queued waiters, so it is a lower bound for a request
+// queued now. It is zero when nothing holds a start back.
+func (t *Throttle) EarliestStart() time.Time {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.nextStartLocked(normalizeLimits(t.limits(t.clock.Now())).Interval)
+}
+
 // normalizeLimits clamps limits to their documented floors.
 func normalizeLimits(l Limits) Limits {
 	return Limits{Interval: max(l.Interval, 0), Concurrency: max(l.Concurrency, 1)}

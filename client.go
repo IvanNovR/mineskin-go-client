@@ -167,8 +167,10 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 		return nil, err
 	}
 	r := &resolvedConfig{
-		generateThrottle: gen, getThrottle: get, autoTuning: cfg.autoTuning, rateLimitRetries: cfg.rateLimitRetries,
-		baseURL: baseURL, timeout: cfg.timeout, polling: polling,
+		generateThrottle: gen, getThrottle: get,
+		autoTuning:       cfg.autoTuning,
+		rateLimitRetries: cfg.rateLimitRetries,
+		baseURL:          baseURL, timeout: cfg.timeout, polling: polling,
 		transport: cfg.transport, logger: cfg.logger,
 		userAgent: strings.TrimSpace(cfg.userAgent),
 		apiKey:    strings.TrimSpace(cfg.apiKey),

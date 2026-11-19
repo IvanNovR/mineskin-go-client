@@ -248,8 +248,11 @@ func TestRetryWaitEndsOnCloseAndCancel(t *testing.T) {
 		res := goCall(skinCall(ctx, c))
 		waitWaiting(t, c.getGroup, 1)
 		cancel()
-		if err := mustDone(t, "GetSkin", res); !errors.Is(err, context.Canceled) {
-			t.Errorf("error = %v, want context.Canceled", err)
+		// The caller's ctx ended during the retry wait: the 429 is returned (D31).
+		err := mustDone(t, "GetSkin", res)
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) || apiErr.Status != 429 {
+			t.Errorf("error = %v, want the original 429 *APIError", err)
 		}
 		if got := srv.hits(); got != 1 {
 			t.Errorf("hits = %d, want 1", got)
@@ -352,4 +355,55 @@ func TestRetryPenaltyIsPerResponse(t *testing.T) {
 			}
 		})
 	}
+}
+
+func assertOriginal429(t *testing.T, err error) {
+	t.Helper()
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 429 {
+		t.Fatalf("error = %v, want the original 429 *APIError", err)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error = %v must not be a deadline error", err)
+	}
+}
+
+func TestRetryReturns429WhenIntervalEndsAfterCtxDeadline(t *testing.T) {
+	// A bare 429 (no delay, D30): the retry would wait for the 10 minute
+	// interval, which ends after the ctx deadline.
+	srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON})
+	fake := clock.NewFake(time.Now())
+	c := newTestClient(t, srv.URL, withClock(fake), WithGetThrottle(Throttle{Interval: 10 * time.Minute, Concurrency: 1}))
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	assertOriginal429(t, mustDone(t, "GetSkin", goCall(skinCall(ctx, c))))
+	if got := srv.hits(); got != 1 {
+		t.Errorf("hits = %d, want 1", got)
+	}
+}
+
+func TestRetryWaitEndedByCtxDeadlineReturns429(t *testing.T) {
+	// The delay looks fine at first, then another response pushes the group
+	// deadline past the ctx deadline while the retry waits.
+	srv := replyServer(t, map[string]reply{
+		keySkin: {status: 429, body: nextRelative(1000, false)},
+		keyJob:  {status: 429, body: nextRelative(3_600_000, false)},
+	}, keyJob)
+	c, fake := delayClient(t, srv)
+	other := goCall(getCalls(c)[keyJob])
+	waitCount(t, srv, keyJob, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	res := goCall(skinCall(ctx, c))
+	waitWaiting(t, c.getGroup, 1) // held back by the start interval
+	fake.Advance(delayTick)
+	waitCount(t, srv, keySkin, 1)
+	waitWaiting(t, c.getGroup, 1) // the retry, waiting for the 1 s delay
+	srv.open(keyJob)
+	eventually(t, "group deadline pushed", func() bool {
+		return c.getGroup.throttle.Stats().NotBefore.Sub(c.clock.Now()) > time.Hour/2
+	})
+	assertOriginal429(t, mustDone(t, "GetSkin", res))
+	_ = c.Close() // ends the other call, which is retrying too
+	_ = mustDone(t, "other call", other)
 }

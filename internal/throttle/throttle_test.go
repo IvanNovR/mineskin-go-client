@@ -609,3 +609,26 @@ func TestExactlyOnceUnderChurnBeforeClose(t *testing.T) {
 	}
 	assertStats(t, th, 0, 0)
 }
+
+func TestEarliestStartIsLaterOfIntervalAndDeadline(t *testing.T) {
+	th, fake, box := newTestThrottle(Limits{Interval: 10 * time.Second, Concurrency: 5})
+	if got := th.EarliestStart(); !got.IsZero() {
+		t.Fatalf("EarliestStart() = %v before any start, want zero", got)
+	}
+
+	mustAcquire(t, th)
+	if got, want := th.EarliestStart(), t0.Add(10*time.Second); !got.Equal(want) {
+		t.Fatalf("EarliestStart() = %v, want last start + interval %v", got, want)
+	}
+
+	th.Delay(t0.Add(30 * time.Second))
+	if got, want := th.EarliestStart(), t0.Add(30*time.Second); !got.Equal(want) {
+		t.Fatalf("EarliestStart() = %v, want the later deadline %v", got, want)
+	}
+
+	box.set(Limits{Interval: time.Minute, Concurrency: 5})
+	fake.Advance(time.Second)
+	if got, want := th.EarliestStart(), t0.Add(time.Minute); !got.Equal(want) {
+		t.Fatalf("EarliestStart() = %v, want %v after the interval grew", got, want)
+	}
+}

@@ -95,14 +95,21 @@ func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path str
 	if err := c.prepareTuned(merged, g, label); err != nil {
 		return rawResponse{}, closedOrSame(ctx, merged, label, err)
 	}
+	var last rawResponse // the 429 of the previous attempt
 	for attempt := 1; ; attempt++ {
 		raw, err := c.exchangeOnce(merged, g, method, path, body, proceed)
 		if err != nil {
+			if attempt > 1 && ctx.Err() != nil {
+				// The caller's own ctx ended while a retry was waiting or
+				// in flight: the 429 is the more useful result (D31).
+				return last, nil
+			}
 			return rawResponse{}, closedOrSame(ctx, merged, label, err)
 		}
 		if !c.retryRateLimited(merged, g, raw, attempt) {
 			return raw, nil
 		}
+		last = raw
 	}
 }
 

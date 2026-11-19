@@ -55,6 +55,9 @@ func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path str
 		return rawResponse{}, closedOrSame(ctx, merged, label, err)
 	}
 	defer release()
+	if err := passStartGate(ctx); err != nil {
+		return rawResponse{}, err
+	}
 	raw, err := c.do(merged, method, path, body)
 	if err != nil {
 		return rawResponse{}, closedOrSame(ctx, merged, label, err)

@@ -233,8 +233,10 @@ func TestPollerUsesBaseContext(t *testing.T) {
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if len(f.getCtxs) != 1 || f.getCtxs[0] != base {
-		t.Errorf("fetcher ctxs = %v, want exactly the base context", f.getCtxs)
+	// The request context derives from the base context (it also carries the
+	// start gate), so it keeps the base context's values and cancellation.
+	if len(f.getCtxs) != 1 || f.getCtxs[0].Value(key{}) != "base" {
+		t.Errorf("fetcher ctxs = %v, want a context derived from the base context", f.getCtxs)
 	}
 }
 

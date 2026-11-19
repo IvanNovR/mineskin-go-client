@@ -2,6 +2,7 @@ package mineskin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -104,7 +105,11 @@ func (p *jobPoller) fetchJob(ctx context.Context, pj *pendingJob, force bool) {
 		return
 	}
 	p.logger.Debug("polling job", "job", pj.id, "attempt", p.attemptOf(pj), "path", queuePath+"/{id}")
-	resp, err := p.fetch.GetJob(ctx, pj.id)
+	// The check may queue in the get throttle; re-check once it holds a slot.
+	resp, err := p.fetch.GetJob(withStartGate(ctx, func() bool { return p.isPending(pj) }), pj.id)
+	if errors.Is(err, errCheckSkipped) {
+		return
+	}
 	if err != nil {
 		p.finish(pj, nil, err)
 		return

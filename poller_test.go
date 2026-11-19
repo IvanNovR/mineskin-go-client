@@ -20,10 +20,20 @@ type fakeFetcher struct {
 	getCtxs   []context.Context
 	listCalls int
 	getFn     func(id string) (*JobResponse, error)
-	listFn    func() (*JobListResponse, error)
+	// slot, when set, emulates a get throttle of concurrency 1: GetJob
+	// holds it from the start gate to the end of getFn.
+	slot   *sync.Mutex
+	listFn func() (*JobListResponse, error)
 }
 
 func (f *fakeFetcher) GetJob(ctx context.Context, id string) (*JobResponse, error) {
+	if f.slot != nil {
+		f.slot.Lock()
+		defer f.slot.Unlock()
+		if err := passStartGate(ctx); err != nil {
+			return nil, err
+		}
+	}
 	f.mu.Lock()
 	f.getIDs = append(f.getIDs, id)
 	f.getCtxs = append(f.getCtxs, ctx)

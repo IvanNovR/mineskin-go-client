@@ -105,7 +105,7 @@ func (c *Client) post(ctx context.Context, path string, body *requestBody, decod
 		return ResponseMeta{}, err
 	}
 	meta, err := handleResponse(raw, decodeBody)
-	if c.genGroup.tuner != nil && isRetryableUnexpected(err) {
+	if c.genGroup.tuner != nil && isRetryableUnexpected(err) && !isRetryCancelled(err) {
 		c.genGroup.tuner.reportFailure()
 	}
 	return meta, err
@@ -116,4 +116,11 @@ func (c *Client) post(ctx context.Context, path string, body *requestBody, decod
 func isRetryableUnexpected(err error) bool {
 	var ue *UnexpectedResponseError
 	return errors.As(err, &ue) && ue.IsRetryable()
+}
+
+// isRetryCancelled reports whether err is a retryCancelledError. Its 429 was
+// already counted towards the penalty when the retry was started.
+func isRetryCancelled(err error) bool {
+	var rc *retryCancelledError
+	return errors.As(err, &rc)
 }

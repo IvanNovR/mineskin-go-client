@@ -248,12 +248,9 @@ func TestRetryWaitEndsOnCloseAndCancel(t *testing.T) {
 		res := goCall(skinCall(ctx, c))
 		waitWaiting(t, c.getGroup, 1)
 		cancel()
-		// The caller's ctx ended during the retry wait: the 429 is returned (D31).
-		err := mustDone(t, "GetSkin", res)
-		var apiErr *APIError
-		if !errors.As(err, &apiErr) || apiErr.Status != 429 {
-			t.Errorf("error = %v, want the original 429 *APIError", err)
-		}
+		// The caller's ctx ended during the retry wait: the error is both
+		// the cancellation and the 429.
+		assertCtxAnd429(t, mustDone(t, "GetSkin", res), context.Canceled)
 		if got := srv.hits(); got != 1 {
 			t.Errorf("hits = %d, want 1", got)
 		}
@@ -368,6 +365,22 @@ func assertOriginal429(t *testing.T, err error) {
 	}
 }
 
+// assertCtxAnd429 checks that err matches the ctx error, ErrClient and the
+// saved 429 (as *APIError and as text).
+func assertCtxAnd429(t *testing.T, err, ctxErr error) {
+	t.Helper()
+	if !errors.Is(err, ctxErr) || !errors.Is(err, ErrClient) {
+		t.Errorf("error = %v, want it to match %v and ErrClient", err, ctxErr)
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Status != 429 {
+		t.Errorf("error = %v, want it to hold the 429 *APIError", err)
+	}
+	if !strings.Contains(err.Error(), "429") {
+		t.Errorf("error text %q lacks the 429", err.Error())
+	}
+}
+
 func TestRetryReturns429WhenIntervalEndsAfterCtxDeadline(t *testing.T) {
 	// A bare 429 (no delay, D30): the retry would wait for the 10 minute
 	// interval, which ends after the ctx deadline.
@@ -386,7 +399,7 @@ func TestRetryWaitEndedByCtxDeadlineReturns429(t *testing.T) {
 	// The delay looks fine at first, then another response pushes the group
 	// deadline past the ctx deadline while the retry waits.
 	srv := replyServer(t, map[string]reply{
-		keySkin: {status: 429, body: nextRelative(1000, false)},
+		keySkin: {status: 429, retryAfter: "1", body: nextRelative(1000, false)},
 		keyJob:  {status: 429, body: nextRelative(3_600_000, false)},
 	}, keyJob)
 	c, fake := delayClient(t, srv)
@@ -403,7 +416,29 @@ func TestRetryWaitEndedByCtxDeadlineReturns429(t *testing.T) {
 	eventually(t, "group deadline pushed", func() bool {
 		return c.getGroup.throttle.Stats().NotBefore.Sub(c.clock.Now()) > time.Hour/2
 	})
-	assertOriginal429(t, mustDone(t, "GetSkin", res))
+	err := mustDone(t, "GetSkin", res)
+	assertCtxAnd429(t, err, context.DeadlineExceeded)
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && (apiErr.RateLimit == nil || apiErr.RateLimit.Next == nil ||
+		apiErr.RateLimit.Next.Relative != time.Second || apiErr.RetryAfter != time.Second) {
+		t.Errorf("429 lost its rate limit data: RateLimit=%+v RetryAfter=%v", apiErr.RateLimit, apiErr.RetryAfter)
+	}
 	_ = c.Close() // ends the other call, which is retrying too
 	_ = mustDone(t, "other call", other)
+}
+
+func TestRetryWaitEndedByCtxKeepsNonJSON429(t *testing.T) {
+	srv := newSeqServer(t, reply{status: 429, body: "<html>slow down</html>"})
+	fake := clock.NewFake(time.Now())
+	c := newTestClient(t, srv.URL, withClock(fake), WithGetThrottle(Throttle{Interval: time.Second, Concurrency: 1}))
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	res := goCall(skinCall(ctx2, c))
+	waitWaiting(t, c.getGroup, 1)
+	cancel2()
+	err := mustDone(t, "GetSkin", res)
+	var ue *UnexpectedResponseError
+	if !errors.Is(err, context.Canceled) || !errors.As(err, &ue) || ue.Status != 429 {
+		t.Errorf("error = %v, want context.Canceled and the 429 *UnexpectedResponseError", err)
+	}
 }

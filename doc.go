@@ -101,7 +101,11 @@
 // Generate right after WaitForJob can be answered with "request too soon". The
 // retry goes through the group's throttle again and waits for the delay the 429
 // carried (or the normal interval when it had none). If that delay ends after
-// the context's deadline, the original 429 error is returned at once. Only 429
+// the context's deadline, the original 429 error is returned at once. If the
+// context ends while a retry is waiting, the error matches both the context
+// error (errors.Is with context.Canceled or context.DeadlineExceeded, and
+// ErrClient) and the 429 (errors.As with *APIError or
+// *UnexpectedResponseError). Only 429
 // is retried; for other failures the errors carry APIError.RetryAfter,
 // APIError.RateLimit and APIError.IsRetryable so that the caller can decide.
 // Time spent waiting in the throttle is bounded only by the context of the

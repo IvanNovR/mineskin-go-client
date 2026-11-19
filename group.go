@@ -101,8 +101,8 @@ func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path str
 		if err != nil {
 			if attempt > 1 && ctx.Err() != nil {
 				// The caller's own ctx ended while a retry was waiting or
-				// in flight: the 429 is the more useful result (D31).
-				return last, nil
+				// in flight: report the cancellation together with the 429.
+				return rawResponse{}, newRetryCancelledError(err, last)
 			}
 			return rawResponse{}, closedOrSame(ctx, merged, label, err)
 		}

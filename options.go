@@ -142,7 +142,11 @@ func WithAutoTuning() Option {
 // for the delay the 429 announced (rateLimit.next or Retry-After), or for the
 // normal interval when there is none. When that delay would end after the
 // context's deadline, the original 429 error is returned at once instead of
-// waiting. Only 429 is retried; other failures are returned as they are, and
+// waiting. If the context ends while a retry is waiting, the error matches
+// both the context error (and ErrClient) and the 429: errors.Is finds
+// context.Canceled or context.DeadlineExceeded, and errors.As finds the
+// *APIError (or *UnexpectedResponseError) with its RateLimit and RetryAfter.
+// Only 429 is retried; other failures are returned as they are, and
 // IsRetryable lets callers decide about those. Each retry logs one Debug line.
 func WithRateLimitRetries(n int) Option {
 	return func(c *config) { c.rateLimitRetries = n }

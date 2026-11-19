@@ -18,6 +18,12 @@ type config struct {
 	transport http.RoundTripper
 	logger    *slog.Logger
 	polling   PollOptions
+	// generateThrottle is the generate group's setting; generateThrottleSet
+	// records that WithGenerateThrottle was used, even with a zero value.
+	generateThrottle    Throttle
+	generateThrottleSet bool
+	getThrottle         Throttle
+	autoTuning          bool
 	// clock is set only by tests; nil means the real clock.
 	clock clock.Clock
 }
@@ -46,7 +52,9 @@ func WithBaseURL(baseURL string) Option {
 }
 
 // WithTimeout sets the total timeout of a single HTTP request, including
-// reading the response body. It must be greater than zero.
+// reading the response body. It must be greater than zero. It covers only
+// the HTTP exchange: time spent queued in a request group's throttle is
+// bounded only by the caller's context.
 func WithTimeout(d time.Duration) Option {
 	return func(c *config) { c.timeout = d }
 }
@@ -81,4 +89,41 @@ func WithLogger(l *slog.Logger) Option {
 // NewClient return an error matching ErrInvalidInput.
 func WithJobPolling(p PollOptions) Option {
 	return func(c *config) { c.polling = p }
+}
+
+// WithGenerateThrottle sets the pacing of the generate group, which holds
+// Queue and Generate. Zero fields select DefaultGenerateInterval (200 ms) and
+// DefaultGenerateConcurrency (1); a negative field makes NewClient return an
+// error matching ErrInvalidInput. Queue time is bounded only by the caller's
+// context, and throttling cannot be disabled. It cannot be combined with
+// WithAutoTuning.
+func WithGenerateThrottle(t Throttle) Option {
+	return func(c *config) {
+		c.generateThrottle = t
+		c.generateThrottleSet = true
+	}
+}
+
+// WithGetThrottle sets the pacing of the get group, which holds GetSkin,
+// GetUser, GetJob, ListJobs and the job poller's requests. Zero fields select
+// DefaultGetInterval (100 ms) and DefaultGetConcurrency (5); a negative field
+// makes NewClient return an error matching ErrInvalidInput. Queue time is
+// bounded only by the caller's context, and throttling cannot be disabled.
+func WithGetThrottle(t Throttle) Option {
+	return func(c *config) { c.getThrottle = t }
+}
+
+// WithAutoTuning makes the generate group follow the limits granted to the
+// API key. The first Queue or Generate call loads GET /v2/me (without
+// blocking longer than its context allows); until that succeeds the group
+// runs on a baseline of 1000 ms and 1 request in flight. Grants are refreshed
+// in the background when older than 5 minutes. Concurrency is clamped to 1 to
+// 30 and the interval to 100 ms to 1000 ms. A job ending FAILED, or a
+// retryable unexpected response on the generate group, temporarily widens the
+// interval, and the penalty decays linearly.
+//
+// Auto-tuning and WithGenerateThrottle are mutually exclusive: using both, in
+// either order, makes NewClient return an error matching ErrInvalidInput.
+func WithAutoTuning() Option {
+	return func(c *config) { c.autoTuning = true }
 }

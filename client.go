@@ -94,6 +94,10 @@ type resolvedConfig struct {
 	logger    *slog.Logger
 	polling   PollOptions
 	clock     clock.Clock
+
+	generateThrottle Throttle
+	getThrottle      Throttle
+	autoTuning       bool
 }
 
 // resolve validates cfg and fills in defaults. Errors match ErrInvalidInput
@@ -110,7 +114,12 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	gen, get, err := cfg.resolveThrottles()
+	if err != nil {
+		return nil, err
+	}
 	r := &resolvedConfig{
+		generateThrottle: gen, getThrottle: get, autoTuning: cfg.autoTuning,
 		baseURL: baseURL, timeout: cfg.timeout, polling: polling,
 		transport: cfg.transport, logger: cfg.logger,
 		userAgent: strings.TrimSpace(cfg.userAgent),
@@ -133,6 +142,22 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// resolveThrottles applies the group defaults and rejects auto-tuning
+// combined with an explicit generate throttle.
+func (cfg *config) resolveThrottles() (gen, get Throttle, err error) {
+	if cfg.autoTuning && cfg.generateThrottleSet {
+		return gen, get, newInvalidInputError("auto-tuning and a generate throttle are mutually exclusive")
+	}
+	gen, err = cfg.generateThrottle.withDefaults(
+		Throttle{Interval: DefaultGenerateInterval, Concurrency: DefaultGenerateConcurrency}, "generate")
+	if err != nil {
+		return gen, get, err
+	}
+	get, err = cfg.getThrottle.withDefaults(
+		Throttle{Interval: DefaultGetInterval, Concurrency: DefaultGetConcurrency}, "get")
+	return gen, get, err
 }
 
 // normalizeBaseURL validates raw and returns it without trailing slashes.

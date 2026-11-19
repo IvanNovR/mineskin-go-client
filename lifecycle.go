@@ -10,16 +10,20 @@ import (
 // Calls queued in a throttle, waits in WaitForJob and requests in flight fail
 // with an error matching ErrClientClosed and ErrClient, and every call made
 // afterwards fails the same way without sending a request. Close returns
-// after the job poller has exited. It closes idle connections only of the
+// after the job poller and any grants load or refresh have exited. It closes idle connections only of the
 // transport the client created itself; a transport given to WithTransport is
 // left alone.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		c.closed.Store(true)
 		c.cancelBase(ErrClientClosed)
+		if tn := c.genGroup.tuner; tn != nil {
+			tn.shutdown()
+		}
 		c.genGroup.throttle.Close()
 		c.getGroup.throttle.Close()
 		c.poller.close(ErrClientClosed)
+		c.bg.Wait()
 		if c.idleCloser != nil {
 			c.idleCloser()
 		}

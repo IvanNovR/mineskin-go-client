@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -98,5 +99,16 @@ func (c *Client) post(ctx context.Context, path string, body *requestBody, decod
 	if err != nil {
 		return ResponseMeta{}, err
 	}
-	return handleResponse(raw, decodeBody)
+	meta, err := handleResponse(raw, decodeBody)
+	if c.genGroup.tuner != nil && isRetryableUnexpected(err) {
+		c.genGroup.tuner.reportFailure()
+	}
+	return meta, err
+}
+
+// isRetryableUnexpected reports whether err is an *UnexpectedResponseError
+// that is likely temporary; a JSON error (*APIError) never is (D11).
+func isRetryableUnexpected(err error) bool {
+	var ue *UnexpectedResponseError
+	return errors.As(err, &ue) && ue.IsRetryable()
 }

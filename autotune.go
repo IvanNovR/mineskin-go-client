@@ -45,6 +45,8 @@ type tuner struct {
 	concurrency int
 	penalty     time.Duration
 	penaltyAt   time.Time
+
+	grantsLoad
 }
 
 // newTuner returns a tuner on the baseline limits. A nil logger discards logs.

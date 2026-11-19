@@ -61,6 +61,8 @@ type Client struct {
 	cancelBase context.CancelCauseFunc
 	closed     atomic.Bool
 	closeOnce  sync.Once
+	// bg tracks the grants load goroutine, which Close waits for.
+	bg sync.WaitGroup
 	// idleCloser closes idle connections of a transport the client created;
 	// nil when the caller supplied the transport.
 	idleCloser func()
@@ -104,8 +106,17 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
 	c.idleCloser = r.idleCloser
 	c.genGroup, c.getGroup = c.newRequestGroups(r)
-	c.poller = newJobPoller(c.baseCtx, c, r.polling, r.logger, nil)
+	c.poller = newJobPoller(c.baseCtx, c, r.polling, r.logger, c.failureHook())
 	return c, nil
+}
+
+// failureHook returns the poller's FAILED-job hook: the penalty with
+// auto-tuning, nil (a no-op) otherwise.
+func (c *Client) failureHook() func() {
+	if c.genGroup.tuner == nil {
+		return nil
+	}
+	return c.genGroup.tuner.reportFailure
 }
 
 // resolvedConfig is a validated config with defaults applied.

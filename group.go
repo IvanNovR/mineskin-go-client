@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
@@ -22,13 +23,51 @@ const (
 type requestGroup struct {
 	name     string
 	throttle *throttle.Throttle
+	// tuner is non-nil only for the generate group with auto-tuning.
+	tuner *tuner
 }
 
 // newRequestGroups builds the generate and get groups from the resolved
 // throttle settings.
 func (c *Client) newRequestGroups(r *resolvedConfig) (gen, get *requestGroup) {
-	return newRequestGroup(generateGroupName, c.clock, r.generateThrottle),
-		newRequestGroup(getGroupName, c.clock, r.getThrottle)
+	gen = newRequestGroup(generateGroupName, c.clock, r.generateThrottle)
+	if r.autoTuning {
+		gen = c.newTunedGroup(generateGroupName, r.logger)
+	}
+	return gen, newRequestGroup(getGroupName, c.clock, r.getThrottle)
+}
+
+// newTunedGroup builds a group whose limits come from a tuner. The tuner
+// loads its grants through GetUser, which uses the get group (D8).
+func (c *Client) newTunedGroup(name string, l *slog.Logger) *requestGroup {
+	tn := newTuner(c.clock, l)
+	tn.load, tn.baseCtx, tn.bg = c.loadGrants, c.baseCtx, &c.bg
+	g := &requestGroup{name: name, tuner: tn, throttle: throttle.New(c.clock, tn.limits)}
+	tn.kick = g.throttle.Kick
+	return g
+}
+
+// loadGrants fetches the grants of the configured API key through GetUser.
+func (c *Client) loadGrants(ctx context.Context) (Grants, error) {
+	resp, err := c.GetUser(ctx)
+	if err != nil {
+		return Grants{}, err
+	}
+	return resp.User.Grants, nil
+}
+
+// prepareTuned runs the auto-tuning hooks before a start slot is requested:
+// the first call waits for the initial grants load, later calls may start a
+// background refresh.
+func (c *Client) prepareTuned(ctx context.Context, g *requestGroup, label string) error {
+	if g.tuner == nil {
+		return nil
+	}
+	if err := g.tuner.ensureLoaded(ctx); err != nil {
+		return wrapClientError(label, err)
+	}
+	g.tuner.maybeRefresh()
+	return nil
 }
 
 // newRequestGroup builds a group with fixed limits.
@@ -50,6 +89,9 @@ func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path str
 	label := method + " " + path
 	merged, cancel := c.requestContext(ctx)
 	defer cancel()
+	if err := c.prepareTuned(merged, g, label); err != nil {
+		return rawResponse{}, closedOrSame(ctx, merged, label, err)
+	}
 	release, err := c.acquire(merged, g, label)
 	if err != nil {
 		return rawResponse{}, closedOrSame(ctx, merged, label, err)

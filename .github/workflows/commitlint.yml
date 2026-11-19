@@ -1,0 +1,47 @@
+# Commit lint: every new commit subject and the pull request title must follow
+# Conventional Commits. This runs in its own workflow so that editing a PR
+# title re-runs only this check and never cancels or re-triggers the `test`
+# checks in ci.yml (they share no concurrency group).
+#
+# Hardening: actions are pinned to full commit SHAs, the workflow token is
+# read-only, credentials are not persisted, and untrusted values (PR title,
+# SHAs) reach the tool only through env:, never through ${{ }} inside run:.
+name: Commit lint
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+env:
+  GOTOOLCHAIN: local
+
+concurrency:
+  group: commitlint-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commits:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Check Conventional Commits
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: go run ./internal/tools/commitlint

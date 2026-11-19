@@ -81,8 +81,9 @@ func newRequestGroup(name string, clk clock.Clock, t Throttle) *requestGroup {
 
 // exchange waits for a start slot in g, sends the request with do, applies any
 // server delay and frees the slot. Time spent queued is bounded only by ctx; the client timeout
-// covers the HTTP exchange alone.
-func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path string, body *requestBody) (rawResponse, error) {
+// covers the HTTP exchange alone. A non-nil proceed is called once the slot is
+// held; when it returns false nothing is sent and errCheckSkipped is returned.
+func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path string, body *requestBody, proceed func() bool) (rawResponse, error) {
 	if ctx == nil {
 		return rawResponse{}, newInvalidInputError("context is nil")
 	}
@@ -97,8 +98,8 @@ func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path str
 		return rawResponse{}, closedOrSame(ctx, merged, label, err)
 	}
 	defer release()
-	if err := passStartGate(ctx); err != nil {
-		return rawResponse{}, err
+	if proceed != nil && !proceed() {
+		return rawResponse{}, errCheckSkipped
 	}
 	raw, err := c.do(merged, method, path, body)
 	if err != nil {

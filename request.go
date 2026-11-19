@@ -85,7 +85,12 @@ func readLimited(r io.Reader) ([]byte, error) {
 // get sends a GET request through the get group (GetSkin, GetUser, GetJob,
 // ListJobs and the poller) and interprets the response with handleResponse.
 func (c *Client) get(ctx context.Context, path string, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
-	raw, err := c.exchange(ctx, c.getGroup, http.MethodGet, path, nil)
+	return c.getGated(ctx, path, nil, decodeBody)
+}
+
+// getGated is get with a start gate (see exchange); a nil proceed is no gate.
+func (c *Client) getGated(ctx context.Context, path string, proceed func() bool, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
+	raw, err := c.exchange(ctx, c.getGroup, http.MethodGet, path, nil, proceed)
 	if err != nil {
 		return ResponseMeta{}, err
 	}
@@ -95,7 +100,7 @@ func (c *Client) get(ctx context.Context, path string, decodeBody func(map[strin
 // post sends a POST request with body through the generate group (Queue and
 // Generate) and interprets the response with handleResponse.
 func (c *Client) post(ctx context.Context, path string, body *requestBody, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
-	raw, err := c.exchange(ctx, c.genGroup, http.MethodPost, path, body)
+	raw, err := c.exchange(ctx, c.genGroup, http.MethodPost, path, body, nil)
 	if err != nil {
 		return ResponseMeta{}, err
 	}

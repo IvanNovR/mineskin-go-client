@@ -26,12 +26,12 @@ type fakeFetcher struct {
 	listFn func() (*JobListResponse, error)
 }
 
-func (f *fakeFetcher) GetJob(ctx context.Context, id string) (*JobResponse, error) {
+func (f *fakeFetcher) getJobGated(ctx context.Context, id string, proceed func() bool) (*JobResponse, error) {
 	if f.slot != nil {
 		f.slot.Lock()
 		defer f.slot.Unlock()
-		if err := passStartGate(ctx); err != nil {
-			return nil, err
+		if proceed != nil && !proceed() {
+			return nil, errCheckSkipped
 		}
 	}
 	f.mu.Lock()

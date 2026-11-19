@@ -106,7 +106,7 @@ func (p *jobPoller) fetchJob(ctx context.Context, pj *pendingJob, force bool) {
 	}
 	p.logger.Debug("polling job", "job", pj.id, "attempt", p.attemptOf(pj), "path", queuePath+"/{id}")
 	// The check may queue in the get throttle; re-check once it holds a slot.
-	resp, err := p.fetch.GetJob(withStartGate(ctx, func() bool { return p.isPending(pj) }), pj.id)
+	resp, err := p.fetch.getJobGated(ctx, pj.id, func() bool { return p.isPending(pj) })
 	if errors.Is(err, errCheckSkipped) {
 		return
 	}

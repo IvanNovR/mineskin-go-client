@@ -13,7 +13,7 @@ const batchThreshold = 4
 
 // jobFetcher is the part of Client the poller needs. *Client satisfies it.
 type jobFetcher interface {
-	GetJob(ctx context.Context, id string) (*JobResponse, error)
+	getJobGated(ctx context.Context, id string, proceed func() bool) (*JobResponse, error)
 	ListJobs(ctx context.Context) (*JobListResponse, error)
 }
 

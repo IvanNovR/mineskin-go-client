@@ -13,7 +13,7 @@ func TestStartGateDeclinedRequestSendsNothing(t *testing.T) {
 	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
 	c := newTestClient(t, srv.URL)
 
-	_, err := c.GetJob(withStartGate(context.Background(), func() bool { return false }), "j1")
+	_, err := c.getJobGated(context.Background(), "j1", func() bool { return false })
 
 	if !errors.Is(err, errCheckSkipped) {
 		t.Errorf("err = %v, want errCheckSkipped", err)

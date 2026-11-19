@@ -17,14 +17,16 @@ var pollerResult = UUID{1, 2, 3}
 type fakeFetcher struct {
 	mu        sync.Mutex
 	getIDs    []string
+	getCtxs   []context.Context
 	listCalls int
 	getFn     func(id string) (*JobResponse, error)
 	listFn    func() (*JobListResponse, error)
 }
 
-func (f *fakeFetcher) GetJob(_ context.Context, id string) (*JobResponse, error) {
+func (f *fakeFetcher) GetJob(ctx context.Context, id string) (*JobResponse, error) {
 	f.mu.Lock()
 	f.getIDs = append(f.getIDs, id)
+	f.getCtxs = append(f.getCtxs, ctx)
 	fn := f.getFn
 	f.mu.Unlock()
 	if fn == nil {
@@ -61,7 +63,7 @@ func newTestPoller(t *testing.T, f jobFetcher, opts PollOptions) *jobPoller {
 	if err != nil {
 		t.Fatalf("withDefaults() error = %v", err)
 	}
-	p := newJobPoller(f, opts, nil)
+	p := newJobPoller(context.Background(), f, opts, nil, nil)
 	p.now = func() time.Time { return pollerT0 }
 	return p
 }

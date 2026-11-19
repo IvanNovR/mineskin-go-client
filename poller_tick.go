@@ -14,7 +14,7 @@ func (p *jobPoller) tick(now time.Time) {
 	if len(due) == 0 {
 		return
 	}
-	ctx := context.Background()
+	ctx := p.ctx
 	if batched {
 		p.checkViaList(ctx, due)
 		return

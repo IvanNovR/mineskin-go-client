@@ -166,6 +166,9 @@ type SkinResponse struct {
 // ErrInvalidInput without sending a request. The request always uses the
 // canonical dashed lower-case form.
 func (c *Client) GetSkin(ctx context.Context, id string) (*SkinResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	parsed, err := ParseUUID(id)
 	if err != nil {
 		return nil, err
@@ -184,6 +187,9 @@ func (c *Client) GetSkin(ctx context.Context, id string) (*SkinResponse, error) 
 // GetSkinByUUID fetches a skin by its MineSkin skin id, sent in dashed form.
 // The UUID is a MineSkin skin id, not a player UUID.
 func (c *Client) GetSkinByUUID(ctx context.Context, id UUID) (*SkinResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	return c.GetSkin(ctx, id.String())
 }
 

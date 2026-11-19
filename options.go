@@ -60,7 +60,9 @@ func WithTimeout(d time.Duration) Option {
 }
 
 // WithTransport sets the http.RoundTripper used to send requests. A nil value
-// selects http.DefaultTransport.
+// selects a private clone of http.DefaultTransport, which the client owns:
+// Client.Close closes its idle connections. A transport passed here is never
+// closed by the client; closing it is the caller's job.
 //
 // It is also the interception point: wrap another RoundTripper to add headers,
 // metrics or tracing.

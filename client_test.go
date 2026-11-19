@@ -26,8 +26,8 @@ func TestNewClientDefaults(t *testing.T) {
 	if c.httpClient.Timeout != DefaultTimeout || DefaultTimeout != 10*time.Second {
 		t.Errorf("timeout = %v", c.httpClient.Timeout)
 	}
-	if c.httpClient.Transport != http.DefaultTransport {
-		t.Error("transport should default to http.DefaultTransport")
+	if _, ok := c.httpClient.Transport.(*http.Transport); !ok || c.httpClient.Transport == http.DefaultTransport {
+		t.Error("transport should default to an owned clone of http.DefaultTransport")
 	}
 	if c.httpClient.CheckRedirect == nil || c.logger == nil {
 		t.Error("redirect policy and logger must be set")
@@ -188,8 +188,8 @@ func TestOptionNilFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.httpClient.Transport != http.DefaultTransport || c.logger == nil {
-		t.Error("nil options must fall back to defaults")
+	if _, ok := c.httpClient.Transport.(*http.Transport); !ok || c.idleCloser == nil || c.logger == nil {
+		t.Error("nil options must fall back to defaults (owned transport clone)")
 	}
 	c.logger.Warn("must not panic")
 

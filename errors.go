@@ -32,6 +32,11 @@ var (
 	// ErrJobNotCompleted matches the error returned by JobSkin when the job has
 	// no result yet.
 	ErrJobNotCompleted error = sentinelError("mineskin: job is not completed")
+
+	// ErrClientClosed matches the error returned by every call made after
+	// Client.Close, and by calls that Close interrupts while they are queued,
+	// waiting for a job or in flight.
+	ErrClientClosed error = sentinelError("mineskin: client is closed")
 )
 
 // sentinelError is a package sentinel that also matches ErrClient.

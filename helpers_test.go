@@ -132,3 +132,6 @@ func waitGoroutinesSettle(t *testing.T, before int) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// runtimeGoroutines returns the current goroutine count.
+func runtimeGoroutines() int { return runtime.NumGoroutine() }

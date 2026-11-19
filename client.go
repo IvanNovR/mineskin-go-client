@@ -1,12 +1,16 @@
 package mineskin
 
 import (
+	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
 
@@ -29,9 +33,13 @@ const (
 // Client is a MineSkin API client. It is immutable after NewClient returns and
 // safe for concurrent use by multiple goroutines.
 //
-// The only background goroutine is the job poller used by WaitForJob. It is
-// started lazily by the first wait and exits by itself once no wait is
-// pending; a later wait starts it again. There is no Close method.
+// The configuration is immutable; Close only changes lifecycle state. The only
+// background goroutine is the job poller used by WaitForJob. It is started
+// lazily by the first wait and exits by itself once no wait is pending; a
+// later wait starts it again. Close releases the client's resources: it fails
+// queued and waiting calls, cancels requests in flight and waits for the
+// poller to exit (see Close). The client creates its own HTTP transport
+// unless WithTransport is used.
 //
 // Go's HTTP client already strips the Authorization header when a redirect
 // leads to a different host, and this client refuses redirects from https to
@@ -47,7 +55,18 @@ type Client struct {
 	clock      clock.Clock
 	genGroup   *requestGroup
 	getGroup   *requestGroup
+
+	// baseCtx is cancelled by Close and parents every request context.
+	baseCtx    context.Context
+	cancelBase context.CancelCauseFunc
+	closed     atomic.Bool
+	closeOnce  sync.Once
+	// idleCloser closes idle connections of a transport the client created;
+	// nil when the caller supplied the transport.
+	idleCloser func()
 }
+
+var _ io.Closer = (*Client)(nil)
 
 // NewClient creates a Client from the given options. Invalid configuration
 // yields an error matching ErrInvalidInput and ErrClient; the error never
@@ -82,8 +101,10 @@ func NewClient(opts ...Option) (*Client, error) {
 		polling: r.polling,
 		clock:   r.clock,
 	}
+	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
+	c.idleCloser = r.idleCloser
 	c.genGroup, c.getGroup = c.newRequestGroups(r)
-	c.poller = newJobPoller(c, r.polling, r.logger)
+	c.poller = newJobPoller(c.baseCtx, c, r.polling, r.logger, nil)
 	return c, nil
 }
 
@@ -97,6 +118,8 @@ type resolvedConfig struct {
 	logger    *slog.Logger
 	polling   PollOptions
 	clock     clock.Clock
+	// idleCloser is set only when the client created the transport itself.
+	idleCloser func()
 
 	generateThrottle Throttle
 	getThrottle      Throttle
@@ -129,7 +152,8 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 		apiKey:    strings.TrimSpace(cfg.apiKey),
 	}
 	if r.transport == nil {
-		r.transport = http.DefaultTransport
+		owned := defaultTransport()
+		r.transport, r.idleCloser = owned, owned.CloseIdleConnections
 	}
 	r.clock = cfg.clock
 	if r.clock == nil {
@@ -250,4 +274,14 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 		}
 	}
 	return nil
+}
+
+// defaultTransport returns a private clone of http.DefaultTransport, which the
+// client owns and closes (D20). If the default was replaced by another
+// RoundTripper, a fresh transport with the standard library defaults is used.
+func defaultTransport() *http.Transport {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		return t.Clone()
+	}
+	return &http.Transport{Proxy: http.ProxyFromEnvironment}
 }

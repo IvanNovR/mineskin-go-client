@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
@@ -46,14 +47,17 @@ func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path str
 	if ctx == nil {
 		return rawResponse{}, newInvalidInputError("context is nil")
 	}
-	release, err := c.acquire(ctx, g, method+" "+path)
+	label := method + " " + path
+	merged, cancel := c.requestContext(ctx)
+	defer cancel()
+	release, err := c.acquire(merged, g, label)
 	if err != nil {
-		return rawResponse{}, err
+		return rawResponse{}, closedOrSame(ctx, merged, label, err)
 	}
 	defer release()
-	raw, err := c.do(ctx, method, path, body)
+	raw, err := c.do(merged, method, path, body)
 	if err != nil {
-		return rawResponse{}, err
+		return rawResponse{}, closedOrSame(ctx, merged, label, err)
 	}
 	// The delay must be in place before release, or the next queued waiter
 	// could be dispatched ahead of it.
@@ -96,10 +100,23 @@ func bodyRateLimit(body []byte) *RateLimitInfo {
 	return decodeRateLimit(env.RateLimit)
 }
 
-// acquire takes a slot in g's throttle. A done ctx or a closed throttle
-// (ErrClientClosed arrives with Close) yields an error matching ErrClient; the ctx error stays in the chain.
+// closedOrSame returns err, or an ErrClientClosed error when err happened
+// because Close cancelled merged while the caller's own ctx is still live.
+func closedOrSame(ctx, merged context.Context, label string, err error) error {
+	if ctx.Err() == nil && errors.Is(context.Cause(merged), ErrClientClosed) {
+		return wrapClientError(label, ErrClientClosed)
+	}
+	return err
+}
+
+// acquire takes a slot in g's throttle. A done ctx yields an error matching
+// ErrClient with the ctx error in its chain; a closed throttle yields
+// ErrClientClosed.
 func (c *Client) acquire(ctx context.Context, g *requestGroup, label string) (func(), error) {
 	release, err := g.throttle.Acquire(ctx)
+	if errors.Is(err, throttle.ErrClosed) {
+		return nil, wrapClientError(label, ErrClientClosed)
+	}
 	if err != nil {
 		return nil, wrapClientError(label, err)
 	}

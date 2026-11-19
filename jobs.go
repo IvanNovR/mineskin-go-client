@@ -133,6 +133,9 @@ type JobListResponse struct {
 // ErrInvalidInput without sending a request; any other id is escaped as a
 // single path segment.
 func (c *Client) GetJob(ctx context.Context, id string) (*JobResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	if err := validateJobID(id); err != nil {
 		return nil, err
 	}
@@ -166,6 +169,9 @@ func (c *Client) GetJob(ctx context.Context, id string) (*JobResponse, error) {
 // ListJobs lists the jobs in the queue. The Breadcrumb of the returned jobs is
 // empty; the breadcrumb of the list request is on the ResponseMeta.
 func (c *Client) ListJobs(ctx context.Context) (*JobListResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	out := JobListResponse{Jobs: []Job{}}
 	meta, err := c.get(ctx, queuePath, func(obj map[string]json.RawMessage, _ []byte) error {
 		v := obj[fieldJobs]
@@ -202,6 +208,9 @@ func validateJobID(id string) error {
 // fetched with GetSkin and its errors are returned unchanged. A job without a
 // result gives ErrJobNotCompleted, and a nil response gives ErrInvalidInput.
 func (c *Client) JobSkin(ctx context.Context, r *JobResponse) (*SkinInfo, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	if r == nil {
 		return nil, newInvalidInputError("job response is nil")
 	}

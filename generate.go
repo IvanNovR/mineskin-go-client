@@ -39,6 +39,9 @@ type GenerateResponse struct {
 // result; use WaitForJob or GetJob to follow it. A nil or invalid src fails
 // with ErrInvalidInput without sending a request. opts may be nil.
 func (c *Client) Queue(ctx context.Context, src Source, opts *GenerateOptions) (*QueueResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	var out QueueResponse
 	meta, err := c.submit(ctx, queuePath, src, opts, func(obj map[string]json.RawMessage) error {
 		if v := obj[fieldJob]; len(v) > 0 {
@@ -65,6 +68,9 @@ func (c *Client) Queue(ctx context.Context, src Source, opts *GenerateOptions) (
 // WaitForJob. A nil or invalid src fails with ErrInvalidInput without sending
 // a request. opts may be nil.
 func (c *Client) Generate(ctx context.Context, src Source, opts *GenerateOptions) (*GenerateResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	var out GenerateResponse
 	meta, err := c.submit(ctx, generatePath, src, opts, func(obj map[string]json.RawMessage) error {
 		if err := decodeSkin(obj[fieldSkin], &out.Skin); err != nil {

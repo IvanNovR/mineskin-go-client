@@ -42,6 +42,10 @@ type jobPoller struct {
 	opts   PollOptions
 	logger *slog.Logger
 	now    func() time.Time
+	// ctx is the client base context; every check request runs on it.
+	ctx context.Context
+	// onJobFailure is called when a job is seen FAILED; never nil.
+	onJobFailure func()
 
 	// wakeCh has capacity 1; a send means "recompute the schedule".
 	wakeCh chan struct{}
@@ -49,21 +53,32 @@ type jobPoller struct {
 	mu      sync.Mutex
 	pending map[string]*pendingJob
 	running bool // whether the run goroutine is alive; guarded by mu
+	closed  bool // set by close; guarded by mu
+	// closeErr is the error pending and later waiters finish with once closed.
+	closeErr error
+	// wg tracks the run goroutine; Add happens under mu while !closed.
+	wg sync.WaitGroup
 }
 
 // newJobPoller returns a poller using f and opts, which must already have
-// defaults applied. A nil logger discards logs.
-func newJobPoller(f jobFetcher, opts PollOptions, logger *slog.Logger) *jobPoller {
+// defaults applied. Requests run on ctx, the client base context. A nil
+// logger discards logs; a nil onJobFailure does nothing.
+func newJobPoller(ctx context.Context, f jobFetcher, opts PollOptions, logger *slog.Logger, onJobFailure func()) *jobPoller {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	if onJobFailure == nil {
+		onJobFailure = func() {}
+	}
 	return &jobPoller{
-		fetch:   f,
-		opts:    opts,
-		logger:  logger,
-		now:     time.Now,
-		pending: make(map[string]*pendingJob),
-		wakeCh:  make(chan struct{}, 1),
+		ctx:          ctx,
+		onJobFailure: onJobFailure,
+		fetch:        f,
+		opts:         opts,
+		logger:       logger,
+		now:          time.Now,
+		pending:      make(map[string]*pendingJob),
+		wakeCh:       make(chan struct{}, 1),
 	}
 }
 
@@ -73,6 +88,11 @@ func newJobPoller(f jobFetcher, opts PollOptions, logger *slog.Logger) *jobPolle
 func (p *jobPoller) add(job Job) *pendingJob {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		pj := &pendingJob{id: job.ID, job: job, done: make(chan struct{}), err: p.closeErr}
+		close(pj.done)
+		return pj
+	}
 	if pj, ok := p.pending[job.ID]; ok {
 		pj.waiters++
 		return pj

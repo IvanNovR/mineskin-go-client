@@ -6,7 +6,7 @@
 # lint lives in commitlint.yml so PR title edits never touch these checks.
 #
 # Exact-SHA workflow_dispatch for release PRs is not part of this file yet; it
-# arrives with the release automation in milestone M4.
+# arrives with the release automation in milestone M5.
 name: CI
 
 on:
@@ -26,6 +26,7 @@ concurrency:
 
 jobs:
   test:
+    name: test (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -33,17 +34,26 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: [oldstable, stable]
+        include:
+          - name: go.mod minimum
+            go-version: ""
+            go-version-file: go.mod
+          - name: stable
+            go-version: stable
+            go-version-file: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
-          go-version: ${{ matrix.go }}
+          go-version: ${{ matrix.go-version }}
+          go-version-file: ${{ matrix.go-version-file }}
           cache: false
       - name: Vet
         run: go vet ./...
+      - name: Vet live tests
+        run: go vet -tags live ./...
       - name: Test with coverage gate
         run: make cover
 

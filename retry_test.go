@@ -442,3 +442,37 @@ func TestRetryWaitEndedByCtxKeepsNonJSON429(t *testing.T) {
 		t.Errorf("error = %v, want context.Canceled and the 429 *UnexpectedResponseError", err)
 	}
 }
+
+func TestRetryCancelledWaitCountsPenaltyOnce(t *testing.T) {
+	run := func(t *testing.T, retries int, cancelDuringWait bool) time.Duration {
+		t.Helper()
+		srv := replyServer(t, map[string]reply{keyQueue: {status: 429, body: htmlBadGate}})
+		fake := clock.NewFake(pollerT0)
+		c := newTestClient(t, srv.URL, withClock(fake), WithAutoTuning(), WithRateLimitRetries(retries))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		res := goCall(func() error {
+			_, err := c.Queue(ctx, FromURL("https://example.com/s.png"), nil)
+			return err
+		})
+		if cancelDuringWait {
+			waitWaiting(t, c.genGroup, 1) // the retry, held by the penalised interval
+			cancel()
+		}
+		var ue *UnexpectedResponseError
+		err := mustDone(t, "Queue", res)
+		if !errors.As(err, &ue) || ue.Status != 429 {
+			t.Fatalf("error = %v, want the 429 *UnexpectedResponseError", err)
+		}
+		iv, _ := limitsNow(c)
+		return iv
+	}
+	control := run(t, 0, false) // one 429 response, one penalty
+	cancelled := run(t, 2, true)
+	if control != time.Second+penaltyStep {
+		t.Fatalf("control interval = %v, want one penalty step on 1s", control)
+	}
+	if cancelled != control {
+		t.Errorf("interval after a cancelled retry wait = %v, want %v (the 429 counted once)", cancelled, control)
+	}
+}

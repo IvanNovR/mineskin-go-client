@@ -1,12 +1,11 @@
 package mineskin
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
-	"sort"
-	"strings"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 const (
@@ -19,17 +18,11 @@ const (
 	fieldMessages = "messages"
 	fieldLinks    = "links"
 
-	headerPrefix        = "mineskin-"
-	headerPrefixExtra   = "x-mineskin-"
 	headerMineskinSrv   = "mineskin-server"
-	headerMineskinCrumb = "mineskin-breadcrumb"
-	headerValueSep      = ","
+	headerMineskinCrumb = transport.HeaderMineskinCrumb
 
 	parseFailureMessage = "failed to parse response"
 )
-
-// utf8BOM is the byte order mark some proxies prepend to JSON bodies.
-var utf8BOM = []byte("\xef\xbb\xbf")
 
 // ResponseMeta describes the envelope of a MineSkin API response.
 type ResponseMeta struct {
@@ -55,15 +48,6 @@ type ResponseMeta struct {
 	Links json.RawMessage
 }
 
-// rawResponse is a fully read HTTP response, before any interpretation.
-type rawResponse struct {
-	Status int
-	Header http.Header
-	Body   []byte
-	// Received is the client clock time at which the response arrived.
-	Received time.Time
-}
-
 // handleResponse turns a raw response into its metadata or an error. It
 // mirrors the Java client: the HTTP status is only used when the body has no
 // success field. A leading UTF-8 byte order mark is ignored. decodeBody decodes the endpoint specific fields; it receives
@@ -74,9 +58,9 @@ type rawResponse struct {
 // envelope gives a parse error matching ErrClient; an unsuccessful response
 // gives an *APIError without decoding the payload; a failing decodeBody on a
 // successful response gives a parse error; otherwise the metadata is returned.
-func handleResponse(raw rawResponse, decodeBody func(obj map[string]json.RawMessage, body []byte) error) (ResponseMeta, error) {
-	body := bytes.TrimPrefix(raw.Body, utf8BOM)
-	if !looksLikeJSONObject(body) {
+func handleResponse(raw transport.Response, decodeBody func(obj map[string]json.RawMessage, body []byte) error) (ResponseMeta, error) {
+	body := transport.TrimBOM(raw.Body)
+	if !transport.IsJSONObject(body) {
 		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, nil, raw.Received)
 	}
 	var obj map[string]json.RawMessage
@@ -98,15 +82,9 @@ func handleResponse(raw rawResponse, decodeBody func(obj map[string]json.RawMess
 	return meta, nil
 }
 
-// looksLikeJSONObject reports whether the first non-whitespace byte is '{'.
-func looksLikeJSONObject(body []byte) bool {
-	trimmed := bytes.TrimLeft(body, " \t\r\n\f\v")
-	return len(trimmed) > 0 && trimmed[0] == '{'
-}
-
 // decodeEnvelope reads the common fields of a response object.
-func decodeEnvelope(raw rawResponse, obj map[string]json.RawMessage) (ResponseMeta, error) {
-	headers := filterHeaders(raw.Header)
+func decodeEnvelope(raw transport.Response, obj map[string]json.RawMessage) (ResponseMeta, error) {
+	headers := transport.FilterHeaders(raw.Header)
 	meta := ResponseMeta{
 		Status:     raw.Status,
 		Success:    raw.Status == http.StatusOK,
@@ -156,33 +134,10 @@ func newAPIError(meta ResponseMeta, obj map[string]json.RawMessage, h http.Heade
 		RateLimit: decodeRateLimit(obj[fieldRateLimit]),
 		Usage:     decodeUsage(obj[fieldUsage]),
 	}
-	e.RetryAfter, _ = parseRetryAfter(h.Get(headerRetryAfter), now)
+	e.RetryAfter, _ = transport.ParseRetryAfter(h.Get(transport.HeaderRetryAfter), now)
 	if len(meta.Errors) > 0 {
 		e.Code = meta.Errors[0].Code
 		e.Message = meta.Errors[0].Message
 	}
 	return e
-}
-
-// filterHeaders keeps the mineskin-* and x-mineskin-* headers, keyed by
-// lower-case name. Repeated headers are joined with commas, so duplicates
-// never cause a failure.
-func filterHeaders(h http.Header) map[string]string {
-	keys := make([]string, 0, len(h))
-	for k := range h {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	joined := make(map[string][]string)
-	for _, k := range keys {
-		name := strings.ToLower(k)
-		if strings.HasPrefix(name, headerPrefix) || strings.HasPrefix(name, headerPrefixExtra) {
-			joined[name] = append(joined[name], h[k]...)
-		}
-	}
-	out := make(map[string]string, len(joined))
-	for name, values := range joined {
-		out[name] = strings.Join(values, headerValueSep)
-	}
-	return out
 }

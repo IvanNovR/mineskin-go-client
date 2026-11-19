@@ -11,6 +11,8 @@ import (
 	"net/textproto"
 	"net/url"
 	"os"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 const (
@@ -42,7 +44,7 @@ func readUpload(r io.Reader) (data []byte, withinLimit bool, err error) {
 // Source is where a skin is generated from. Create one with FromURL, FromUser,
 // FromReader, FromFile or FromImage. The interface is sealed.
 type Source interface {
-	requestBody(opts *GenerateOptions) (*requestBody, error)
+	requestBody(opts *GenerateOptions) (*transport.Body, error)
 }
 
 // GenerateOptions are the optional settings of a generate request. Zero values
@@ -92,7 +94,7 @@ type jsonBody struct {
 	Cape       string     `json:"cape,omitempty"`
 }
 
-func newJSONBody(b jsonBody, opts *GenerateOptions) (*requestBody, error) {
+func newJSONBody(b jsonBody, opts *GenerateOptions) (*transport.Body, error) {
 	if opts != nil {
 		b.Name, b.Variant, b.Visibility = opts.Name, opts.Variant, opts.Visibility
 		if opts.Cape != (UUID{}) {
@@ -103,7 +105,7 @@ func newJSONBody(b jsonBody, opts *GenerateOptions) (*requestBody, error) {
 	if err != nil {
 		return nil, wrapClientError("encode request body", err)
 	}
-	return &requestBody{contentType: jsonContentType, data: data}, nil
+	return &transport.Body{ContentType: jsonContentType, Data: data}, nil
 }
 
 type urlSource struct{ url string }
@@ -112,7 +114,7 @@ type urlSource struct{ url string }
 // scheme and a host; otherwise sending fails with ErrInvalidInput.
 func FromURL(u string) Source { return urlSource{url: u} }
 
-func (s urlSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
+func (s urlSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
 	parsed, err := url.Parse(s.url)
 	if err != nil {
 		return nil, newInvalidInputError("invalid skin URL: cannot be parsed")
@@ -128,7 +130,7 @@ type userSource struct{ id UUID }
 // FromUser generates a skin from the skin of a player with the given UUID.
 func FromUser(id UUID) Source { return userSource{id: id} }
 
-func (s userSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
+func (s userSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
 	return newJSONBody(jsonBody{User: s.id.String()}, opts)
 }
 
@@ -142,7 +144,7 @@ type readerSource struct{ r io.Reader }
 // 1 MiB plus one byte is read from r.
 func FromReader(r io.Reader) Source { return readerSource{r: r} }
 
-func (s readerSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
+func (s readerSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
 	if s.r == nil {
 		return nil, newInvalidInputError("reader source is nil")
 	}
@@ -163,7 +165,7 @@ type fileSource struct{ path string }
 // ErrInvalidInput and no request is sent.
 func FromFile(path string) Source { return fileSource{path: path} }
 
-func (s fileSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
+func (s fileSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
 	if s.path == "" {
 		return nil, newInvalidInputError("file path is empty")
 	}
@@ -197,7 +199,7 @@ type imageSource struct{ img image.Image }
 // 1 MiB gives ErrInvalidInput and no request is sent.
 func FromImage(img image.Image) Source { return imageSource{img: img} }
 
-func (s imageSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
+func (s imageSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
 	if s.img == nil {
 		return nil, newInvalidInputError("image is nil")
 	}
@@ -213,7 +215,7 @@ func (s imageSource) requestBody(opts *GenerateOptions) (*requestBody, error) {
 
 // newMultipartBody builds an upload body: option text parts first, then the
 // file part.
-func newMultipartBody(data []byte, opts *GenerateOptions) (*requestBody, error) {
+func newMultipartBody(data []byte, opts *GenerateOptions) (*transport.Body, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	for _, f := range opts.formFields() {
@@ -234,5 +236,5 @@ func newMultipartBody(data []byte, opts *GenerateOptions) (*requestBody, error) 
 	if err := w.Close(); err != nil {
 		return nil, wrapClientError("encode upload", err)
 	}
-	return &requestBody{contentType: w.FormDataContentType(), data: buf.Bytes()}, nil
+	return &transport.Body{ContentType: w.FormDataContentType(), Data: buf.Bytes()}, nil
 }

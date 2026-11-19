@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"reflect"
 	"testing"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // userDecoder mimics the Java UserResponseImpl test body: the decoder requires
@@ -43,7 +45,7 @@ func TestHandleResponseSuccess(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			meta, err := handleResponse(rawResponse{Status: tt.status, Body: []byte(tt.body)}, userDecoder)
+			meta, err := handleResponse(transport.Response{Status: tt.status, Body: []byte(tt.body)}, userDecoder)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -71,7 +73,7 @@ func TestHandleResponseAPIError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := handleResponse(rawResponse{Status: tt.status, Body: []byte(tt.body)}, noopDecoder)
+			_, err := handleResponse(transport.Response{Status: tt.status, Body: []byte(tt.body)}, noopDecoder)
 			var apiErr *APIError
 			if !errors.As(err, &apiErr) {
 				t.Fatalf("want *APIError, got %T %v", err, err)
@@ -104,7 +106,7 @@ func TestHandleResponseUnexpected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := handleResponse(rawResponse{Status: tt.status, Body: []byte(tt.body)}, userDecoder)
+			_, err := handleResponse(transport.Response{Status: tt.status, Body: []byte(tt.body)}, userDecoder)
 			var ue *UnexpectedResponseError
 			if !errors.As(err, &ue) {
 				t.Fatalf("want *UnexpectedResponseError, got %T %v", err, err)
@@ -120,7 +122,7 @@ func TestHandleResponseUnexpected(t *testing.T) {
 }
 
 func TestHandleResponseUnexpectedUsesHeaders(t *testing.T) {
-	raw := rawResponse{
+	raw := transport.Response{
 		Status: 530,
 		Header: mhdr("Server", "cloudflare", "CF-Ray", "8f3a-FRA", "Content-Type", "text/plain"),
 		Body:   []byte("error code: 1033"),
@@ -145,7 +147,7 @@ func TestHandleResponseParseError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := handleResponse(rawResponse{Status: 200, Body: []byte(tt.body)}, userDecoder)
+			_, err := handleResponse(transport.Response{Status: 200, Body: []byte(tt.body)}, userDecoder)
 			var ue *UnexpectedResponseError
 			var apiErr *APIError
 			if err == nil || errors.As(err, &ue) || errors.As(err, &apiErr) {
@@ -165,7 +167,7 @@ func TestHandleResponseParseError(t *testing.T) {
 func TestHandleResponseDecodeBodyReceivesInputs(t *testing.T) {
 	body := []byte(`{"success":true,"job":{"id":"x"}}`)
 	called := false
-	_, err := handleResponse(rawResponse{Status: 200, Body: body}, func(obj map[string]json.RawMessage, b []byte) error {
+	_, err := handleResponse(transport.Response{Status: 200, Body: body}, func(obj map[string]json.RawMessage, b []byte) error {
 		called = true
 		if string(obj["job"]) != `{"id":"x"}` || string(b) != string(body) {
 			t.Errorf("obj/body mismatch: %v %s", obj, b)
@@ -176,7 +178,7 @@ func TestHandleResponseDecodeBodyReceivesInputs(t *testing.T) {
 		t.Fatalf("err=%v called=%v", err, called)
 	}
 	cause := errors.New("bad job")
-	_, err = handleResponse(rawResponse{Status: 200, Body: body}, func(map[string]json.RawMessage, []byte) error { return cause })
+	_, err = handleResponse(transport.Response{Status: 200, Body: body}, func(map[string]json.RawMessage, []byte) error { return cause })
 	if !errors.Is(err, cause) || !errors.Is(err, ErrClient) || err.Error() != "mineskin: failed to parse response: bad job" {
 		t.Errorf("err = %v", err)
 	}
@@ -184,7 +186,7 @@ func TestHandleResponseDecodeBodyReceivesInputs(t *testing.T) {
 
 func TestHandleResponseAPIErrorSkipsDecodeBody(t *testing.T) {
 	called := false
-	_, err := handleResponse(rawResponse{Status: 400, Body: []byte(`{"success":false}`)},
+	_, err := handleResponse(transport.Response{Status: 400, Body: []byte(`{"success":false}`)},
 		func(map[string]json.RawMessage, []byte) error { called = true; return errors.New("boom") })
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || called {
@@ -193,7 +195,7 @@ func TestHandleResponseAPIErrorSkipsDecodeBody(t *testing.T) {
 }
 
 func TestHandleResponseSuccessWithBadPayloadIsParseError(t *testing.T) {
-	_, err := handleResponse(rawResponse{Status: 200, Body: []byte(`{"success":true}`)},
+	_, err := handleResponse(transport.Response{Status: 200, Body: []byte(`{"success":true}`)},
 		func(map[string]json.RawMessage, []byte) error { return errors.New("boom") })
 	var apiErr *APIError
 	if err == nil || errors.As(err, &apiErr) || !errors.Is(err, ErrClient) {
@@ -203,7 +205,7 @@ func TestHandleResponseSuccessWithBadPayloadIsParseError(t *testing.T) {
 
 func TestHandleResponseListsAndLinks(t *testing.T) {
 	t.Run("lists default to empty non-nil", func(t *testing.T) {
-		meta, err := handleResponse(rawResponse{Status: 200, Body: []byte(`{}`)}, noopDecoder)
+		meta, err := handleResponse(transport.Response{Status: 200, Body: []byte(`{}`)}, noopDecoder)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -219,14 +221,14 @@ func TestHandleResponseListsAndLinks(t *testing.T) {
 		}
 	})
 	t.Run("null lists are empty", func(t *testing.T) {
-		meta, err := handleResponse(rawResponse{Status: 200, Body: []byte(`{"errors":null,"warnings":null,"messages":null}`)}, noopDecoder)
+		meta, err := handleResponse(transport.Response{Status: 200, Body: []byte(`{"errors":null,"warnings":null,"messages":null}`)}, noopDecoder)
 		if err != nil || meta.Errors == nil || meta.Warnings == nil || meta.Messages == nil {
 			t.Errorf("meta=%+v err=%v", meta, err)
 		}
 	})
 	t.Run("lists and links are filled", func(t *testing.T) {
 		body := `{"success":true,"warnings":[{"code":"w","message":"W"}],"messages":[{"code":"m","message":"M"}],"links":{"self":"/x"}}`
-		meta, err := handleResponse(rawResponse{Status: 200, Body: []byte(body)}, noopDecoder)
+		meta, err := handleResponse(transport.Response{Status: 200, Body: []byte(body)}, noopDecoder)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -241,7 +243,7 @@ func TestHandleResponseListsAndLinks(t *testing.T) {
 }
 
 func TestHandleResponseHeaders(t *testing.T) {
-	raw := rawResponse{
+	raw := transport.Response{
 		Status: 200,
 		Header: mhdr("Mineskin-Server", "api-1", "Mineskin-Breadcrumb", "crumb", "X-Mineskin-Foo", "bar", "Content-Type", "application/json"),
 		Body:   []byte(`{}`),
@@ -260,7 +262,7 @@ func TestHandleResponseHeaders(t *testing.T) {
 }
 
 func TestHandleResponseAPIErrorCarriesHeaders(t *testing.T) {
-	raw := rawResponse{Status: 401, Header: mhdr("Mineskin-Breadcrumb", "b1"), Body: []byte(`{"success":false}`)}
+	raw := transport.Response{Status: 401, Header: mhdr("Mineskin-Breadcrumb", "b1"), Body: []byte(`{"success":false}`)}
 	_, err := handleResponse(raw, noopDecoder)
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Breadcrumb != "b1" || apiErr.Headers["mineskin-breadcrumb"] != "b1" {
@@ -268,34 +270,8 @@ func TestHandleResponseAPIErrorCarriesHeaders(t *testing.T) {
 	}
 }
 
-func TestFilterHeaders(t *testing.T) {
-	tests := []struct {
-		name string
-		in   http.Header
-		want map[string]string
-	}{
-		{"nil", nil, map[string]string{}},
-		{"empty", http.Header{}, map[string]string{}},
-		{"unrelated dropped", mhdr("Content-Type", "x", "Server", "nginx"), map[string]string{}},
-		{"lowercased", mhdr("Mineskin-Server", "a"), map[string]string{"mineskin-server": "a"}},
-		{"x prefix", mhdr("X-MineSkin-Id", "1"), map[string]string{"x-mineskin-id": "1"}},
-		{"duplicates joined (JB-08)", mhdr("Mineskin-Tag", "a", "mineskin-tag", "b", "MINESKIN-TAG", "c"), map[string]string{"mineskin-tag": "a,b,c"}},
-		{"non-canonical map keys merged", http.Header{"mineskin-x": {"1"}, "Mineskin-X": {"2"}}, map[string]string{"mineskin-x": "2,1"}},
-		{"prefix must be followed by dash", mhdr("Mineskinfoo", "a", "X-Mineskinfoo", "b"), map[string]string{}},
-		{"empty value kept", http.Header{"Mineskin-Empty": {""}}, map[string]string{"mineskin-empty": ""}},
-		{"no values", http.Header{"Mineskin-None": nil}, map[string]string{"mineskin-none": ""}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := filterHeaders(tt.in); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("got %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestHandleResponseDuplicateHeadersDoNotFail(t *testing.T) {
-	raw := rawResponse{Status: 200, Header: http.Header{"Mineskin-Server": {"a", "b"}}, Body: []byte(`{}`)}
+	raw := transport.Response{Status: 200, Header: http.Header{"Mineskin-Server": {"a", "b"}}, Body: []byte(`{}`)}
 	meta, err := handleResponse(raw, noopDecoder)
 	if err != nil || meta.Server != "a,b" {
 		t.Errorf("meta=%+v err=%v", meta, err)
@@ -303,7 +279,7 @@ func TestHandleResponseDuplicateHeadersDoNotFail(t *testing.T) {
 }
 
 func TestHandleResponseUnexpectedIsClientError(t *testing.T) {
-	_, err := handleResponse(rawResponse{Status: 530, Body: []byte("error code: 1033")}, noopDecoder)
+	_, err := handleResponse(transport.Response{Status: 530, Body: []byte("error code: 1033")}, noopDecoder)
 	if !errors.Is(err, ErrClient) {
 		t.Errorf("must match ErrClient: %v", err)
 	}
@@ -311,12 +287,12 @@ func TestHandleResponseUnexpectedIsClientError(t *testing.T) {
 
 func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
 	body := append([]byte("\xef\xbb\xbf"), `{"success":true,"user":"x"}`...)
-	meta, err := handleResponse(rawResponse{Status: 200, Body: body}, userDecoder)
+	meta, err := handleResponse(transport.Response{Status: 200, Body: body}, userDecoder)
 	if err != nil || !meta.Success {
 		t.Fatalf("meta = %+v err = %v", meta, err)
 	}
 	body = append([]byte("\xef\xbb\xbf"), `{"success":false,"errors":[{"code":"c","message":"m"}]}`...)
-	_, err = handleResponse(rawResponse{Status: 400, Body: body}, nil)
+	_, err = handleResponse(transport.Response{Status: 400, Body: body}, nil)
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Errorf("err = %v, want *APIError", err)

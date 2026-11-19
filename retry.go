@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // DefaultRateLimitRetries is the default number of automatic retries of a
@@ -23,7 +25,7 @@ func acceptAnyBody(map[string]json.RawMessage, []byte) error { return nil }
 // deadline, no retry is made and the caller gets the original 429 error. A
 // non-JSON 429 counts towards the auto-tuning penalty here, as it would if it
 // were the final response.
-func (c *Client) retryRateLimited(ctx context.Context, g *requestGroup, raw rawResponse, attempt int) bool {
+func (c *Client) retryRateLimited(ctx context.Context, g *requestGroup, raw transport.Response, attempt int) bool {
 	if raw.Status != http.StatusTooManyRequests || attempt > c.rateLimitRetries {
 		return false
 	}
@@ -56,7 +58,7 @@ type retryCancelledError struct {
 // newRetryCancelledError combines the ctx error of a failed retry attempt with
 // the error of the 429 that caused the retry; without a 429 error it returns
 // ctxErr alone.
-func newRetryCancelledError(ctxErr error, last rawResponse) error {
+func newRetryCancelledError(ctxErr error, last transport.Response) error {
 	_, rateLimited := handleResponse(last, acceptAnyBody)
 	if rateLimited == nil {
 		return ctxErr

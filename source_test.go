@@ -46,11 +46,11 @@ func TestSourceJSONBodies(t *testing.T) {
 			if err != nil {
 				t.Fatalf("requestBody() error = %v", err)
 			}
-			if body.contentType != "application/json" {
-				t.Errorf("contentType = %q, want application/json", body.contentType)
+			if body.ContentType != "application/json" {
+				t.Errorf("contentType = %q, want application/json", body.ContentType)
 			}
 			var got map[string]any
-			if err := json.Unmarshal(body.data, &got); err != nil {
+			if err := json.Unmarshal(body.Data, &got); err != nil {
 				t.Fatalf("body is not JSON: %v", err)
 			}
 			if !reflect.DeepEqual(got, tt.want) {

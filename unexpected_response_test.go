@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // Bodies and expected messages are ported from the Java client's
@@ -219,50 +221,13 @@ func TestUnexpectedResponseErrorClassification(t *testing.T) {
 	}
 }
 
+// The documented snippet shape: at most 200 characters plus "...".
+const (
+	snippetMaxRunes = 200
+	snippetEllipsis = "..."
+)
+
 var testNow = time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
-
-func TestParseRetryAfter(t *testing.T) {
-	at := testNow.Add(30 * time.Second)
-	tests := []struct {
-		name    string
-		value   string
-		want    time.Duration
-		present bool
-	}{
-		{"seconds", "120", 2 * time.Minute, true},
-		{"whitespace", " 5 ", 5 * time.Second, true},
-		{"zero", "0", 0, true},
-		{"negative", "-3", 0, true},
-		{"IMF-fixdate", at.Format(http.TimeFormat), 30 * time.Second, true},
-		{"RFC 850", at.Format(time.RFC850), 30 * time.Second, true},
-		{"asctime", at.Format(time.ANSIC), 30 * time.Second, true},
-		{"past date", testNow.Add(-time.Hour).Format(http.TimeFormat), 0, true},
-		{"empty", "", 0, false},
-		{"garbage", "soon", 0, false},
-		{"fraction", "1.5", 0, false},
-		{"plus sign", "+5", 0, false},
-		{"overflow", "99999999999999999999", 0, false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got, ok := parseRetryAfter(tc.value, testNow)
-			if got != tc.want || ok != tc.present {
-				t.Errorf("parseRetryAfter(%q) = (%v, %v), want (%v, %v)", tc.value, got, ok, tc.want, tc.present)
-			}
-		})
-	}
-}
-
-func TestIsRetryableStatus(t *testing.T) {
-	for status, want := range map[int]bool{
-		408: true, 429: true, 500: true, 502: true, 503: true, 599: true,
-		501: false, 505: false, 400: false, 404: false, 409: false, 200: false,
-	} {
-		if got := isRetryableStatus(status); got != want {
-			t.Errorf("isRetryableStatus(%d) = %v, want %v", status, got, want)
-		}
-	}
-}
 
 func TestUnexpectedResponseErrorRetryAfterHTTPDate(t *testing.T) {
 	h := http.Header{}
@@ -395,8 +360,8 @@ func TestUnexpectedResponseErrorLargeBodyIsCapped(t *testing.T) {
 			}
 		})
 	}
-	if snippetInputMaxBytes != 64<<10 {
-		t.Errorf("snippetInputMaxBytes = %d", snippetInputMaxBytes)
+	if transport.SnippetInputMaxBytes != 64<<10 {
+		t.Errorf("transport.SnippetInputMaxBytes = %d", transport.SnippetInputMaxBytes)
 	}
 }
 

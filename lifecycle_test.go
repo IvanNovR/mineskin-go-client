@@ -189,7 +189,7 @@ func TestCloseClosesOwnedTransport(t *testing.T) {
 
 func TestOwnedTransportIsNotTheDefault(t *testing.T) {
 	c := newTestClient(t, "http://127.0.0.1:1")
-	if c.httpClient.Transport == http.DefaultTransport {
+	if c.doer.HTTP.Transport == http.DefaultTransport {
 		t.Error("client uses http.DefaultTransport directly, want an owned clone")
 	}
 	if c.idleCloser == nil {

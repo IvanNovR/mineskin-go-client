@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // grantsLoader fetches the current grants. The client wires it to GetUser, so
@@ -96,7 +98,7 @@ func (t *tuner) finishLoad(g Grants, err error, refresh bool) {
 		}
 		// The error may carry server-controlled text (APIError message and
 		// code), so control characters are stripped before it is logged.
-		t.logger.Warn(msg, "error", stripControl(err.Error()))
+		t.logger.Warn(msg, "error", transport.StripControl(err.Error()))
 	}
 	t.mu.Lock()
 	t.loading, t.settled = false, true

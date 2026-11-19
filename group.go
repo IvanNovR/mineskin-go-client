@@ -1,7 +1,6 @@
 package mineskin
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 	"github.com/IvanNovR/mineskin-go-client/internal/throttle"
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 const (
@@ -85,26 +85,26 @@ func newRequestGroup(name string, clk clock.Clock, t Throttle) *requestGroup {
 // held; when it returns false nothing is sent and errCheckSkipped is returned.
 // A response rejected with HTTP 429 is retried (see retryRateLimited); every
 // retry goes through the throttle and the start gate again.
-func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path string, body *requestBody, proceed func() bool) (rawResponse, error) {
+func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path string, body *transport.Body, proceed func() bool) (transport.Response, error) {
 	if ctx == nil {
-		return rawResponse{}, newInvalidInputError("context is nil")
+		return transport.Response{}, newInvalidInputError("context is nil")
 	}
 	label := method + " " + path
 	merged, cancel := c.requestContext(ctx)
 	defer cancel()
 	if err := c.prepareTuned(merged, g, label); err != nil {
-		return rawResponse{}, closedOrSame(ctx, merged, label, err)
+		return transport.Response{}, closedOrSame(ctx, merged, label, err)
 	}
-	var last rawResponse // the 429 of the previous attempt
+	var last transport.Response // the 429 of the previous attempt
 	for attempt := 1; ; attempt++ {
 		raw, err := c.exchangeOnce(merged, g, method, path, body, proceed)
 		if err != nil {
 			if attempt > 1 && ctx.Err() != nil {
 				// The caller's own ctx ended while a retry was waiting or
 				// in flight: report the cancellation together with the 429.
-				return rawResponse{}, newRetryCancelledError(err, last)
+				return transport.Response{}, newRetryCancelledError(err, last)
 			}
-			return rawResponse{}, closedOrSame(ctx, merged, label, err)
+			return transport.Response{}, closedOrSame(ctx, merged, label, err)
 		}
 		if !c.retryRateLimited(merged, g, raw, attempt) {
 			return raw, nil
@@ -114,19 +114,19 @@ func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path str
 }
 
 // exchangeOnce takes a start slot, sends the request and frees the slot.
-func (c *Client) exchangeOnce(ctx context.Context, g *requestGroup, method, path string, body *requestBody, proceed func() bool) (rawResponse, error) {
+func (c *Client) exchangeOnce(ctx context.Context, g *requestGroup, method, path string, body *transport.Body, proceed func() bool) (transport.Response, error) {
 	label := method + " " + path
 	release, err := c.acquire(ctx, g, label)
 	if err != nil {
-		return rawResponse{}, err
+		return transport.Response{}, err
 	}
 	defer release()
 	if proceed != nil && !proceed() {
-		return rawResponse{}, errCheckSkipped
+		return transport.Response{}, errCheckSkipped
 	}
 	raw, err := c.do(ctx, method, path, body)
 	if err != nil {
-		return rawResponse{}, err
+		return transport.Response{}, err
 	}
 	// The delay must be in place before release, or the next queued waiter
 	// could be dispatched ahead of it.
@@ -140,13 +140,13 @@ func (c *Client) exchangeOnce(ctx context.Context, g *requestGroup, method, path
 // of the body's rateLimit.next.relative (any JSON object body) and the
 // Retry-After header (retryable statuses only). Missing or invalid values
 // give 0; it never fails, so the original result or error is never replaced.
-func serverDelay(raw rawResponse) time.Duration {
+func serverDelay(raw transport.Response) time.Duration {
 	var delay time.Duration
 	if rl := bodyRateLimit(raw.Body); rl != nil && rl.Next != nil {
 		delay = rl.Next.Relative
 	}
-	if isRetryableStatus(raw.Status) {
-		if ra, ok := parseRetryAfter(raw.Header.Get(headerRetryAfter), raw.Received); ok {
+	if transport.IsRetryableStatus(raw.Status) {
+		if ra, ok := transport.ParseRetryAfter(raw.Header.Get(transport.HeaderRetryAfter), raw.Received); ok {
 			delay = max(delay, ra)
 		}
 	}
@@ -156,8 +156,8 @@ func serverDelay(raw rawResponse) time.Duration {
 // bodyRateLimit leniently reads the rateLimit field of a JSON object body. It
 // returns nil for a body that is not a JSON object or has no usable rateLimit.
 func bodyRateLimit(body []byte) *RateLimitInfo {
-	body = bytes.TrimPrefix(body, utf8BOM)
-	if !looksLikeJSONObject(body) {
+	body = transport.TrimBOM(body)
+	if !transport.IsJSONObject(body) {
 		return nil
 	}
 	var env struct {

@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // apiErrorFrom runs handleResponse and returns the resulting *APIError.
-func apiErrorFrom(t *testing.T, raw rawResponse) *APIError {
+func apiErrorFrom(t *testing.T, raw transport.Response) *APIError {
 	t.Helper()
 	_, err := handleResponse(raw, noopDecoder)
 	var apiErr *APIError
@@ -21,7 +23,7 @@ func apiErrorFrom(t *testing.T, raw rawResponse) *APIError {
 func TestAPIErrorCarriesRateLimitAndUsage(t *testing.T) {
 	body := `{"success":false,"errors":[{"code":"too_many_requests","message":"slow down"}],` +
 		`"rateLimit":{"next":{"relative":3000}},"usage":{"credits":{"used":4,"remaining":6}}}`
-	e := apiErrorFrom(t, rawResponse{Status: 429, Body: []byte(body)})
+	e := apiErrorFrom(t, transport.Response{Status: 429, Body: []byte(body)})
 	if e.RateLimit == nil || e.RateLimit.Next == nil || e.RateLimit.Next.Relative != 3*time.Second {
 		t.Errorf("RateLimit = %+v, want Next.Relative 3s", e.RateLimit)
 	}
@@ -43,7 +45,7 @@ func TestAPIErrorRateLimitLenient(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			e := apiErrorFrom(t, rawResponse{Status: 429, Body: []byte(tc.body)})
+			e := apiErrorFrom(t, transport.Response{Status: 429, Body: []byte(tc.body)})
 			if e.Code != "c" || e.Message != "m" {
 				t.Errorf("code/message = %q/%q, want c/m", e.Code, e.Message)
 			}
@@ -68,7 +70,7 @@ func TestAPIErrorRetryAfter(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			e := apiErrorFrom(t, rawResponse{Status: 429, Header: tc.header, Received: received, Body: []byte(`{"success":false}`)})
+			e := apiErrorFrom(t, transport.Response{Status: 429, Header: tc.header, Received: received, Body: []byte(`{"success":false}`)})
 			if e.RetryAfter != tc.want {
 				t.Errorf("RetryAfter = %v, want %v", e.RetryAfter, tc.want)
 			}
@@ -82,7 +84,7 @@ func TestAPIErrorIsRetryable(t *testing.T) {
 		want   bool
 	}{{429, true}, {503, true}, {400, false}, {401, false}, {200, false}}
 	for _, tc := range tests {
-		e := apiErrorFrom(t, rawResponse{Status: tc.status, Body: []byte(`{"success":false}`)})
+		e := apiErrorFrom(t, transport.Response{Status: tc.status, Body: []byte(`{"success":false}`)})
 		if got := e.IsRetryable(); got != tc.want {
 			t.Errorf("status %d: IsRetryable() = %v, want %v", tc.status, got, tc.want)
 		}

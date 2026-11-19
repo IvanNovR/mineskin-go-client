@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 const testAPIKey = "msk_abc12345_supersecretvalue"
@@ -275,8 +276,8 @@ func TestDoBodySizeLimit(t *testing.T) {
 		size    int
 		wantErr bool
 	}{
-		{"exactly at the cap", maxResponseBodyBytes, false},
-		{"one byte over the cap", maxResponseBodyBytes + 1, true},
+		{"exactly at the cap", transport.MaxResponseBodyBytes, false},
+		{"one byte over the cap", transport.MaxResponseBodyBytes + 1, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -399,7 +400,7 @@ func TestDoSendsBody(t *testing.T) {
 	})
 	c := newTestClient(t, srv.URL)
 	_, err := c.do(context.Background(), http.MethodPost, "/v2/queue",
-		&requestBody{contentType: "application/json", data: payload})
+		&transport.Body{ContentType: "application/json", Data: payload})
 	if err != nil {
 		t.Fatalf("do() error = %v", err)
 	}
@@ -441,7 +442,7 @@ func TestPostHappyPath(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	var user string
 	meta, err := c.post(context.Background(), "/v2/x",
-		&requestBody{contentType: "application/json", data: []byte(`{"a":1}`)},
+		&transport.Body{ContentType: "application/json", Data: []byte(`{"a":1}`)},
 		func(obj map[string]json.RawMessage, _ []byte) error {
 			return json.Unmarshal(obj["user"], &user)
 		})
@@ -487,7 +488,7 @@ func TestDoPostRedirect307ReplaysBody(t *testing.T) {
 	})
 	c := newTestClient(t, srv.URL)
 	_, err := c.do(context.Background(), http.MethodPost, "/v2/start",
-		&requestBody{contentType: "application/json", data: payload})
+		&transport.Body{ContentType: "application/json", Data: payload})
 	if err != nil {
 		t.Fatalf("do() error = %v", err)
 	}

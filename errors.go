@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // Sentinel errors for use with errors.Is.
@@ -80,7 +82,7 @@ type APIError struct {
 
 // IsRetryable reports whether the error is likely temporary: status 408, 429,
 // or 500 and above except 501 and 505.
-func (e *APIError) IsRetryable() bool { return isRetryableStatus(e.Status) }
+func (e *APIError) IsRetryable() bool { return transport.IsRetryableStatus(e.Status) }
 
 // Error implements the error interface.
 func (e *APIError) Error() string {

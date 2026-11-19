@@ -26,6 +26,8 @@ type pendingJob struct {
 	attempts    int
 	waiters     int
 	nextCheckAt time.Time
+	wait        time.Duration // the interval chosen for the current check
+	failureSeen bool          // onJobFailure already called for this job
 	done        chan struct{}
 	resp        *JobResponse
 	err         error

@@ -99,11 +99,17 @@
 //
 // # Shutting down
 //
-// Close releases the resources of a Client. It is safe to call more than
-// once and returns nil. Calls that are queued or waiting, and every call made
-// after Close, fail with ErrClientClosed; requests in flight are cancelled and
-// Close returns after the background goroutines have exited. A transport
-// passed with WithTransport is left open.
+// Callers should Close every Client they create. Unless WithTransport is
+// given, each Client owns its own connection pool (a clone of
+// http.DefaultTransport), and only Close releases its idle connections and
+// stops its background goroutines; dropping a Client without Close leaks them.
+//
+// Close is safe to call more than once and returns nil; a concurrent or second
+// call blocks until the first has finished. Calls that are queued or waiting,
+// and every call made after Close, fail with ErrClientClosed; requests in
+// flight are cancelled and Close returns after the background goroutines have
+// exited. A transport passed with WithTransport is left open and remains the
+// caller's to close.
 //
 // # Concurrency and logging
 //

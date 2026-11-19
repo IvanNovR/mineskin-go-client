@@ -106,7 +106,7 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
 	c.idleCloser = r.idleCloser
 	c.genGroup, c.getGroup = c.newRequestGroups(r)
-	c.poller = newJobPoller(c.baseCtx, c, r.polling, r.logger, c.failureHook())
+	c.poller = newJobPoller(c.baseCtx, c.clock, c, r.polling, r.logger, c.failureHook())
 	return c, nil
 }
 

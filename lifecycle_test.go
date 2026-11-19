@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 // closeSpyTransport counts CloseIdleConnections calls.
@@ -226,8 +228,7 @@ func TestPollerUsesBaseContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := newJobPoller(base, f, opts, nil, nil)
-	p.now = func() time.Time { return pollerT0 }
+	p := newJobPoller(base, clock.NewFake(pollerT0), f, opts, nil, nil)
 	p.add(Job{ID: "j0", Status: JobStatusWaiting})
 	p.tick(pollerT0.Add(time.Hour))
 

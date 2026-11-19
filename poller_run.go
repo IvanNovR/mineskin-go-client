@@ -58,20 +58,26 @@ func (p *jobPoller) soonest() (time.Time, bool) {
 // ticks, and exits when no job is pending. It is started only by register.
 func (p *jobPoller) run() {
 	defer p.wg.Done()
-	// A single timer is reused. Since Go 1.23, Reset and Stop discard a stale
-	// unreceived value, so the timer needs no draining before Reset.
-	timer := time.NewTimer(time.Hour)
-	defer timer.Stop()
+	// fire has capacity 1; the timer callback never blocks. A stale value from
+	// a timer that fired just as a wake arrived only causes a harmless tick
+	// that finds nothing due.
+	fire := make(chan struct{}, 1)
 	for {
 		next, ok := p.soonest()
 		if !ok {
 			return
 		}
-		timer.Reset(max(next.Sub(p.now()), 0))
+		timer := p.clock.AfterFunc(max(next.Sub(p.now()), 0), func() {
+			select {
+			case fire <- struct{}{}:
+			default:
+			}
+		})
 		select {
-		case <-timer.C:
+		case <-fire:
 			p.tick(p.now())
 		case <-p.wakeCh:
+			timer.Stop()
 		}
 	}
 }

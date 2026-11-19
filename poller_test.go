@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 var pollerT0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -73,9 +75,7 @@ func newTestPoller(t *testing.T, f jobFetcher, opts PollOptions) *jobPoller {
 	if err != nil {
 		t.Fatalf("withDefaults() error = %v", err)
 	}
-	p := newJobPoller(context.Background(), f, opts, nil, nil)
-	p.now = func() time.Time { return pollerT0 }
-	return p
+	return newJobPoller(context.Background(), clock.NewFake(pollerT0), f, opts, nil, nil)
 }
 
 // addJobs adds jobs "j0".."j{n-1"} and returns their pending entries.

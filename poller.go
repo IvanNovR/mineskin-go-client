@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 // batchThreshold is the number of pending jobs above which a tick checks jobs
@@ -43,7 +45,7 @@ type jobPoller struct {
 	fetch  jobFetcher
 	opts   PollOptions
 	logger *slog.Logger
-	now    func() time.Time
+	clock  clock.Clock
 	// ctx is the client base context; every check request runs on it.
 	ctx context.Context
 	// onJobFailure is called when a job is seen FAILED; never nil.
@@ -63,9 +65,10 @@ type jobPoller struct {
 }
 
 // newJobPoller returns a poller using f and opts, which must already have
-// defaults applied. Requests run on ctx, the client base context. A nil
+// defaults applied. Requests run on ctx, the client base context; clk drives
+// the poller's time and its wait timer. A nil
 // logger discards logs; a nil onJobFailure does nothing.
-func newJobPoller(ctx context.Context, f jobFetcher, opts PollOptions, logger *slog.Logger, onJobFailure func()) *jobPoller {
+func newJobPoller(ctx context.Context, clk clock.Clock, f jobFetcher, opts PollOptions, logger *slog.Logger, onJobFailure func()) *jobPoller {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
@@ -78,11 +81,14 @@ func newJobPoller(ctx context.Context, f jobFetcher, opts PollOptions, logger *s
 		fetch:        f,
 		opts:         opts,
 		logger:       logger,
-		now:          time.Now,
+		clock:        clk,
 		pending:      make(map[string]*pendingJob),
 		wakeCh:       make(chan struct{}, 1),
 	}
 }
+
+// now returns the poller clock's current time.
+func (p *jobPoller) now() time.Time { return p.clock.Now() }
 
 // add registers a waiter for job. A job with an id that is already pending
 // shares the existing entry. The first check is scheduled by

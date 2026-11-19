@@ -1,10 +1,11 @@
 package mineskin
 
 import (
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 // barrierGet returns a getFn that blocks until parties calls are inside it at
@@ -74,15 +75,11 @@ func TestPollerListForcedGetsRunInParallel(t *testing.T) {
 }
 
 func TestPollerReschedulesFromCompletion(t *testing.T) {
-	var mu sync.Mutex
-	now := pollerT0
 	f := &fakeFetcher{}
 	p := newTestPoller(t, f, PollOptions{Interval: func(int) time.Duration { return time.Second }})
-	p.now = func() time.Time { mu.Lock(); defer mu.Unlock(); return now }
+	fake := p.clock.(*clock.Fake)
 	f.getFn = func(id string) (*JobResponse, error) {
-		mu.Lock()
-		now = pollerT0.Add(5 * time.Second) // the check takes 5 s
-		mu.Unlock()
+		fake.Advance(5 * time.Second) // the check takes 5 s
 		return jobResp(id, JobStatusProcessing, UUID{}), nil
 	}
 	pj := p.add(Job{ID: "j0", Status: JobStatusWaiting})

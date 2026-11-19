@@ -92,10 +92,20 @@
 // retryable non-JSON response to a generate call, temporarily lengthens the
 // interval, and the penalty decays over time.
 //
-// The client never retries a request by itself; the errors carry
-// APIError.RetryAfter, APIError.RateLimit and APIError.IsRetryable so that the
-// caller can decide. Time spent waiting in the throttle is bounded only by the
-// context of the call: WithTimeout covers the HTTP exchange alone.
+// A request that the server rejects with HTTP 429 is retried automatically, at
+// most DefaultRateLimitRetries (2) times; WithRateLimitRetries changes that
+// and 0 turns it off. This applies to every request, including Generate and
+// the poller's checks: a 429 is never processed, so a retry cannot create a
+// duplicate skin or cost an extra credit. MineSkin starts the generate
+// cooldown when a job finishes and announces it nowhere in advance, so a
+// Generate right after WaitForJob can be answered with "request too soon". The
+// retry goes through the group's throttle again and waits for the delay the 429
+// carried (or the normal interval when it had none). If that delay ends after
+// the context's deadline, the original 429 error is returned at once. Only 429
+// is retried; for other failures the errors carry APIError.RetryAfter,
+// APIError.RateLimit and APIError.IsRetryable so that the caller can decide.
+// Time spent waiting in the throttle is bounded only by the context of the
+// call: WithTimeout covers the HTTP exchange alone.
 //
 // # Shutting down
 //

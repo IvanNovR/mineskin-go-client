@@ -55,6 +55,8 @@ type Client struct {
 	clock      clock.Clock
 	genGroup   *requestGroup
 	getGroup   *requestGroup
+	// rateLimitRetries is the number of automatic retries after an HTTP 429.
+	rateLimitRetries int
 
 	// baseCtx is cancelled by Close and parents every request context.
 	baseCtx    context.Context
@@ -78,6 +80,8 @@ func NewClient(opts ...Option) (*Client, error) {
 		baseURL:   DefaultBaseURL,
 		userAgent: DefaultUserAgent,
 		timeout:   DefaultTimeout,
+
+		rateLimitRetries: DefaultRateLimitRetries,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -102,6 +106,8 @@ func NewClient(opts ...Option) (*Client, error) {
 		logger:  r.logger,
 		polling: r.polling,
 		clock:   r.clock,
+
+		rateLimitRetries: r.rateLimitRetries,
 	}
 	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
 	c.idleCloser = r.idleCloser
@@ -135,6 +141,8 @@ type resolvedConfig struct {
 	generateThrottle Throttle
 	getThrottle      Throttle
 	autoTuning       bool
+	// rateLimitRetries is never negative.
+	rateLimitRetries int
 }
 
 // resolve validates cfg and fills in defaults. Errors match ErrInvalidInput
@@ -143,6 +151,9 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 	baseURL, err := normalizeBaseURL(cfg.baseURL)
 	if err != nil {
 		return nil, err
+	}
+	if cfg.rateLimitRetries < 0 {
+		return nil, newInvalidInputError("rate limit retries must not be negative")
 	}
 	if cfg.timeout <= 0 {
 		return nil, newInvalidInputError("timeout must be greater than zero")
@@ -156,7 +167,7 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 		return nil, err
 	}
 	r := &resolvedConfig{
-		generateThrottle: gen, getThrottle: get, autoTuning: cfg.autoTuning,
+		generateThrottle: gen, getThrottle: get, autoTuning: cfg.autoTuning, rateLimitRetries: cfg.rateLimitRetries,
 		baseURL: baseURL, timeout: cfg.timeout, polling: polling,
 		transport: cfg.transport, logger: cfg.logger,
 		userAgent: strings.TrimSpace(cfg.userAgent),

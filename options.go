@@ -24,6 +24,7 @@ type config struct {
 	generateThrottleSet bool
 	getThrottle         Throttle
 	autoTuning          bool
+	rateLimitRetries    int
 	// clock is set only by tests; nil means the real clock.
 	clock clock.Clock
 }
@@ -128,4 +129,21 @@ func WithGetThrottle(t Throttle) Option {
 // either order, makes NewClient return an error matching ErrInvalidInput.
 func WithAutoTuning() Option {
 	return func(c *config) { c.autoTuning = true }
+}
+
+// WithRateLimitRetries sets how many times a request rejected with HTTP 429
+// is retried automatically; the default is DefaultRateLimitRetries. Zero
+// disables retries and a negative value makes NewClient return an error
+// matching ErrInvalidInput.
+//
+// A 429 is never processed by the server, so retrying is safe for every
+// request, including Generate: it cannot create a duplicate skin or cost an
+// extra credit. A retry goes through the group's throttle again, so it waits
+// for the delay the 429 announced (rateLimit.next or Retry-After), or for the
+// normal interval when there is none. When that delay would end after the
+// context's deadline, the original 429 error is returned at once instead of
+// waiting. Only 429 is retried; other failures are returned as they are, and
+// IsRetryable lets callers decide about those. Each retry logs one Debug line.
+func WithRateLimitRetries(n int) Option {
+	return func(c *config) { c.rateLimitRetries = n }
 }

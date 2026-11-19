@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client"
@@ -123,4 +124,30 @@ func ExampleClient_Close() {
 	_, err = c.GetSkin(context.Background(), exampleSkinID)
 	fmt.Println(errors.Is(err, mineskin.ErrClientClosed))
 	// Output: true
+}
+
+func ExampleWithRateLimitRetries() {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = fmt.Fprint(w, `{"success":false,"errors":[{"code":"rate_limit","message":"request too soon"}]}`)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"success":true,"skin":{"uuid":%q,"name":"Steve"}}`, exampleSkinID)
+	}))
+	defer srv.Close()
+
+	// The default is two retries; a 429 is retried through the throttle.
+	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL), mineskin.WithUserAgent("example/1.0"),
+		mineskin.WithRateLimitRetries(mineskin.DefaultRateLimitRetries))
+	if err != nil {
+		log.Fatal(err)
+	}
+	skin, err := c.GetSkin(context.Background(), exampleSkinID)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(skin.Skin.Name, calls.Load())
+	// Output: Steve 2
 }

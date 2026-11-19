@@ -83,6 +83,8 @@ func newRequestGroup(name string, clk clock.Clock, t Throttle) *requestGroup {
 // server delay and frees the slot. Time spent queued is bounded only by ctx; the client timeout
 // covers the HTTP exchange alone. A non-nil proceed is called once the slot is
 // held; when it returns false nothing is sent and errCheckSkipped is returned.
+// A response rejected with HTTP 429 is retried (see retryRateLimited); every
+// retry goes through the throttle and the start gate again.
 func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path string, body *requestBody, proceed func() bool) (rawResponse, error) {
 	if ctx == nil {
 		return rawResponse{}, newInvalidInputError("context is nil")
@@ -93,17 +95,31 @@ func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path str
 	if err := c.prepareTuned(merged, g, label); err != nil {
 		return rawResponse{}, closedOrSame(ctx, merged, label, err)
 	}
-	release, err := c.acquire(merged, g, label)
+	for attempt := 1; ; attempt++ {
+		raw, err := c.exchangeOnce(merged, g, method, path, body, proceed)
+		if err != nil {
+			return rawResponse{}, closedOrSame(ctx, merged, label, err)
+		}
+		if !c.retryRateLimited(merged, g, raw, attempt) {
+			return raw, nil
+		}
+	}
+}
+
+// exchangeOnce takes a start slot, sends the request and frees the slot.
+func (c *Client) exchangeOnce(ctx context.Context, g *requestGroup, method, path string, body *requestBody, proceed func() bool) (rawResponse, error) {
+	label := method + " " + path
+	release, err := c.acquire(ctx, g, label)
 	if err != nil {
-		return rawResponse{}, closedOrSame(ctx, merged, label, err)
+		return rawResponse{}, err
 	}
 	defer release()
 	if proceed != nil && !proceed() {
 		return rawResponse{}, errCheckSkipped
 	}
-	raw, err := c.do(merged, method, path, body)
+	raw, err := c.do(ctx, method, path, body)
 	if err != nil {
-		return rawResponse{}, closedOrSame(ctx, merged, label, err)
+		return rawResponse{}, err
 	}
 	// The delay must be in place before release, or the next queued waiter
 	// could be dispatched ahead of it.

@@ -107,7 +107,7 @@ func TestServerDelayFromBodySuccess(t *testing.T) {
 
 func TestServerDelayFromBodyOnAPIError(t *testing.T) {
 	srv := replyServer(t, map[string]reply{keyQueue: {429, "", nextRelative(3000, false)}})
-	c, fake := delayClient(t, srv)
+	c, fake := delayClient(t, srv, WithRateLimitRetries(0))
 	err := queueCall(c)()
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != "rate_limited" || apiErr.Message != "slow down" {
@@ -149,7 +149,7 @@ func TestRetryAfterOnRetryableJSONAndNonJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := replyServer(t, map[string]reply{keyQueue: tt.rep})
-			c, fake := delayClient(t, srv)
+			c, fake := delayClient(t, srv, WithRateLimitRetries(0))
 			_ = queueCall(c)()
 			_ = assertDelayed(t, fake, c.genGroup, queueCall(c), tt.want)
 		})
@@ -174,7 +174,7 @@ func TestServerDelayMissingOrInvalidIsNoDelay(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			srv := replyServer(t, map[string]reply{keyQueue: tt.rep})
-			c, fake := delayClient(t, srv)
+			c, fake := delayClient(t, srv, WithRateLimitRetries(0))
 			if err := queueCall(c)(); (err != nil) != tt.wantErr {
 				t.Fatalf("first error = %v, wantErr %v", err, tt.wantErr)
 			}

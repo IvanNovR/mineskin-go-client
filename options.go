@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 // config collects the settings applied by Option values before NewClient
@@ -16,6 +18,8 @@ type config struct {
 	transport http.RoundTripper
 	logger    *slog.Logger
 	polling   PollOptions
+	// clock is set only by tests; nil means the real clock.
+	clock clock.Clock
 }
 
 // Option configures a Client. Options are applied in order by NewClient.

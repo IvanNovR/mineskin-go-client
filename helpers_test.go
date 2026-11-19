@@ -11,7 +11,12 @@ import (
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
+
+// withClock replaces the client's clock; it exists only for tests.
+func withClock(c clock.Clock) Option { return func(cfg *config) { cfg.clock = c } }
 
 // roundTripFunc adapts a function to http.RoundTripper.
 type roundTripFunc func(*http.Request) (*http.Response, error)

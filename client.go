@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 const (
@@ -42,6 +44,7 @@ type Client struct {
 	logger     *slog.Logger
 	polling    PollOptions
 	poller     *jobPoller
+	clock      clock.Clock
 }
 
 // NewClient creates a Client from the given options. Invalid configuration
@@ -75,6 +78,7 @@ func NewClient(opts ...Option) (*Client, error) {
 		},
 		logger:  r.logger,
 		polling: r.polling,
+		clock:   r.clock,
 	}
 	c.poller = newJobPoller(c, r.polling, r.logger)
 	return c, nil
@@ -89,6 +93,7 @@ type resolvedConfig struct {
 	transport http.RoundTripper
 	logger    *slog.Logger
 	polling   PollOptions
+	clock     clock.Clock
 }
 
 // resolve validates cfg and fills in defaults. Errors match ErrInvalidInput
@@ -113,6 +118,10 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 	}
 	if r.transport == nil {
 		r.transport = http.DefaultTransport
+	}
+	r.clock = cfg.clock
+	if r.clock == nil {
+		r.clock = clock.Real()
 	}
 	if r.logger == nil {
 		r.logger = slog.New(slog.DiscardHandler)

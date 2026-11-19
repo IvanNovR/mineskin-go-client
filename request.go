@@ -65,7 +65,7 @@ func (c *Client) do(ctx context.Context, method, path string, body *requestBody)
 	c.logger.Debug("MineSkin request completed",
 		"method", method, "path", path, "status", resp.StatusCode,
 		"breadcrumb", resp.Header.Get(headerMineskinCrumb), "elapsed", time.Since(start))
-	return rawResponse{Status: resp.StatusCode, Header: resp.Header, Body: respBody}, nil
+	return rawResponse{Status: resp.StatusCode, Header: resp.Header, Body: respBody, Received: c.clock.Now()}, nil
 }
 
 // readLimited reads r completely and fails when it holds more than

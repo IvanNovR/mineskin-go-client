@@ -1,7 +1,9 @@
 package mineskin
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
@@ -37,8 +39,8 @@ func newRequestGroup(name string, clk clock.Clock, t Throttle) *requestGroup {
 	}
 }
 
-// exchange waits for a start slot in g, sends the request with do and frees
-// the slot. Time spent queued is bounded only by ctx; the client timeout
+// exchange waits for a start slot in g, sends the request with do, applies any
+// server delay and frees the slot. Time spent queued is bounded only by ctx; the client timeout
 // covers the HTTP exchange alone.
 func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path string, body *requestBody) (rawResponse, error) {
 	if ctx == nil {
@@ -49,7 +51,49 @@ func (c *Client) exchange(ctx context.Context, g *requestGroup, method, path str
 		return rawResponse{}, err
 	}
 	defer release()
-	return c.do(ctx, method, path, body)
+	raw, err := c.do(ctx, method, path, body)
+	if err != nil {
+		return rawResponse{}, err
+	}
+	// The delay must be in place before release, or the next queued waiter
+	// could be dispatched ahead of it.
+	if d := serverDelay(raw); d > 0 {
+		g.throttle.Delay(raw.Received.Add(d))
+	}
+	return raw, nil
+}
+
+// serverDelay returns how long the server asks the group to wait: the later
+// of the body's rateLimit.next.relative (any JSON object body) and the
+// Retry-After header (retryable statuses only). Missing or invalid values
+// give 0; it never fails, so the original result or error is never replaced.
+func serverDelay(raw rawResponse) time.Duration {
+	var delay time.Duration
+	if rl := bodyRateLimit(raw.Body); rl != nil && rl.Next != nil {
+		delay = rl.Next.Relative
+	}
+	if isRetryableStatus(raw.Status) {
+		if ra, ok := parseRetryAfter(raw.Header.Get(headerRetryAfter), raw.Received); ok {
+			delay = max(delay, ra)
+		}
+	}
+	return delay
+}
+
+// bodyRateLimit leniently reads the rateLimit field of a JSON object body. It
+// returns nil for a body that is not a JSON object or has no usable rateLimit.
+func bodyRateLimit(body []byte) *RateLimitInfo {
+	body = bytes.TrimPrefix(body, utf8BOM)
+	if !looksLikeJSONObject(body) {
+		return nil
+	}
+	var env struct {
+		RateLimit json.RawMessage `json:"rateLimit"`
+	}
+	if json.Unmarshal(body, &env) != nil {
+		return nil
+	}
+	return decodeRateLimit(env.RateLimit)
 }
 
 // acquire takes a slot in g's throttle. A done ctx or a closed throttle

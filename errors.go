@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // Sentinel errors for use with errors.Is.
@@ -59,9 +60,22 @@ type APIError struct {
 	Code string
 	// Message is the first error message of the response, or "Request Failed".
 	Message string
+	// RateLimit is the rateLimit field of the response, or nil when absent or
+	// malformed.
+	RateLimit *RateLimitInfo
+	// Usage is the usage field of the response, or nil when absent or
+	// malformed.
+	Usage *UsageInfo
+	// RetryAfter is the Retry-After header (RFC 9110, delta-seconds or
+	// HTTP-date), or 0 when absent or invalid.
+	RetryAfter time.Duration
 	// ResponseMeta holds the status, lists and headers of the response.
 	ResponseMeta
 }
+
+// IsRetryable reports whether the error is likely temporary: status 408, 429,
+// or 500 and above except 501 and 505.
+func (e *APIError) IsRetryable() bool { return isRetryableStatus(e.Status) }
 
 // Error implements the error interface.
 func (e *APIError) Error() string {

@@ -94,7 +94,9 @@ func (t *tuner) finishLoad(g Grants, err error, refresh bool) {
 		if refresh {
 			msg = "Refreshing MineSkin grants failed, keeping the last-known limits"
 		}
-		t.logger.Warn(msg, "error", err)
+		// The error may carry server-controlled text (APIError message and
+		// code), so control characters are stripped before it is logged.
+		t.logger.Warn(msg, "error", stripControl(err.Error()))
 	}
 	t.mu.Lock()
 	t.loading, t.settled = false, true

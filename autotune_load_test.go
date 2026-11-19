@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
@@ -444,5 +446,51 @@ func TestAutoNeverLogsAPIKey(t *testing.T) {
 				t.Error("expected log output")
 			}
 		})
+	}
+}
+
+// rawAttrHandler is a slog handler that keeps attribute values unescaped, like
+// a custom handler that writes them straight to a terminal.
+type rawAttrHandler struct {
+	mu    sync.Mutex
+	attrs []string
+}
+
+func (h *rawAttrHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *rawAttrHandler) WithAttrs([]slog.Attr) slog.Handler       { return h }
+func (h *rawAttrHandler) WithGroup(string) slog.Handler            { return h }
+func (h *rawAttrHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if r.Level < slog.LevelWarn {
+		return nil
+	}
+	r.Attrs(func(a slog.Attr) bool {
+		h.attrs = append(h.attrs, a.Value.String())
+		return true
+	})
+	return nil
+}
+
+func TestAutoGrantsLoadErrorLogStripsControlCharacters(t *testing.T) {
+	hostile := `{"success":false,"errors":[{"code":"bad\u001b[2J","message":"\u001b[31mred\u001b[0m\r\nforged line\u0007"}]}`
+	srv := replyServer(t, map[string]reply{keyUser: {status: 401, body: hostile}, keyQueue: {status: 200, body: plainQueue}})
+	h := &rawAttrHandler{}
+	c := newTestClient(t, srv.URL, WithAutoTuning(), WithAPIKey(autoTestKey), WithLogger(slog.New(h)))
+
+	if err := queueCall(c)(); err != nil {
+		t.Fatalf("Queue() error = %v", err)
+	}
+
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	logged := strings.Join(h.attrs, "|")
+	if !strings.Contains(logged, "red") {
+		t.Fatalf("logged error lost its text: %q", logged)
+	}
+	for _, r := range logged {
+		if unicode.IsControl(r) {
+			t.Fatalf("logged error contains control character %U: %q", r, logged)
+		}
 	}
 }

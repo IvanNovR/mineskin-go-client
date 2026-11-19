@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -43,7 +44,44 @@ func liveClient(t *testing.T) *Client {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
+	t.Cleanup(func() { _ = c.Close() })
 	return c
+}
+
+var (
+	genClientOnce sync.Once
+	genClient     *Client
+	genClientErr  error
+)
+
+// TestMain closes the shared generate client after all live tests ran.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if genClient != nil {
+		_ = genClient.Close()
+	}
+	os.Exit(code)
+}
+
+// sharedGenClient returns the one client every generate-path live test uses,
+// so that its generate throttle and the server delays carry over between
+// tests. It is closed by TestMain, not by a single test. It skips the test
+// when MINESKIN_API_KEY is not set. The key is never logged.
+func sharedGenClient(t *testing.T) *Client {
+	t.Helper()
+	key := os.Getenv("MINESKIN_API_KEY")
+	if strings.TrimSpace(key) == "" {
+		t.Skip("MINESKIN_API_KEY not set")
+	}
+	genClientOnce.Do(func() {
+		genClient, genClientErr = NewClient(WithAPIKey(key), WithUserAgent("mineskin-go-client-tests"),
+			WithTimeout(liveGenHTTPLimit),
+			WithJobPolling(PollOptions{MaxAttempts: liveMaxPollAttempts, UseETA: true}))
+	})
+	if genClientErr != nil {
+		t.Fatalf("NewClient() error = %v", genClientErr)
+	}
+	return genClient
 }
 
 func liveContext(t *testing.T) context.Context {
@@ -153,6 +191,10 @@ const (
 	liveSkinSize     = 64
 	liveNameBytes    = 4
 	liveGenHTTPLimit = 60 * time.Second
+
+	liveMaxPollAttempts = 30
+	liveSmokeCalls      = 3
+	liveSmokeTimeout    = 5 * time.Minute
 )
 
 // randomSkinImage returns a 64x64 image of random pixels.
@@ -182,15 +224,7 @@ func liveGenContext(t *testing.T) context.Context {
 }
 
 func TestLiveQueueURLAndWait(t *testing.T) {
-	key := os.Getenv("MINESKIN_API_KEY")
-	if strings.TrimSpace(key) == "" {
-		t.Skip("MINESKIN_API_KEY not set")
-	}
-	c, err := NewClient(WithAPIKey(key), WithUserAgent("mineskin-go-client-tests"),
-		WithJobPolling(PollOptions{MaxAttempts: 30, UseETA: true}))
-	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
-	}
+	c := sharedGenClient(t)
 	ctx := liveGenContext(t)
 	name := randomSkinName(t)
 
@@ -242,15 +276,7 @@ func TestLiveQueueURLAndWait(t *testing.T) {
 }
 
 func TestLiveGenerateUpload(t *testing.T) {
-	key := os.Getenv("MINESKIN_API_KEY")
-	if strings.TrimSpace(key) == "" {
-		t.Skip("MINESKIN_API_KEY not set")
-	}
-	c, err := NewClient(WithAPIKey(key), WithUserAgent("mineskin-go-client-tests"),
-		WithTimeout(liveGenHTTPLimit))
-	if err != nil {
-		t.Fatalf("NewClient() error = %v", err)
-	}
+	c := sharedGenClient(t)
 	name := randomSkinName(t)
 
 	res, err := c.Generate(liveGenContext(t), FromImage(randomSkinImage()),
@@ -263,5 +289,78 @@ func TestLiveGenerateUpload(t *testing.T) {
 	}
 	if res.Skin.Name != name {
 		t.Errorf("Skin.Name = %q, want %q", res.Skin.Name, name)
+	}
+}
+
+// isStatus429 reports whether err is an API or unexpected-response error with
+// HTTP status 429.
+func isStatus429(err error) bool {
+	var apiErr *APIError
+	if errors.As(err, &apiErr) && apiErr.Status == http.StatusTooManyRequests {
+		return true
+	}
+	var unexpected *UnexpectedResponseError
+	return errors.As(err, &unexpected) && unexpected.Status == http.StatusTooManyRequests
+}
+
+func TestLiveThrottleSmoke(t *testing.T) {
+	c := sharedGenClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), liveSmokeTimeout)
+	t.Cleanup(cancel)
+
+	var last time.Time
+	for i := range liveSmokeCalls {
+		start := time.Now()
+		res, err := c.Generate(ctx, FromImage(randomSkinImage()),
+			&GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
+		if isStatus429(err) {
+			t.Fatalf("Generate() #%d got HTTP 429 despite the throttle: %v", i, err)
+		}
+		if err != nil {
+			t.Fatalf("Generate() #%d error = %v", i, err)
+		}
+		gap := time.Duration(0)
+		if !last.IsZero() {
+			gap = start.Sub(last)
+		}
+		last = start
+		if res.RateLimit != nil && res.RateLimit.Next != nil {
+			t.Logf("call %d: gap since previous start=%s took=%s next=%+v", i, gap, time.Since(start), *res.RateLimit.Next)
+		} else {
+			t.Logf("call %d: gap since previous start=%s took=%s next=none", i, gap, time.Since(start))
+		}
+	}
+}
+
+func TestLiveAutoTuning(t *testing.T) {
+	if os.Getenv("MINESKIN_LIVE_PAID") != "1" {
+		t.Skip("MINESKIN_LIVE_PAID=1 not set")
+	}
+	key := os.Getenv("MINESKIN_API_KEY")
+	if strings.TrimSpace(key) == "" {
+		t.Skip("MINESKIN_API_KEY not set")
+	}
+	c, err := NewClient(WithAPIKey(key), WithUserAgent("mineskin-go-client-tests"), WithAutoTuning())
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	_, err = c.Queue(liveGenContext(t), FromURL(fmt.Sprintf("https://api.mineskin.org/random-image?t=%d", time.Now().Unix())),
+		&GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
+	if err != nil {
+		t.Fatalf("Queue() error = %v", err)
+	}
+	tn := c.genGroup.tuner
+	tn.mu.Lock()
+	settled := tn.settled
+	tn.mu.Unlock()
+	if !settled {
+		t.Fatal("grants were not loaded after the first Queue")
+	}
+	l := tn.limits(c.clock.Now())
+	t.Logf("tuned limits: interval=%s concurrency=%d", l.Interval, l.Concurrency)
+	if l.Concurrency <= livePaidMinConcur {
+		t.Errorf("tuned concurrency = %d, want > %d", l.Concurrency, livePaidMinConcur)
 	}
 }

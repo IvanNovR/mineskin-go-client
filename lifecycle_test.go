@@ -8,8 +8,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 // closeSpyTransport counts CloseIdleConnections calls.
@@ -121,7 +119,7 @@ func TestCloseFailsWaitForJob(t *testing.T) {
 		_, err := c.WaitForJob(context.Background(), Job{ID: "job-1"})
 		return err
 	})
-	eventually(t, "poller running", c.poller.isRunning)
+	eventually(t, "poller running", c.poller.Running)
 
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -129,7 +127,7 @@ func TestCloseFailsWaitForJob(t *testing.T) {
 	if err := mustDone(t, "WaitForJob", res); !errors.Is(err, ErrClientClosed) || !errors.Is(err, ErrClient) {
 		t.Errorf("WaitForJob error = %v, want ErrClientClosed", err)
 	}
-	if c.poller.isRunning() {
+	if c.poller.Running() {
 		t.Error("poller still running after Close")
 	}
 }
@@ -151,11 +149,7 @@ func TestCloseWaitsForPollerExit(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	waited := make(chan struct{})
-	go func() { c.poller.wg.Wait(); close(waited) }()
-	select {
-	case <-waited:
-	case <-time.After(waitTimeout):
+	if c.poller.Running() {
 		t.Fatal("poller goroutine still running after Close returned")
 	}
 	if err := mustDone(t, "WaitForJob", res); !errors.Is(err, ErrClientClosed) {
@@ -215,52 +209,5 @@ func TestCallerCancelVsCloseDistinguished(t *testing.T) {
 	err = mustDone(t, "closed GetUser", res)
 	if !errors.Is(err, ErrClientClosed) {
 		t.Errorf("Close error = %v, want ErrClientClosed", err)
-	}
-}
-
-func TestPollerUsesBaseContext(t *testing.T) {
-	type key struct{}
-	base := context.WithValue(context.Background(), key{}, "base")
-	f := &fakeFetcher{getFn: func(id string) (*JobResponse, error) {
-		return jobResp(id, JobStatusCompleted, pollerResult), nil
-	}}
-	opts, err := PollOptions{InitialDelay: time.Second}.withDefaults()
-	if err != nil {
-		t.Fatal(err)
-	}
-	p := newJobPoller(base, clock.NewFake(pollerT0), f, opts, nil, nil)
-	p.add(Job{ID: "j0", Status: JobStatusWaiting})
-	p.tick(pollerT0.Add(time.Hour))
-
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.getCtxs) != 1 || f.getCtxs[0] != base {
-		t.Errorf("fetcher ctxs = %v, want exactly the base context", f.getCtxs)
-	}
-}
-
-func TestPollerRegisterAfterCloseIsFinished(t *testing.T) {
-	p := newTestPoller(t, &fakeFetcher{}, PollOptions{})
-	p.close(ErrClientClosed)
-	pj := p.register(Job{ID: "j0"})
-	if !isFinished(pj) || !errors.Is(pj.err, ErrClientClosed) {
-		t.Errorf("register after close: finished=%v err=%v, want finished with ErrClientClosed", isFinished(pj), pj.err)
-	}
-	if p.isRunning() {
-		t.Error("run goroutine started after close")
-	}
-}
-
-func TestPollerCloseFailsPending(t *testing.T) {
-	p := newTestPoller(t, &fakeFetcher{}, PollOptions{})
-	pjs := addJobs(p, 3)
-	p.close(ErrClientClosed)
-	for _, pj := range pjs {
-		if !isFinished(pj) || !errors.Is(pj.err, ErrClientClosed) {
-			t.Errorf("job %s: err = %v, want ErrClientClosed", pj.id, pj.err)
-		}
-	}
-	if got := pendingCount(p); got != 0 {
-		t.Errorf("pending = %d, want 0", got)
 	}
 }

@@ -26,7 +26,7 @@ func (c *Client) Close() error {
 		}
 		c.genGroup.Throttle.Close()
 		c.getGroup.Throttle.Close()
-		c.poller.close(ErrClientClosed)
+		c.poller.Close(ErrClientClosed)
 		c.bg.Wait()
 		if c.idleCloser != nil {
 			c.idleCloser()

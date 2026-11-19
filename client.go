@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/poll"
 	"github.com/IvanNovR/mineskin-go-client/internal/ratelimit"
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
@@ -52,7 +53,7 @@ type Client struct {
 	doer     *transport.Doer
 	logger   *slog.Logger
 	polling  PollOptions
-	poller   *jobPoller
+	poller   *poll.Poller[*JobResponse]
 	clock    clock.Clock
 	genGroup *ratelimit.Group
 	getGroup *ratelimit.Group
@@ -113,7 +114,10 @@ func NewClient(opts ...Option) (*Client, error) {
 	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
 	c.idleCloser = r.idleCloser
 	c.genGroup, c.getGroup = c.newRequestGroups(r)
-	c.poller = newJobPoller(c.baseCtx, c.clock, c, r.polling, r.logger, c.failureHook())
+	c.poller = poll.New(poll.Config[*JobResponse]{
+		Ctx: c.baseCtx, Clock: c.clock, Fetcher: jobSource{c}, Options: toPollOptions(r.polling),
+		Logger: r.logger, OnJobFailure: c.failureHook(),
+	})
 	return c, nil
 }
 

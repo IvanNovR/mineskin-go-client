@@ -4,17 +4,24 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/poll"
 	"github.com/IvanNovR/mineskin-go-client/internal/ratelimit"
 	"github.com/IvanNovR/mineskin-go-client/internal/throttle"
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // This file is the root's translation layer between the public API and the
-// neutral internal packages: it wires the request groups and maps the raw
-// errors of internal/ratelimit to the public error contract.
+// neutral internal packages: it wires the request groups, adapts the job
+// endpoints to internal/poll, and maps the raw errors of internal/ratelimit
+// and internal/poll to the public error contract.
+
+// errCheckSkipped is returned by a request whose start gate declined it. The
+// poller treats it as "nothing to do", never as a job failure.
+var errCheckSkipped = ratelimit.ErrSkipped
 
 const (
 	generateGroupName = "generate"
@@ -134,3 +141,63 @@ func (e *retryCancelledError) Error() string {
 
 // Unwrap lets errors.Is and errors.As reach both causes.
 func (e *retryCancelledError) Unwrap() []error { return []error{e.ctxErr, e.rateLimited} }
+
+// jobSource adapts the job endpoints of a Client to poll.Fetcher.
+type jobSource struct{ c *Client }
+
+var _ poll.Fetcher[*JobResponse] = jobSource{}
+
+// Get fetches one job through the gated GET, mapping a declined start gate to
+// poll.ErrSkipped.
+func (s jobSource) Get(ctx context.Context, id string, proceed func() bool) (*JobResponse, poll.State, error) {
+	resp, err := s.c.getJobGated(ctx, id, proceed)
+	if errors.Is(err, errCheckSkipped) {
+		return nil, poll.State{}, poll.ErrSkipped
+	}
+	if err != nil {
+		return nil, poll.State{}, err
+	}
+	return resp, jobState(resp.Job), nil
+}
+
+// List fetches the states of the listed jobs with one request.
+func (s jobSource) List(ctx context.Context) ([]poll.State, error) {
+	list, err := s.c.ListJobs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	states := make([]poll.State, len(list.Jobs))
+	for i, j := range list.Jobs {
+		states[i] = jobState(j)
+	}
+	return states, nil
+}
+
+// jobState derives the neutral poll state of j.
+func jobState(j Job) poll.State {
+	return poll.State{ID: j.ID, ETA: j.ETA, Done: isPollDone(j), Failed: j.Status == JobStatusFailed}
+}
+
+// toPollOptions maps the resolved public polling options to the neutral ones.
+func toPollOptions(o PollOptions) poll.Options {
+	return poll.Options{InitialDelay: o.InitialDelay, Interval: o.Interval, MaxAttempts: o.MaxAttempts, UseETA: o.UseETA}
+}
+
+// mapPollErr turns the errors of internal/poll into the public contract: an
+// exhausted job is ErrMaxAttempts, a bad interval is ErrInvalidInput and a
+// panicking one an ErrClient error. Other errors (a Fetcher error, the error
+// passed to Close) pass through.
+func mapPollErr(err error) error {
+	var exhausted *poll.ExhaustedError
+	var interval *poll.IntervalError
+	switch {
+	case errors.As(err, &exhausted):
+		return fmt.Errorf("%w: job %s after %d attempts", ErrMaxAttempts, exhausted.ID, exhausted.Attempts)
+	case errors.As(err, &interval) && interval.Panic != nil:
+		return wrapClientError("poll interval panicked", fmt.Errorf("%v", interval.Panic))
+	case errors.As(err, &interval):
+		return newInvalidInputError("poll interval must be greater than zero")
+	default:
+		return err
+	}
+}

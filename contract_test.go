@@ -264,7 +264,7 @@ func closeWaitingCase() contractCase {
 				_, err := c.WaitForJob(context.Background(), Job{ID: "job-1"})
 				return err
 			})
-			eventually(t, "poller running", c.poller.isRunning)
+			eventually(t, "poller running", c.poller.Running)
 			_ = c.Close()
 			return mustDone(t, "WaitForJob", res)
 		},

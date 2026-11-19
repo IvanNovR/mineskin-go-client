@@ -136,3 +136,6 @@ func waitGoroutinesSettle(t *testing.T, before int) {
 
 // runtimeGoroutines returns the current goroutine count.
 func runtimeGoroutines() int { return runtime.NumGoroutine() }
+
+// pollerT0 is the start of the fake clocks that drive the poller in tests.
+var pollerT0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

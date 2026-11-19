@@ -1,6 +1,10 @@
 package mineskin
 
-import "context"
+import (
+	"context"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/poll"
+)
 
 // WaitForJob waits until job is completed or failed and returns its final
 // state. Waits for several jobs share one background poller, which uses a
@@ -37,26 +41,32 @@ func (c *Client) WaitForJob(ctx context.Context, job Job) (*JobResponse, error) 
 	if err := ctx.Err(); err != nil {
 		return nil, wrapClientError("wait for job", err)
 	}
-	pj := c.poller.register(job)
+	pj := c.poller.Register(job.ID, job.ETA)
 	select {
-	case <-pj.done:
+	case <-pj.Done():
 		return copyResult(pj)
 	case <-ctx.Done():
 		select {
-		case <-pj.done: // a finished result wins over a cancelled ctx
+		case <-pj.Done(): // a finished result wins over a cancelled ctx
 			return copyResult(pj)
 		default:
 		}
-		c.poller.leave(pj)
+		c.poller.Leave(pj)
 		return nil, wrapClientError("wait for job", ctx.Err())
 	}
 }
 
-// copyResult returns the outcome of a finished pj with its own response copy.
-func copyResult(pj *pendingJob) (*JobResponse, error) {
-	if pj.err != nil {
-		return nil, pj.err
+// copyResult returns the outcome of a finished job with its own response
+// copy: the poller's errors are mapped to the public ones and a failed job
+// becomes a *JobFailedError.
+func copyResult(w *poll.Waiter[*JobResponse]) (*JobResponse, error) {
+	resp, state, err := w.Result()
+	if err != nil {
+		return nil, mapPollErr(err)
 	}
-	cp := *pj.resp
+	if state.Failed {
+		return nil, newJobFailedError(resp)
+	}
+	cp := *resp
 	return &cp, nil
 }

@@ -4,9 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/IvanNovR/mineskin-go-client/internal/poll"
 	"github.com/IvanNovR/mineskin-go-client/internal/ratelimit"
 	"github.com/IvanNovR/mineskin-go-client/internal/throttle"
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
@@ -134,5 +137,126 @@ func mustIs(t *testing.T, got error, targets ...error) {
 		if !errors.Is(got, target) {
 			t.Errorf("error = %v, want errors.Is %v", got, target)
 		}
+	}
+}
+
+func TestSeamStartGateDeclinedRequestSendsNothing(t *testing.T) {
+	var hits atomic.Int32
+	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
+	c := newTestClient(t, srv.URL)
+
+	_, err := c.getJobGated(context.Background(), "j1", func() bool { return false })
+
+	if !errors.Is(err, errCheckSkipped) {
+		t.Errorf("err = %v, want errCheckSkipped", err)
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("server hits = %d, want 0", n)
+	}
+}
+
+func TestSeamJobSourceGetMapsSkippedGate(t *testing.T) {
+	var hits atomic.Int32
+	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
+	c := newTestClient(t, srv.URL)
+
+	_, _, err := jobSource{c}.Get(context.Background(), "j1", func() bool { return false })
+
+	if err != poll.ErrSkipped { //nolint:errorlint // identity
+		t.Errorf("err = %v, want poll.ErrSkipped", err)
+	}
+	if hits.Load() != 0 {
+		t.Error("a declined gate sent a request")
+	}
+}
+
+func TestSeamJobSourceGetDerivesState(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+		want   poll.State
+	}{
+		{"waiting", "waiting", poll.State{ID: "j1"}},
+		{"failed", "failed", poll.State{ID: "j1", Done: true, Failed: true}},
+		{"completed with result", "completed", poll.State{ID: "j1", Done: true}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := newTestServer(t, writeJSON(200, jobJSON("j1", tt.status)))
+			c := newTestClient(t, srv.URL)
+
+			resp, got, err := jobSource{c}.Get(context.Background(), "j1", nil)
+
+			if err != nil || resp == nil || resp.Job.ID != "j1" {
+				t.Fatalf("Get() = %v, %v", resp, err)
+			}
+			if got.ID != tt.want.ID || got.Done != tt.want.Done || got.Failed != tt.want.Failed {
+				t.Errorf("state = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSeamJobSourceGetErrorPassesThrough(t *testing.T) {
+	srv := newTestServer(t, writeJSON(404, `{"success":false,"errors":[{"code":"not_found","message":"no"}]}`))
+	c := newTestClient(t, srv.URL)
+
+	_, _, err := jobSource{c}.Get(context.Background(), "j1", nil)
+
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSeamJobSourceList(t *testing.T) {
+	srv := newTestServer(t, writeJSON(200, `{"success":true,"jobs":[{"id":"a","status":"waiting"},{"id":"b","status":"failed"}]}`))
+	c := newTestClient(t, srv.URL)
+
+	got, err := jobSource{c}.List(context.Background())
+
+	if err != nil || len(got) != 2 {
+		t.Fatalf("List() = %v, %v", got, err)
+	}
+	if got[0].ID != "a" || got[0].Done || got[1].ID != "b" || !got[1].Failed || !got[1].Done {
+		t.Errorf("states = %+v", got)
+	}
+}
+
+func TestSeamJobSourceListError(t *testing.T) {
+	srv := newTestServer(t, writeJSON(404, `{"success":false,"errors":[{"code":"not_found","message":"no"}]}`))
+	c := newTestClient(t, srv.URL)
+
+	if _, err := (jobSource{c}).List(context.Background()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestSeamMapPollErr(t *testing.T) {
+	plain := errors.New("plain")
+	tests := []struct {
+		name string
+		in   error
+		is   []error
+		text string
+	}{
+		{"exhausted", &poll.ExhaustedError{ID: "j1", Attempts: 3}, []error{ErrMaxAttempts, ErrClient}, "job j1 after 3 attempts"},
+		{"zero interval", &poll.IntervalError{Value: 0}, []error{ErrInvalidInput, ErrClient}, "poll interval must be greater than zero"},
+		{"negative interval", &poll.IntervalError{Value: -time.Second}, []error{ErrInvalidInput}, ""},
+		{"panicking interval", &poll.IntervalError{Panic: "boom"}, []error{ErrClient}, "poll interval panicked: boom"},
+		{"closed passes through", ErrClientClosed, []error{ErrClientClosed}, ""},
+		{"other passes through", plain, []error{plain}, "plain"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mapPollErr(tt.in)
+			for _, want := range tt.is {
+				if !errors.Is(got, want) {
+					t.Errorf("mapPollErr(%v) = %v, want errors.Is %v", tt.in, got, want)
+				}
+			}
+			if tt.text != "" && !strings.Contains(got.Error(), tt.text) {
+				t.Errorf("error %q lacks %q", got, tt.text)
+			}
+		})
 	}
 }

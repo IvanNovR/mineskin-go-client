@@ -76,3 +76,22 @@ func TestDeadlineConcurrentExtendKeepsMax(t *testing.T) {
 		t.Fatalf("Load = %v, want max %v", got, want)
 	}
 }
+
+func TestDeadlineExtendSaturatesFarFutureTimes(t *testing.T) {
+	var d Deadline
+	farFuture := time.Date(3000, 1, 1, 0, 0, 0, 0, time.UTC)
+	d.Extend(t0)
+
+	if !d.Extend(farFuture) {
+		t.Fatal("Extend(year 3000) = false, want it to move the deadline")
+	}
+	if got := d.Load(); !got.After(t0.Add(100 * 365 * 24 * time.Hour)) {
+		t.Errorf("Load() = %v, want a far-future saturated deadline", got)
+	}
+	if d.Extend(time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Error("a smaller time moved a saturated deadline")
+	}
+	if d.Extend(time.Date(4000, 1, 1, 0, 0, 0, 0, time.UTC)) {
+		t.Error("a larger far-future time moved an already saturated deadline")
+	}
+}

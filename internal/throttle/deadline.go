@@ -4,9 +4,13 @@
 package throttle
 
 import (
+	"math"
 	"sync/atomic"
 	"time"
 )
+
+// maxDeadline is the last instant a Deadline can store.
+var maxDeadline = time.Unix(0, math.MaxInt64)
 
 // Deadline is a goroutine-safe "not before" instant that only ever moves
 // later. The zero value is unset. It must not be copied after first use.
@@ -16,12 +20,17 @@ type Deadline struct {
 
 // Extend moves the deadline to t if t is later than the current value, in a
 // single compare-and-swap loop, and reports whether it moved. A zero t is
-// ignored.
+// ignored. A t past the last representable instant (about year 2262) is
+// saturated to it, so a huge delay still holds at least as long as a smaller
+// one instead of overflowing.
 func (d *Deadline) Extend(t time.Time) bool {
 	if t.IsZero() {
 		return false
 	}
-	want := t.UnixNano()
+	want := int64(math.MaxInt64)
+	if t.Before(maxDeadline) {
+		want = t.UnixNano()
+	}
 	for {
 		cur := d.ns.Load()
 		if want <= cur {

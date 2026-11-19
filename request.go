@@ -55,16 +55,5 @@ func (c *Client) post(ctx context.Context, path string, body *transport.Body, de
 	if err != nil {
 		return ResponseMeta{}, err
 	}
-	meta, err := handleResponse(raw, decodeBody)
-	if c.genGroup.tuner != nil && isRetryableUnexpected(err) {
-		c.genGroup.tuner.reportFailure()
-	}
-	return meta, err
-}
-
-// isRetryableUnexpected reports whether err is an *UnexpectedResponseError
-// that is likely temporary; a JSON error (*APIError) never is (D11).
-func isRetryableUnexpected(err error) bool {
-	var ue *UnexpectedResponseError
-	return errors.As(err, &ue) && ue.IsRetryable()
+	return handleResponse(raw, decodeBody)
 }

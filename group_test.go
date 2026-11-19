@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/ratelimit"
 )
 
 const (
@@ -95,9 +96,9 @@ func (s *clientServer) open(key string) {
 }
 
 // waitWaiting waits until n requests are queued in g's throttle.
-func waitWaiting(t *testing.T, g *requestGroup, n int) {
+func waitWaiting(t *testing.T, g *ratelimit.Group, n int) {
 	t.Helper()
-	eventually(t, "queued requests", func() bool { return g.throttle.Stats().Waiting == n })
+	eventually(t, "queued requests", func() bool { return g.Throttle.Stats().Waiting == n })
 }
 
 // waitCount waits until the server has seen n requests for key.
@@ -342,7 +343,7 @@ func TestReleaseOnTransportError(t *testing.T) {
 			t.Fatalf("call %d error = %v, want the transport error", i, err)
 		}
 	}
-	if got := c.getGroup.throttle.Stats().InFlight; got != 0 {
+	if got := c.getGroup.Throttle.Stats().InFlight; got != 0 {
 		t.Errorf("in flight = %d, want 0", got)
 	}
 }
@@ -362,7 +363,7 @@ func TestExchangeNilContextIsInvalidInput(t *testing.T) {
 
 func TestGroupNames(t *testing.T) {
 	c := newTestClient(t, "http://127.0.0.1:1")
-	if c.genGroup.name != "generate" || c.getGroup.name != "get" {
-		t.Errorf("names = %q, %q", c.genGroup.name, c.getGroup.name)
+	if c.genGroup.Name != "generate" || c.getGroup.Name != "get" {
+		t.Errorf("names = %q, %q", c.genGroup.Name, c.getGroup.Name)
 	}
 }

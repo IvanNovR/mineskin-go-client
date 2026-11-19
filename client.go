@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/ratelimit"
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
@@ -27,6 +28,10 @@ const (
 
 	apiKeyPrefix = "msk_"
 )
+
+// DefaultRateLimitRetries is the default number of automatic retries of a
+// request rejected with HTTP 429 (see WithRateLimitRetries).
+const DefaultRateLimitRetries = 2
 
 // Client is a MineSkin API client. It is immutable after NewClient returns and
 // safe for concurrent use by multiple goroutines.
@@ -49,10 +54,8 @@ type Client struct {
 	polling  PollOptions
 	poller   *jobPoller
 	clock    clock.Clock
-	genGroup *requestGroup
-	getGroup *requestGroup
-	// rateLimitRetries is the number of automatic retries after an HTTP 429.
-	rateLimitRetries int
+	genGroup *ratelimit.Group
+	getGroup *ratelimit.Group
 
 	// baseCtx is cancelled by Close and parents every request context.
 	baseCtx    context.Context
@@ -106,8 +109,6 @@ func NewClient(opts ...Option) (*Client, error) {
 		logger:  r.logger,
 		polling: r.polling,
 		clock:   r.clock,
-
-		rateLimitRetries: r.rateLimitRetries,
 	}
 	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
 	c.idleCloser = r.idleCloser
@@ -119,10 +120,10 @@ func NewClient(opts ...Option) (*Client, error) {
 // failureHook returns the poller's FAILED-job hook: the penalty with
 // auto-tuning, nil (a no-op) otherwise.
 func (c *Client) failureHook() func() {
-	if c.genGroup.tuner == nil {
+	if c.genGroup.Tuner == nil {
 		return nil
 	}
-	return c.genGroup.tuner.reportFailure
+	return c.genGroup.Tuner.ReportFailure
 }
 
 // resolvedConfig is a validated config with defaults applied.

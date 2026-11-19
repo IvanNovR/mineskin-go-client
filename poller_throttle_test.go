@@ -82,7 +82,7 @@ func TestPollerMaxAttemptsIgnoresThrottleWait(t *testing.T) {
 	}
 	// Hold the first request until others are queued behind it, so the
 	// throttle wait is certain rather than a matter of timing.
-	eventually(t, "checks queued in the get throttle", func() bool { return c.getGroup.throttle.Stats().Waiting > 0 })
+	eventually(t, "checks queued in the get throttle", func() bool { return c.getGroup.Throttle.Stats().Waiting > 0 })
 	close(release)
 	wg.Wait()
 	for i, id := range ids {

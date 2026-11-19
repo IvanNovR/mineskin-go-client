@@ -1,6 +1,7 @@
-package mineskin
+package ratelimit
 
 import (
+	"context"
 	"log/slog"
 	"sync"
 	"time"
@@ -28,16 +29,17 @@ const (
 	penaltyDecayDivisor = time.Second / penaltyDecayPerSecond
 )
 
-// tuner holds the generate group's limits when auto-tuning is on: the limits
+// Tuner holds the generate group's limits when auto-tuning is on: the limits
 // mapped from the user's grants plus a decaying failure penalty. It is safe
 // for concurrent use.
 //
 // Lock order: the throttle calls limits while holding its own mutex, so the
 // tuner never calls into the throttle (kick) while holding mu.
-type tuner struct {
+type Tuner struct {
 	clock  clock.Clock
 	logger *slog.Logger
-	// kick re-runs the throttle dispatch after the limits changed.
+	// kick re-runs the throttle dispatch after the limits changed. It is nil
+	// only until SetKick is called.
 	kick func()
 
 	mu          sync.Mutex
@@ -46,25 +48,53 @@ type tuner struct {
 	penalty     time.Duration
 	penaltyAt   time.Time
 
-	grantsLoad
+	grants grantsLoad
 }
 
-// newTuner returns a tuner on the baseline limits. A nil logger discards logs.
-func newTuner(c clock.Clock, l *slog.Logger) *tuner {
+// Grants are the limits the API key is granted. A nil field means the API did
+// not send a usable value.
+type Grants struct {
+	PerMinute   *int
+	Concurrency *int
+}
+
+// TunerConfig is everything a Tuner needs, except the throttle kick, which is
+// set afterwards with SetKick because the throttle needs the tuner's Limits.
+type TunerConfig struct {
+	Clock  clock.Clock
+	Logger *slog.Logger // nil discards logs
+	// Load fetches the current grants. It runs on BaseCtx.
+	Load func(ctx context.Context) (Grants, error)
+	// BaseCtx parents every load; its cancellation ends loads and silences
+	// their failure logs.
+	BaseCtx context.Context
+	// BG tracks the load goroutines so the owner can wait for them.
+	BG *sync.WaitGroup
+}
+
+// NewTuner returns a Tuner on the baseline limits.
+func NewTuner(cfg TunerConfig) *Tuner {
+	l := cfg.Logger
 	if l == nil {
 		l = slog.New(slog.DiscardHandler)
 	}
-	return &tuner{
-		clock:       c,
+	return &Tuner{
+		clock:       cfg.Clock,
 		logger:      l,
 		interval:    autoBaselineInterval,
 		concurrency: autoBaselineConcurrency,
+		grants:      grantsLoad{load: cfg.Load, baseCtx: cfg.BaseCtx, bg: cfg.BG},
 	}
 }
 
-// limits returns the effective generate limits at now: the grants interval
+// SetKick sets the function that re-runs the throttle dispatch after the
+// limits changed (the throttle's Kick). It must be called once, before the
+// tuner is used.
+func (t *Tuner) SetKick(kick func()) { t.kick = kick }
+
+// Limits returns the effective generate limits at now: the grants interval
 // plus the decayed penalty, capped at maxEffectiveInterval.
-func (t *tuner) limits(now time.Time) throttle.Limits {
+func (t *Tuner) Limits(now time.Time) throttle.Limits {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return throttle.Limits{
@@ -76,7 +106,7 @@ func (t *tuner) limits(now time.Time) throttle.Limits {
 // applyGrants maps grants onto the limits. A missing, zero or negative
 // per-minute value keeps the current interval and a missing concurrency keeps
 // the current concurrency.
-func (t *tuner) applyGrants(g Grants) {
+func (t *Tuner) applyGrants(g Grants) {
 	t.mu.Lock()
 	if g.PerMinute != nil && *g.PerMinute > 0 {
 		t.interval = clampDuration((time.Minute / time.Duration(*g.PerMinute)).Truncate(time.Millisecond),
@@ -92,8 +122,8 @@ func (t *tuner) applyGrants(g Grants) {
 	t.kickThrottle()
 }
 
-// reportFailure adds a penalty step on top of the decayed penalty.
-func (t *tuner) reportFailure() {
+// ReportFailure adds a penalty step on top of the decayed penalty.
+func (t *Tuner) ReportFailure() {
 	now := t.clock.Now()
 	t.mu.Lock()
 	t.penalty = min(t.decayedLocked(now)+penaltyStep, penaltyMax)
@@ -106,7 +136,7 @@ func (t *tuner) reportFailure() {
 
 // decayedLocked returns the penalty left at now. The elapsed time is compared
 // with the full decay time before any multiplication, so nothing overflows.
-func (t *tuner) decayedLocked(now time.Time) time.Duration {
+func (t *Tuner) decayedLocked(now time.Time) time.Duration {
 	if t.penalty <= 0 {
 		return 0
 	}
@@ -121,7 +151,7 @@ func (t *tuner) decayedLocked(now time.Time) time.Duration {
 }
 
 // kickThrottle re-runs the throttle dispatch. It must be called without mu.
-func (t *tuner) kickThrottle() {
+func (t *Tuner) kickThrottle() {
 	if t.kick != nil {
 		t.kick()
 	}

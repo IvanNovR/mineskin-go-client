@@ -381,14 +381,11 @@ func TestLiveAutoTuning(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Queue() error = %v", err)
 	}
-	tn := c.genGroup.tuner
-	tn.mu.Lock()
-	settled := tn.settled
-	tn.mu.Unlock()
-	if !settled {
+	tn := c.genGroup.Tuner
+	if !tn.Loaded() {
 		t.Fatal("grants were not loaded after the first Queue")
 	}
-	l := tn.limits(c.clock.Now())
+	l := tn.Limits(c.clock.Now())
 	t.Logf("tuned limits: interval=%s concurrency=%d", l.Interval, l.Concurrency)
 	if l.Concurrency <= livePaidMinConcur {
 		t.Errorf("tuned concurrency = %d, want > %d", l.Concurrency, livePaidMinConcur)

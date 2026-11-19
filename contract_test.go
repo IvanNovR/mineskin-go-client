@@ -224,7 +224,7 @@ func closeQueuedCase() contractCase {
 			held := goCall(getCalls(c)[keySkin])
 			waitCount(t, srv, keySkin, 1)
 			queued := goCall(getCalls(c)[keySkin])
-			eventually(t, "second call queued", func() bool { return c.getGroup.throttle.Stats().Waiting == 1 })
+			eventually(t, "second call queued", func() bool { return c.getGroup.Throttle.Stats().Waiting == 1 })
 			_ = c.Close()
 			_ = mustDone(t, "held", held)
 			return mustDone(t, "queued", queued)

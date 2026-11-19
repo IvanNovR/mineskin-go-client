@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -17,20 +18,43 @@ const (
 
 // fakeGit records the arguments of every call and returns canned results.
 type fakeGit struct {
-	commits []commit
-	err     error
-	calls   [][]string
+	commits     []commit
+	err         error
+	unreachable bool // cat-file fails, as for a base SHA missing after a force-push
+	calls       [][]string
 }
 
 func (f *fakeGit) log(_ context.Context, args ...string) ([]commit, error) {
 	f.calls = append(f.calls, args)
+	if args[0] == "cat-file" {
+		if f.unreachable {
+			return nil, errors.New("bad object")
+		}
+		return nil, nil
+	}
 	return f.commits, f.err
+}
+
+// logCalls returns only the `git log` invocations.
+func (f *fakeGit) logCalls() [][]string {
+	var out [][]string
+	for _, c := range f.calls {
+		if c[0] == "log" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func violationsOf(git gitLog, base, head, prTitle string) []string {
+	return check(context.Background(), git, base, head, prTitle).Violations
 }
 
 func TestSubjectPattern(t *testing.T) {
 	valid := []string{
 		"feat!: x", "fix(ci): x", "chore(main): release 0.1.0", "feat(api)!: break",
 		"revert: undo", "docs: update ✨", "build: deps",
+		`Revert "feat: add thing"`, `Revert "Revert "fix: x""`, `Revert "not conventional but reverted"`,
 	}
 	invalid := []string{
 		"", "bad title", "feat:x", "feat: ", "Feat: x", "feat(): x", "feat(a(b)): x",
@@ -51,14 +75,14 @@ func TestSubjectPattern(t *testing.T) {
 func TestCheckPassesRangeToGit(t *testing.T) {
 	g := &fakeGit{commits: []commit{{shaA, subjectA}}}
 
-	got := check(context.Background(), g.log, shaA, shaB, "")
+	got := violationsOf(g.log, shaA, shaB, "")
 
 	if len(got) != 0 {
 		t.Fatalf("unexpected violations: %v", got)
 	}
-	want := []string{"log", "--format=%H%x00%s", shaA + ".." + shaB}
-	if len(g.calls) != 1 || strings.Join(g.calls[0], " ") != strings.Join(want, " ") {
-		t.Fatalf("git calls = %v, want %v", g.calls, want)
+	want := []string{"log", "--no-merges", "--format=%H%x00%s", shaA + ".." + shaB}
+	if len(g.logCalls()) != 1 || strings.Join(g.logCalls()[0], " ") != strings.Join(want, " ") {
+		t.Fatalf("git calls = %v, want %v", g.logCalls(), want)
 	}
 }
 
@@ -69,7 +93,7 @@ func TestCheckReportsAllInvalidSubjectsIncludingBehindValidTip(t *testing.T) {
 		{"cccccccccccccccccccccccccccccccccccccccc", "Another bad"},
 	}}
 
-	got := check(context.Background(), g.log, shaA, shaB, "")
+	got := violationsOf(g.log, shaA, shaB, "")
 
 	if len(got) != 2 {
 		t.Fatalf("want 2 violations, got %v", got)
@@ -86,7 +110,7 @@ func TestCheckAcceptsConventionalSubjects(t *testing.T) {
 	g := &fakeGit{commits: []commit{
 		{shaA, "feat!: x"}, {shaB, "fix(ci): x"}, {shaA, "chore(main): release 0.1.0"},
 	}}
-	if got := check(context.Background(), g.log, shaA, shaB, ""); len(got) != 0 {
+	if got := violationsOf(g.log, shaA, shaB, ""); len(got) != 0 {
 		t.Fatalf("unexpected violations: %v", got)
 	}
 }
@@ -108,7 +132,7 @@ func TestCheckPRTitle(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			g := &fakeGit{commits: tc.commits}
-			got := check(context.Background(), g.log, shaA, shaB, tc.title)
+			got := violationsOf(g.log, shaA, shaB, tc.title)
 			if len(got) != tc.wantN {
 				t.Fatalf("want %d violations, got %v", tc.wantN, got)
 			}
@@ -119,11 +143,11 @@ func TestCheckPRTitle(t *testing.T) {
 func TestCheckFullHistoryWhenBaseMissingOrZero(t *testing.T) {
 	for _, base := range []string{"", zeroSHA, "  "} {
 		g := &fakeGit{commits: []commit{{shaA, subjectA}}}
-		got := check(context.Background(), g.log, base, shaB, "")
+		got := violationsOf(g.log, base, shaB, "")
 		if len(got) != 0 {
 			t.Fatalf("base %q: unexpected violations %v", base, got)
 		}
-		if len(g.calls) != 1 || g.calls[0][len(g.calls[0])-1] != shaB {
+		if len(g.logCalls()) != 1 || g.logCalls()[0][len(g.logCalls()[0])-1] != shaB {
 			t.Fatalf("base %q: want full-history range %q, got %v", base, shaB, g.calls)
 		}
 	}
@@ -133,10 +157,10 @@ func TestCheckRejectsBadSHAs(t *testing.T) {
 	bad := []string{"abc", "--output=x", strings.Repeat("g", 40), strings.Repeat("a", 41), "main; rm -rf /", strings.ToUpper(shaA)}
 	for _, s := range bad {
 		g := &fakeGit{}
-		if got := check(context.Background(), g.log, s, shaB, ""); len(got) == 0 {
+		if got := violationsOf(g.log, s, shaB, ""); len(got) == 0 {
 			t.Errorf("bad base %q accepted", s)
 		}
-		if got := check(context.Background(), g.log, shaA, s, ""); len(got) == 0 {
+		if got := violationsOf(g.log, shaA, s, ""); len(got) == 0 {
 			t.Errorf("bad head %q accepted", s)
 		}
 		if len(g.calls) != 0 {
@@ -147,14 +171,14 @@ func TestCheckRejectsBadSHAs(t *testing.T) {
 
 func TestCheckEmptyHeadRejected(t *testing.T) {
 	g := &fakeGit{}
-	if got := check(context.Background(), g.log, shaA, "", ""); len(got) == 0 {
+	if got := violationsOf(g.log, shaA, "", ""); len(got) == 0 {
 		t.Fatal("empty head accepted")
 	}
 }
 
 func TestCheckSurfacesGitError(t *testing.T) {
 	g := &fakeGit{err: errors.New("boom")}
-	got := check(context.Background(), g.log, shaA, shaB, "")
+	got := violationsOf(g.log, shaA, shaB, "")
 	if len(got) != 1 || !strings.Contains(got[0], "boom") {
 		t.Fatalf("git error not surfaced: %v", got)
 	}
@@ -172,14 +196,17 @@ func TestRunExitCodesAndOutput(t *testing.T) {
 		wantCode int
 		wantOut  string
 	}{
-		{"ok", map[string]string{"BASE_SHA": shaA, "HEAD_SHA": shaB}, []commit{{shaA, subjectA}}, 0, "ok"},
+		{"ok", map[string]string{"BASE_SHA": shaA, "HEAD_SHA": shaB}, []commit{{shaA, subjectA}}, 0, "commitlint: ok (1 commits checked)"},
+		{"ok counts every commit", map[string]string{"BASE_SHA": shaA, "HEAD_SHA": shaB}, []commit{{shaA, subjectA}, {shaB, "fix: y"}}, 0, "commitlint: ok (2 commits checked)"},
+		{"zero commits in non-empty range warns", map[string]string{"BASE_SHA": shaA, "HEAD_SHA": shaB}, nil, 0, "warning: BASE_SHA..HEAD_SHA contains no commits to check"},
+		{"unreachable base warns", map[string]string{"BASE_SHA": shaA, "HEAD_SHA": shaB, "UNREACHABLE": "1"}, []commit{{shaB, subjectA}}, 0, "warning: BASE_SHA is not reachable"},
 		{"invalid commit", map[string]string{"BASE_SHA": shaA, "HEAD_SHA": shaB}, []commit{{shaA, "nope"}}, 1, "nope"},
 		{"invalid title", map[string]string{"BASE_SHA": shaA, "HEAD_SHA": shaB, "PR_TITLE": "bad title"}, []commit{{shaA, subjectA}}, 1, "bad title"},
 		{"missing head", map[string]string{}, nil, 1, "HEAD_SHA"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			g := &fakeGit{commits: tc.commits}
+			g := &fakeGit{commits: tc.commits, unreachable: tc.env["UNREACHABLE"] != ""}
 			var out bytes.Buffer
 
 			code := run(context.Background(), envOf(tc.env), g.log, &out)
@@ -237,5 +264,113 @@ func TestExecGitAgainstTempRepo(t *testing.T) {
 	}
 	if _, err := execGit(dir)(context.Background(), "log", "--format=%H%x00%s", shaA); err == nil {
 		t.Fatal("expected git error for unknown revision")
+	}
+}
+
+func TestCheckSkipsMergesViaGitFlag(t *testing.T) {
+	g := &fakeGit{commits: []commit{{shaA, subjectA}}}
+
+	violationsOf(g.log, shaA, shaB, "")
+	violationsOf(g.log, "", shaB, "")
+
+	for _, call := range g.logCalls() {
+		if !slices.Contains(call, "--no-merges") {
+			t.Errorf("git log call lacks --no-merges: %v", call)
+		}
+	}
+}
+
+func TestCheckUnreachableBase(t *testing.T) {
+	tests := []struct {
+		name        string
+		unreachable bool
+		wantRange   string
+		wantWarning bool
+		wantLimit   bool
+	}{
+		{"reachable base lints the range", false, shaA + ".." + shaB, false, false},
+		{"unreachable base lints only HEAD", true, shaB, true, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			g := &fakeGit{commits: []commit{{shaB, subjectA}}, unreachable: tc.unreachable}
+
+			rep := check(context.Background(), g.log, shaA, shaB, "")
+
+			if len(rep.Violations) != 0 {
+				t.Fatalf("unexpected violations: %v", rep.Violations)
+			}
+			if len(g.calls) < 2 || strings.Join(g.calls[0], " ") != "cat-file -e "+shaA+"^{commit}" {
+				t.Fatalf("base reachability not probed first: %v", g.calls)
+			}
+			logs := g.logCalls()
+			if len(logs) != 1 || logs[0][len(logs[0])-1] != tc.wantRange {
+				t.Fatalf("log calls = %v, want range %q", logs, tc.wantRange)
+			}
+			if slices.Contains(logs[0], "-1") != tc.wantLimit {
+				t.Errorf("-1 present = %v, want %v (%v)", !tc.wantLimit, tc.wantLimit, logs[0])
+			}
+			if (len(rep.Warnings) == 1 && strings.Contains(rep.Warnings[0], "not reachable")) != tc.wantWarning {
+				t.Errorf("warnings = %v, wantWarning %v", rep.Warnings, tc.wantWarning)
+			}
+		})
+	}
+}
+
+func TestCheckReportCountsCommits(t *testing.T) {
+	g := &fakeGit{commits: []commit{{shaA, subjectA}, {shaB, "bad"}}}
+
+	rep := check(context.Background(), g.log, shaA, shaB, "")
+
+	if rep.Checked != 2 || len(rep.Violations) != 1 {
+		t.Fatalf("report = %+v, want 2 checked and 1 violation", rep)
+	}
+}
+
+func TestCheckNoZeroCommitWarningForFullHistory(t *testing.T) {
+	g := &fakeGit{}
+
+	rep := check(context.Background(), g.log, "", shaB, "")
+
+	if len(rep.Warnings) != 0 {
+		t.Fatalf("unexpected warnings for empty base: %v", rep.Warnings)
+	}
+}
+
+func TestExecGitSkipsMergeCommits(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		// #nosec G204 -- test-only, fixed binary and constant arguments
+		cmd := exec.CommandContext(context.Background(), "git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "feat: base")
+	git("checkout", "-q", "-b", "side")
+	git("commit", "-q", "--allow-empty", "-m", "fix: side")
+	git("checkout", "-q", "main")
+	git("commit", "-q", "--allow-empty", "-m", "feat: main work")
+	git("merge", "-q", "--no-ff", "-m", "Merge branch 'side'", "side")
+
+	got, err := execGit(dir)(context.Background(), "log", "--no-merges", logFormat, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range got {
+		if strings.HasPrefix(c.Subject, "Merge") {
+			t.Errorf("merge commit not skipped: %v", c)
+		}
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 non-merge commits, got %v", got)
+	}
+	if _, err := execGit(dir)(context.Background(), "cat-file", "-e", shaA+"^{commit}"); err == nil {
+		t.Fatal("cat-file must fail for an unknown commit")
 	}
 }

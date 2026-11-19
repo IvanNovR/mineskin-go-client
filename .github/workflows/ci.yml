@@ -2,17 +2,18 @@
 #
 # Hardening: every action is pinned to a full commit SHA, the workflow token is
 # read-only, credentials are not persisted, and untrusted values (PR title,
-# SHAs) reach scripts only through env:, never through ${{ }} inside run:.
+# SHAs) reach scripts only through env:, never through ${{ }} inside run:. Commit
+# lint lives in commitlint.yml so PR title edits never touch these checks.
 #
 # Exact-SHA workflow_dispatch for release PRs is not part of this file yet; it
-# arrives with the release automation in milestone M4.
+# arrives with the release automation in milestone M5.
 name: CI
 
 on:
   push:
     branches: [main, dev]
   pull_request:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
 
 permissions: {}
 
@@ -25,7 +26,7 @@ concurrency:
 
 jobs:
   test:
-    if: github.event.action != 'edited'
+    name: test (${{ matrix.name }})
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -33,22 +34,30 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: [oldstable, stable]
+        include:
+          - name: go.mod minimum
+            go-version: ""
+            go-version-file: go.mod
+          - name: stable
+            go-version: stable
+            go-version-file: ""
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
-          go-version: ${{ matrix.go }}
+          go-version: ${{ matrix.go-version }}
+          go-version-file: ${{ matrix.go-version-file }}
           cache: false
       - name: Vet
         run: go vet ./...
+      - name: Vet live tests
+        run: go vet -tags live ./...
       - name: Test with coverage gate
         run: make cover
 
   lint:
-    if: github.event.action != 'edited'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -63,10 +72,11 @@ jobs:
           cache: false
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
+          # Keep in sync with GOLANGCI_LINT_VERSION in the Makefile (Dependabot
+          # does not bump that one).
           version: v2.15.0
 
   tidy:
-    if: github.event.action != 'edited'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -86,7 +96,6 @@ jobs:
           test -z "$(git status --porcelain)"
 
   vuln:
-    if: github.event.action != 'edited'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -101,25 +110,3 @@ jobs:
           cache: false
       - name: govulncheck
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...
-
-  commits:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version: stable
-          cache: false
-      - name: Check Conventional Commits
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          PR_TITLE: ${{ github.event.pull_request.title }}
-        run: go run ./internal/tools/commitlint

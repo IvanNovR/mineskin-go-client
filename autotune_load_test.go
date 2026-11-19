@@ -385,12 +385,15 @@ func TestAutoTuningOnlyAffectsGenerate(t *testing.T) {
 func TestCloseCancelsRefreshAndWaits(t *testing.T) {
 	srv := newHitServer(t)
 	var exited atomic.Bool
+	cancelled := make(chan struct{})
+	finish := make(chan struct{})
 	f := &fakeGrantsLoader{fn: func(ctx context.Context, call int) (Grants, error) {
 		if call == 1 {
 			return grantsOf(600, 3), nil
 		}
 		<-ctx.Done()
-		time.Sleep(20 * time.Millisecond)
+		close(cancelled)
+		<-finish
 		exited.Store(true)
 		return Grants{}, ctx.Err()
 	}}
@@ -404,7 +407,16 @@ func TestCloseCancelsRefreshAndWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	eventually(t, "refresh to start", func() bool { return f.count() == 2 })
-	if err := c.Close(); err != nil {
+	closed := make(chan error, 1)
+	go func() { closed <- c.Close() }()
+	mustReceive(t, "refresh context cancelled by Close", cancelled)
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned (%v) while the refresh loader was still running", err)
+	case <-time.After(settleTime):
+	}
+	close(finish)
+	if err := mustDone(t, "Close", closed); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
 	if !exited.Load() {

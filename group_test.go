@@ -124,6 +124,16 @@ func mustDone(t *testing.T, name string, ch <-chan error) error {
 	}
 }
 
+// mustReceive waits for ch to be closed or to deliver a value.
+func mustReceive(t *testing.T, what string, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(waitTimeout):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
 func queueCall(c *Client) func() error {
 	return func() error {
 		_, err := c.Queue(context.Background(), FromURL("https://example.com/s.png"), nil)
@@ -299,19 +309,25 @@ func TestQueuedCallReturnsCtxErr(t *testing.T) {
 }
 
 func TestTimeoutExcludesQueueTime(t *testing.T) {
-	const handlerDelay = 80 * time.Millisecond
-	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(handlerDelay)
-		writeJSON(200, skinMinimal)(w, r)
-	})
-	c := newTestClient(t, srv.URL, WithTimeout(100*time.Millisecond), WithGetThrottle(oneSlot()))
-	a := goCall(getCalls(c)[keySkin])
-	waitWaiting(t, c.getGroup, 0)
-	b := goCall(getCalls(c)[keySkin])
-	for name, ch := range map[string]<-chan error{"first": a, "second": b} {
-		if err := mustDone(t, name, ch); err != nil {
-			t.Errorf("%s error = %v, want success (queue time must not count)", name, err)
-		}
+	// The start interval keeps the second request queued for longer than the
+	// timeout (a lower bound the throttle guarantees); the handler answers at
+	// once, so the exchange itself is far inside the timeout.
+	const (
+		timeout  = 50 * time.Millisecond
+		interval = 3 * timeout
+	)
+	srv := newTestServer(t, writeJSON(200, skinMinimal))
+	c := newTestClient(t, srv.URL, WithTimeout(timeout), WithGetThrottle(Throttle{Interval: interval, Concurrency: 1}))
+	call := getCalls(c)[keySkin]
+	if err := call(); err != nil {
+		t.Fatalf("first error = %v", err)
+	}
+	start := time.Now()
+	if err := call(); err != nil {
+		t.Errorf("second error = %v, want success (queue time must not count)", err)
+	}
+	if queued := time.Since(start); queued <= timeout {
+		t.Errorf("second call took %v, want more than the %v timeout so the test proves something", queued, timeout)
 	}
 }
 

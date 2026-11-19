@@ -133,11 +133,22 @@ type JobListResponse struct {
 // ErrInvalidInput without sending a request; any other id is escaped as a
 // single path segment.
 func (c *Client) GetJob(ctx context.Context, id string) (*JobResponse, error) {
+	return c.getJobGated(ctx, id, nil)
+}
+
+// getJobGated is GetJob with a start gate: once the request holds a get
+// throttle slot, proceed (when non-nil) is called and a false result abandons
+// the request with errCheckSkipped, sending nothing. The poller uses it so a
+// job whose waiters left while its check was queued is not fetched.
+func (c *Client) getJobGated(ctx context.Context, id string, proceed func() bool) (*JobResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	if err := validateJobID(id); err != nil {
 		return nil, err
 	}
 	var out JobResponse
-	meta, err := c.get(ctx, queuePath+"/"+url.PathEscape(id), func(obj map[string]json.RawMessage, _ []byte) error {
+	meta, err := c.getGated(ctx, queuePath+"/"+url.PathEscape(id), proceed, func(obj map[string]json.RawMessage, _ []byte) error {
 		if v := obj[fieldJob]; len(v) > 0 {
 			if err := json.Unmarshal(v, &out.Job); err != nil {
 				return err
@@ -166,6 +177,9 @@ func (c *Client) GetJob(ctx context.Context, id string) (*JobResponse, error) {
 // ListJobs lists the jobs in the queue. The Breadcrumb of the returned jobs is
 // empty; the breadcrumb of the list request is on the ResponseMeta.
 func (c *Client) ListJobs(ctx context.Context) (*JobListResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	out := JobListResponse{Jobs: []Job{}}
 	meta, err := c.get(ctx, queuePath, func(obj map[string]json.RawMessage, _ []byte) error {
 		v := obj[fieldJobs]
@@ -202,6 +216,9 @@ func validateJobID(id string) error {
 // fetched with GetSkin and its errors are returned unchanged. A job without a
 // result gives ErrJobNotCompleted, and a nil response gives ErrInvalidInput.
 func (c *Client) JobSkin(ctx context.Context, r *JobResponse) (*SkinInfo, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	if r == nil {
 		return nil, newInvalidInputError("job response is nil")
 	}

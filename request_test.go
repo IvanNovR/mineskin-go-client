@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 const testAPIKey = "msk_abc12345_supersecretvalue"
@@ -491,5 +493,18 @@ func TestDoPostRedirect307ReplaysBody(t *testing.T) {
 	}
 	if finalMethod != http.MethodPost || !bytes.Equal(finalBody, payload) {
 		t.Errorf("after redirect method=%q body=%q", finalMethod, finalBody)
+	}
+}
+
+func TestDoRecordsReceivedTime(t *testing.T) {
+	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) })
+	fake := clock.NewFake(testNow)
+	c := newTestClient(t, srv.URL, withClock(fake))
+	raw, err := c.do(context.Background(), http.MethodGet, "/x", nil)
+	if err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	if !raw.Received.Equal(fake.Now()) {
+		t.Errorf("Received = %v, want %v", raw.Received, fake.Now())
 	}
 }

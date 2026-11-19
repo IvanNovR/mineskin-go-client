@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 )
 
 const (
@@ -59,6 +60,8 @@ type rawResponse struct {
 	Status int
 	Header http.Header
 	Body   []byte
+	// Received is the client clock time at which the response arrived.
+	Received time.Time
 }
 
 // handleResponse turns a raw response into its metadata or an error. It
@@ -74,18 +77,18 @@ type rawResponse struct {
 func handleResponse(raw rawResponse, decodeBody func(obj map[string]json.RawMessage, body []byte) error) (ResponseMeta, error) {
 	body := bytes.TrimPrefix(raw.Body, utf8BOM)
 	if !looksLikeJSONObject(body) {
-		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, nil)
+		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, nil, raw.Received)
 	}
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(body, &obj); err != nil {
-		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, err)
+		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, err, raw.Received)
 	}
 	meta, err := decodeEnvelope(raw, obj)
 	if err != nil {
 		return ResponseMeta{}, wrapClientError(parseFailureMessage, err)
 	}
 	if !meta.Success {
-		return ResponseMeta{}, newAPIError(meta)
+		return ResponseMeta{}, newAPIError(meta, obj, raw.Header, raw.Received)
 	}
 	if decodeBody != nil {
 		if err := decodeBody(obj, body); err != nil {
@@ -144,9 +147,16 @@ func decodeList(v json.RawMessage, dst *[]CodeAndMessage) error {
 }
 
 // newAPIError builds the error for an unsuccessful response, using the first
-// reported error or the defaults.
-func newAPIError(meta ResponseMeta) *APIError {
-	e := &APIError{Code: defaultErrorCode, Message: defaultErrorMessage, ResponseMeta: meta}
+// reported error or the defaults. The rateLimit, usage and Retry-After values
+// are decoded leniently: anything missing or malformed stays nil or zero and
+// never replaces the original error (JB-13).
+func newAPIError(meta ResponseMeta, obj map[string]json.RawMessage, h http.Header, now time.Time) *APIError {
+	e := &APIError{
+		Code: defaultErrorCode, Message: defaultErrorMessage, ResponseMeta: meta,
+		RateLimit: decodeRateLimit(obj[fieldRateLimit]),
+		Usage:     decodeUsage(obj[fieldUsage]),
+	}
+	e.RetryAfter, _ = parseRetryAfter(h.Get(headerRetryAfter), now)
 	if len(meta.Errors) > 0 {
 		e.Code = meta.Errors[0].Code
 		e.Message = meta.Errors[0].Message

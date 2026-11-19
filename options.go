@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 // config collects the settings applied by Option values before NewClient
@@ -16,6 +18,15 @@ type config struct {
 	transport http.RoundTripper
 	logger    *slog.Logger
 	polling   PollOptions
+	// generateThrottle is the generate group's setting; generateThrottleSet
+	// records that WithGenerateThrottle was used, even with a zero value.
+	generateThrottle    Throttle
+	generateThrottleSet bool
+	getThrottle         Throttle
+	autoTuning          bool
+	rateLimitRetries    int
+	// clock is set only by tests; nil means the real clock.
+	clock clock.Clock
 }
 
 // Option configures a Client. Options are applied in order by NewClient.
@@ -42,13 +53,17 @@ func WithBaseURL(baseURL string) Option {
 }
 
 // WithTimeout sets the total timeout of a single HTTP request, including
-// reading the response body. It must be greater than zero.
+// reading the response body. It must be greater than zero. It covers only
+// the HTTP exchange: time spent queued in a request group's throttle is
+// bounded only by the caller's context.
 func WithTimeout(d time.Duration) Option {
 	return func(c *config) { c.timeout = d }
 }
 
 // WithTransport sets the http.RoundTripper used to send requests. A nil value
-// selects http.DefaultTransport.
+// selects a private clone of http.DefaultTransport, which the client owns:
+// Client.Close closes its idle connections. A transport passed here is never
+// closed by the client; closing it is the caller's job.
 //
 // It is also the interception point: wrap another RoundTripper to add headers,
 // metrics or tracing.
@@ -77,4 +92,62 @@ func WithLogger(l *slog.Logger) Option {
 // NewClient return an error matching ErrInvalidInput.
 func WithJobPolling(p PollOptions) Option {
 	return func(c *config) { c.polling = p }
+}
+
+// WithGenerateThrottle sets the pacing of the generate group, which holds
+// Queue and Generate. Zero fields select DefaultGenerateInterval (200 ms) and
+// DefaultGenerateConcurrency (1); a negative field makes NewClient return an
+// error matching ErrInvalidInput. Queue time is bounded only by the caller's
+// context, and throttling cannot be disabled. It cannot be combined with
+// WithAutoTuning.
+func WithGenerateThrottle(t Throttle) Option {
+	return func(c *config) {
+		c.generateThrottle = t
+		c.generateThrottleSet = true
+	}
+}
+
+// WithGetThrottle sets the pacing of the get group, which holds GetSkin,
+// GetUser, GetJob, ListJobs and the job poller's requests. Zero fields select
+// DefaultGetInterval (100 ms) and DefaultGetConcurrency (5); a negative field
+// makes NewClient return an error matching ErrInvalidInput. Queue time is
+// bounded only by the caller's context, and throttling cannot be disabled.
+func WithGetThrottle(t Throttle) Option {
+	return func(c *config) { c.getThrottle = t }
+}
+
+// WithAutoTuning makes the generate group follow the limits granted to the
+// API key. The first Queue or Generate call loads GET /v2/me (without
+// blocking longer than its context allows); until that succeeds the group
+// runs on a baseline of 1000 ms and 1 request in flight. Grants are refreshed
+// in the background when older than 5 minutes. Concurrency is clamped to 1 to
+// 30 and the interval to 100 ms to 1000 ms. A job ending FAILED, or a
+// retryable unexpected response on the generate group, temporarily widens the
+// interval, and the penalty decays linearly.
+//
+// Auto-tuning and WithGenerateThrottle are mutually exclusive: using both, in
+// either order, makes NewClient return an error matching ErrInvalidInput.
+func WithAutoTuning() Option {
+	return func(c *config) { c.autoTuning = true }
+}
+
+// WithRateLimitRetries sets how many times a request rejected with HTTP 429
+// is retried automatically; the default is DefaultRateLimitRetries. Zero
+// disables retries and a negative value makes NewClient return an error
+// matching ErrInvalidInput.
+//
+// A 429 is never processed by the server, so retrying is safe for every
+// request, including Generate: it cannot create a duplicate skin or cost an
+// extra credit. A retry goes through the group's throttle again, so it waits
+// for the delay the 429 announced (rateLimit.next or Retry-After), or for the
+// normal interval when there is none. When that delay would end after the
+// context's deadline, the original 429 error is returned at once instead of
+// waiting. If the context ends while a retry is waiting, the error matches
+// both the context error (and ErrClient) and the 429: errors.Is finds
+// context.Canceled or context.DeadlineExceeded, and errors.As finds the
+// *APIError (or *UnexpectedResponseError) with its RateLimit and RetryAfter.
+// Only 429 is retried; other failures are returned as they are, and
+// IsRetryable lets callers decide about those. Each retry logs one Debug line.
+func WithRateLimitRetries(n int) Option {
+	return func(c *config) { c.rateLimitRetries = n }
 }

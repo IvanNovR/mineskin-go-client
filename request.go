@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -65,7 +66,7 @@ func (c *Client) do(ctx context.Context, method, path string, body *requestBody)
 	c.logger.Debug("MineSkin request completed",
 		"method", method, "path", path, "status", resp.StatusCode,
 		"breadcrumb", resp.Header.Get(headerMineskinCrumb), "elapsed", time.Since(start))
-	return rawResponse{Status: resp.StatusCode, Header: resp.Header, Body: respBody}, nil
+	return rawResponse{Status: resp.StatusCode, Header: resp.Header, Body: respBody, Received: c.clock.Now()}, nil
 }
 
 // readLimited reads r completely and fails when it holds more than
@@ -81,21 +82,38 @@ func readLimited(r io.Reader) ([]byte, error) {
 	return body, nil
 }
 
-// get sends a GET request and interprets the response with handleResponse.
+// get sends a GET request through the get group (GetSkin, GetUser, GetJob,
+// ListJobs and the poller) and interprets the response with handleResponse.
 func (c *Client) get(ctx context.Context, path string, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
-	raw, err := c.do(ctx, http.MethodGet, path, nil)
+	return c.getGated(ctx, path, nil, decodeBody)
+}
+
+// getGated is get with a start gate (see exchange); a nil proceed is no gate.
+func (c *Client) getGated(ctx context.Context, path string, proceed func() bool, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
+	raw, err := c.exchange(ctx, c.getGroup, http.MethodGet, path, nil, proceed)
 	if err != nil {
 		return ResponseMeta{}, err
 	}
 	return handleResponse(raw, decodeBody)
 }
 
-// post sends a POST request with body and interprets the response with
-// handleResponse.
+// post sends a POST request with body through the generate group (Queue and
+// Generate) and interprets the response with handleResponse.
 func (c *Client) post(ctx context.Context, path string, body *requestBody, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
-	raw, err := c.do(ctx, http.MethodPost, path, body)
+	raw, err := c.exchange(ctx, c.genGroup, http.MethodPost, path, body, nil)
 	if err != nil {
 		return ResponseMeta{}, err
 	}
-	return handleResponse(raw, decodeBody)
+	meta, err := handleResponse(raw, decodeBody)
+	if c.genGroup.tuner != nil && isRetryableUnexpected(err) {
+		c.genGroup.tuner.reportFailure()
+	}
+	return meta, err
+}
+
+// isRetryableUnexpected reports whether err is an *UnexpectedResponseError
+// that is likely temporary; a JSON error (*APIError) never is (D11).
+func isRetryableUnexpected(err error) bool {
+	var ue *UnexpectedResponseError
+	return errors.As(err, &ue) && ue.IsRetryable()
 }

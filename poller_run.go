@@ -7,8 +7,9 @@ import "time"
 func (p *jobPoller) register(job Job) *pendingJob {
 	pj := p.add(job)
 	p.mu.Lock()
-	if !p.running {
+	if !p.running && !p.closed {
 		p.running = true
+		p.wg.Add(1)
 		go p.run()
 	}
 	p.mu.Unlock()
@@ -46,8 +47,9 @@ func (p *jobPoller) soonest() (time.Time, bool) {
 			next, found = pj.nextCheckAt, true
 		}
 	}
-	if !found {
+	if !found || p.closed {
 		p.running = false
+		return next, false
 	}
 	return next, found
 }
@@ -55,20 +57,44 @@ func (p *jobPoller) soonest() (time.Time, bool) {
 // run is the poller loop. It sleeps until the soonest check time or a wake,
 // ticks, and exits when no job is pending. It is started only by register.
 func (p *jobPoller) run() {
-	// A single timer is reused. Since Go 1.23, Reset and Stop discard a stale
-	// unreceived value, so the timer needs no draining before Reset.
-	timer := time.NewTimer(time.Hour)
-	defer timer.Stop()
+	defer p.wg.Done()
+	// fire has capacity 1; the timer callback never blocks. A stale value from
+	// a timer that fired just as a wake arrived only causes a harmless tick
+	// that finds nothing due.
+	fire := make(chan struct{}, 1)
 	for {
 		next, ok := p.soonest()
 		if !ok {
 			return
 		}
-		timer.Reset(max(next.Sub(p.now()), 0))
+		timer := p.clock.AfterFunc(max(next.Sub(p.now()), 0), func() {
+			select {
+			case fire <- struct{}{}:
+			default:
+			}
+		})
 		select {
-		case <-timer.C:
+		case <-fire:
 			p.tick(p.now())
 		case <-p.wakeCh:
+			timer.Stop()
 		}
 	}
+}
+
+// close fails every pending job with err, makes later registrations fail with
+// it too, wakes the run loop and waits for it to exit. Requests in flight end
+// by themselves because the client cancels the base context first. It is safe
+// to call more than once.
+func (p *jobPoller) close(err error) {
+	p.mu.Lock()
+	if !p.closed {
+		p.closed, p.closeErr = true, err
+		for _, pj := range p.pending {
+			p.finishLocked(pj, nil, err)
+		}
+	}
+	p.mu.Unlock()
+	p.wake()
+	p.wg.Wait()
 }

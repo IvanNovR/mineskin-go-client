@@ -83,10 +83,12 @@ type UnexpectedResponseError struct {
 	// CloudflareCode is the Cloudflare error code, for example 521, or 1033
 	// for a 530 wrapping it. Zero means unknown.
 	CloudflareCode int
-	// RetryAfter is the Retry-After delay. Only the delta-seconds form is
-	// supported; it is meaningful only when HasRetryAfter is true.
+	// RetryAfter is the Retry-After delay, from either the delta-seconds or the
+	// HTTP-date form (RFC 9110). A past date or a negative value gives 0. It is
+	// meaningful only when HasRetryAfter is true.
 	RetryAfter time.Duration
-	// HasRetryAfter reports whether a valid Retry-After was present.
+	// HasRetryAfter reports whether a valid Retry-After was present, including
+	// one that resolved to a zero delay.
 	HasRetryAfter bool
 	// Err is the underlying cause, for example a JSON parse error, or nil.
 	Err error
@@ -100,8 +102,9 @@ type origin struct {
 }
 
 // newUnexpectedResponseError builds the error from the response status,
-// headers and body. cause may be nil.
-func newUnexpectedResponseError(status int, h http.Header, body []byte, cause error) *UnexpectedResponseError {
+// headers and body. cause may be nil. now is the time the response was
+// received, used to resolve an HTTP-date Retry-After.
+func newUnexpectedResponseError(status int, h http.Header, body []byte, cause error, now time.Time) *UnexpectedResponseError {
 	if len(body) > snippetInputMaxBytes {
 		body = body[:snippetInputMaxBytes]
 	}
@@ -112,7 +115,7 @@ func newUnexpectedResponseError(status int, h http.Header, body []byte, cause er
 	// response passed through Cloudflare, not that Cloudflare generated it.
 	viaCloudflare := cfRay != "" || strings.EqualFold(server, serverCloudflare)
 	o := detectOrigin(status, server, viaCloudflare, text)
-	retryAfter, hasRetryAfter := parseRetryAfter(h.Get(headerRetryAfter))
+	retryAfter, hasRetryAfter := parseRetryAfter(h.Get(headerRetryAfter), now)
 	return &UnexpectedResponseError{
 		Status:         status,
 		ContentType:    h.Get(headerContentType),
@@ -186,14 +189,44 @@ func stripControl(s string) string {
 	}, s)
 }
 
-// parseRetryAfter parses the delta-seconds form of Retry-After. The HTTP-date
-// form, negative or oversized values are reported as absent.
-func parseRetryAfter(value string) (time.Duration, bool) {
-	seconds, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64)
-	if err != nil || seconds < 0 || seconds > int64(math.MaxInt64/time.Second) {
+// parseRetryAfter parses a Retry-After value per RFC 9110: delta-seconds or an
+// HTTP-date in any of the formats http.ParseTime accepts, measured from now. A
+// negative value or a date in the past gives (0, true). An empty, malformed or
+// overflowing value gives (0, false). Deliberate deviation from the Java
+// client, which ignores the date form (JB-18, D13).
+func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
+	value = strings.TrimSpace(value)
+	if digits, negative := strings.CutPrefix(value, "-"); negative {
+		if isDigits(digits) {
+			return 0, true
+		}
 		return 0, false
 	}
-	return time.Duration(seconds) * time.Second, true
+	if isDigits(value) {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil || seconds > int64(math.MaxInt64/time.Second) {
+			return 0, false
+		}
+		return time.Duration(seconds) * time.Second, true
+	}
+	date, err := http.ParseTime(value)
+	if err != nil {
+		return 0, false
+	}
+	return max(date.Sub(now), 0), true
+}
+
+// isDigits reports whether s is a non-empty run of ASCII digits.
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // Error implements the error interface. The format is
@@ -242,12 +275,16 @@ func (e *UnexpectedResponseError) Is(target error) bool {
 
 // IsRetryable reports whether the error is likely temporary: status 408, 429,
 // or 500 and above except 501 and 505.
-func (e *UnexpectedResponseError) IsRetryable() bool {
-	return e.Status == http.StatusRequestTimeout ||
-		e.Status == http.StatusTooManyRequests ||
-		(e.Status >= http.StatusInternalServerError &&
-			e.Status != http.StatusNotImplemented &&
-			e.Status != http.StatusHTTPVersionNotSupported)
+func (e *UnexpectedResponseError) IsRetryable() bool { return isRetryableStatus(e.Status) }
+
+// isRetryableStatus reports whether an HTTP status is likely temporary: 408,
+// 429, or 500 and above except 501 and 505.
+func isRetryableStatus(status int) bool {
+	return status == http.StatusRequestTimeout ||
+		status == http.StatusTooManyRequests ||
+		(status >= http.StatusInternalServerError &&
+			status != http.StatusNotImplemented &&
+			status != http.StatusHTTPVersionNotSupported)
 }
 
 // IsCloudflare reports whether Cloudflare itself generated the error. An

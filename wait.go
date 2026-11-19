@@ -13,7 +13,8 @@ import "context"
 // a job still unfinished after PollOptions.MaxAttempts checks gives
 // ErrMaxAttempts. When ctx ends, the error matches both ctx.Err() and
 // ErrClient; the job stops being polled unless another waiter still needs it.
-// Errors of the status requests are returned as they are.
+// Errors of the status requests are returned as they are. A wait that Close
+// interrupts, and any wait started after Close, fails with ErrClientClosed.
 //
 // Waiters on the same job share pointers inside the returned response (for
 // example Skin and the ResponseMeta lists): the copy is shallow, so treat the
@@ -26,6 +27,9 @@ import "context"
 func (c *Client) WaitForJob(ctx context.Context, job Job) (*JobResponse, error) {
 	if ctx == nil {
 		return nil, newInvalidInputError("context is nil")
+	}
+	if err := c.checkOpen(); err != nil {
+		return nil, err
 	}
 	if err := validateJobID(job.ID); err != nil {
 		return nil, err

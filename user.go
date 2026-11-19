@@ -47,6 +47,9 @@ type UserResponse struct {
 // GetUser fetches the user and grants of the configured API key. Missing user
 // or grants fields are tolerated so that error responses yield an *APIError.
 func (c *Client) GetUser(ctx context.Context) (*UserResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
 	var user UserInfo
 	meta, err := c.get(ctx, mePath, func(obj map[string]json.RawMessage, _ []byte) error {
 		return decodeUser(obj, &user)

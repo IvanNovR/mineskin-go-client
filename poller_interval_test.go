@@ -2,6 +2,7 @@ package mineskin
 
 import (
 	"errors"
+	"sync"
 	"testing"
 	"time"
 )
@@ -107,7 +108,7 @@ func TestPollerIntervalCancelledJobIsNotRescheduled(t *testing.T) {
 func TestPollerSkipsJobsThatLeftDuringTick(t *testing.T) {
 	var p *jobPoller
 	var pjs []*pendingJob
-	f := &fakeFetcher{}
+	f := &fakeFetcher{slot: &sync.Mutex{}}
 	f.getFn = func(id string) (*JobResponse, error) {
 		for _, pj := range pjs {
 			if pj.id != id {

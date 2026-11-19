@@ -184,7 +184,7 @@ func TestUnexpectedResponseErrorClassification(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			e := newUnexpectedResponseError(tc.status, tc.header, []byte(tc.body), nil)
+			e := newUnexpectedResponseError(tc.status, tc.header, []byte(tc.body), nil, testNow)
 			if e.Status != tc.status {
 				t.Errorf("Status = %d, want %d", e.Status, tc.status)
 			}
@@ -219,8 +219,62 @@ func TestUnexpectedResponseErrorClassification(t *testing.T) {
 	}
 }
 
+var testNow = time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
+
+func TestParseRetryAfter(t *testing.T) {
+	at := testNow.Add(30 * time.Second)
+	tests := []struct {
+		name    string
+		value   string
+		want    time.Duration
+		present bool
+	}{
+		{"seconds", "120", 2 * time.Minute, true},
+		{"whitespace", " 5 ", 5 * time.Second, true},
+		{"zero", "0", 0, true},
+		{"negative", "-3", 0, true},
+		{"IMF-fixdate", at.Format(http.TimeFormat), 30 * time.Second, true},
+		{"RFC 850", at.Format(time.RFC850), 30 * time.Second, true},
+		{"asctime", at.Format(time.ANSIC), 30 * time.Second, true},
+		{"past date", testNow.Add(-time.Hour).Format(http.TimeFormat), 0, true},
+		{"empty", "", 0, false},
+		{"garbage", "soon", 0, false},
+		{"fraction", "1.5", 0, false},
+		{"plus sign", "+5", 0, false},
+		{"overflow", "99999999999999999999", 0, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := parseRetryAfter(tc.value, testNow)
+			if got != tc.want || ok != tc.present {
+				t.Errorf("parseRetryAfter(%q) = (%v, %v), want (%v, %v)", tc.value, got, ok, tc.want, tc.present)
+			}
+		})
+	}
+}
+
+func TestIsRetryableStatus(t *testing.T) {
+	for status, want := range map[int]bool{
+		408: true, 429: true, 500: true, 502: true, 503: true, 599: true,
+		501: false, 505: false, 400: false, 404: false, 409: false, 200: false,
+	} {
+		if got := isRetryableStatus(status); got != want {
+			t.Errorf("isRetryableStatus(%d) = %v, want %v", status, got, want)
+		}
+	}
+}
+
+func TestUnexpectedResponseErrorRetryAfterHTTPDate(t *testing.T) {
+	h := http.Header{}
+	h.Set("Retry-After", testNow.Add(45*time.Second).Format(http.TimeFormat))
+	e := newUnexpectedResponseError(503, h, nil, nil, testNow)
+	if !e.HasRetryAfter || e.RetryAfter != 45*time.Second {
+		t.Errorf("got (%v, %v), want (45s, true)", e.RetryAfter, e.HasRetryAfter)
+	}
+}
+
 func TestUnexpectedResponseErrorNilBody(t *testing.T) {
-	e := newUnexpectedResponseError(502, nil, nil, nil)
+	e := newUnexpectedResponseError(502, nil, nil, nil, testNow)
 	if got, want := e.Error(), "HTTP 502: empty response body"; got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
@@ -237,8 +291,10 @@ func TestUnexpectedResponseErrorRetryAfter(t *testing.T) {
 		{"two minutes", "120", 120 * time.Second, true},
 		{"zero", "0", 0, true},
 		{"surrounding whitespace", " 5 ", 5 * time.Second, true},
-		{"http date", "Wed, 21 Oct 2026 07:28:00 GMT", 0, false},
-		{"negative", "-1", 0, false},
+		// JB-18 deviation, D13: the HTTP-date form is supported, and a past
+		// date or a negative value is present with a zero delay.
+		{"http date in the past", "Wed, 21 Oct 2026 07:28:00 GMT", 0, true},
+		{"negative", "-1", 0, true},
 		{"fractional", "1.5", 0, false},
 		{"empty", "", 0, false},
 		{"overflow", "99999999999999999999", 0, false},
@@ -248,13 +304,13 @@ func TestUnexpectedResponseErrorRetryAfter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			h := http.Header{}
 			h.Set("Retry-After", tc.value)
-			e := newUnexpectedResponseError(503, h, []byte("Service Unavailable"), nil)
+			e := newUnexpectedResponseError(503, h, []byte("Service Unavailable"), nil, testNow)
 			if e.HasRetryAfter != tc.present || e.RetryAfter != tc.want {
 				t.Errorf("got (%v, %v), want (%v, %v)", e.RetryAfter, e.HasRetryAfter, tc.want, tc.present)
 			}
 		})
 	}
-	absent := newUnexpectedResponseError(503, http.Header{}, nil, nil)
+	absent := newUnexpectedResponseError(503, http.Header{}, nil, nil, testNow)
 	if absent.HasRetryAfter || absent.RetryAfter != 0 {
 		t.Errorf("missing header: got (%v, %v)", absent.RetryAfter, absent.HasRetryAfter)
 	}
@@ -266,7 +322,7 @@ func TestUnexpectedResponseErrorIsRetryable(t *testing.T) {
 		499: false, 500: true, 501: false, 502: true, 503: true, 504: true, 505: false, 521: true, 530: true,
 	}
 	for status, want := range tests {
-		e := newUnexpectedResponseError(status, http.Header{}, nil, nil)
+		e := newUnexpectedResponseError(status, http.Header{}, nil, nil, testNow)
 		if got := e.IsRetryable(); got != want {
 			t.Errorf("status %d: IsRetryable() = %v, want %v", status, got, want)
 		}
@@ -274,14 +330,14 @@ func TestUnexpectedResponseErrorIsRetryable(t *testing.T) {
 }
 
 func TestUnexpectedResponseErrorIs(t *testing.T) {
-	notFound := newUnexpectedResponseError(404, http.Header{}, []byte("nope"), nil)
+	notFound := newUnexpectedResponseError(404, http.Header{}, []byte("nope"), nil, testNow)
 	if !errors.Is(notFound, ErrClient) || !errors.Is(notFound, ErrNotFound) {
 		t.Error("404 must match ErrClient and ErrNotFound")
 	}
 	if errors.Is(notFound, ErrInvalidInput) {
 		t.Error("must not match ErrInvalidInput")
 	}
-	bad := newUnexpectedResponseError(502, http.Header{}, nil, nil)
+	bad := newUnexpectedResponseError(502, http.Header{}, nil, nil, testNow)
 	if !errors.Is(bad, ErrClient) {
 		t.Error("502 must match ErrClient")
 	}
@@ -292,7 +348,7 @@ func TestUnexpectedResponseErrorIs(t *testing.T) {
 
 func TestUnexpectedResponseErrorUnwrapAndAs(t *testing.T) {
 	cause := errors.New("unexpected end of JSON input")
-	e := newUnexpectedResponseError(200, http.Header{}, []byte(`{"success":true,"user":`), cause)
+	e := newUnexpectedResponseError(200, http.Header{}, []byte(`{"success":true,"user":`), cause, testNow)
 	if !errors.Is(e, cause) || !errors.Is(e.Unwrap(), cause) {
 		t.Error("cause must be reachable through Unwrap")
 	}
@@ -304,7 +360,7 @@ func TestUnexpectedResponseErrorUnwrapAndAs(t *testing.T) {
 	if !errors.As(wrapped, &target) || target != e {
 		t.Error("errors.As must find the UnexpectedResponseError through a wrapper")
 	}
-	if newUnexpectedResponseError(200, http.Header{}, nil, nil).Unwrap() != nil {
+	if newUnexpectedResponseError(200, http.Header{}, nil, nil, testNow).Unwrap() != nil {
 		t.Error("Unwrap without cause must be nil")
 	}
 }
@@ -333,7 +389,7 @@ func TestUnexpectedResponseErrorLargeBodyIsCapped(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			e := newUnexpectedResponseError(502, nil, []byte(tc.body), nil)
+			e := newUnexpectedResponseError(502, nil, []byte(tc.body), nil, testNow)
 			if e.BodySnippet != tc.wantSnip || e.Source != tc.wantSource {
 				t.Errorf("snippet = %.60q source = %q", e.BodySnippet, e.Source)
 			}
@@ -346,7 +402,7 @@ func TestUnexpectedResponseErrorLargeBodyIsCapped(t *testing.T) {
 
 func TestUnexpectedResponseErrorStripsControlCharacters(t *testing.T) {
 	h := hdr("server", "nginx/1.\x1b[31m28\x07", "cf-ray", "abc\x1b[0m-FRA")
-	e := newUnexpectedResponseError(502, h, []byte("<title>a\x1b[31mred\x00\x7f</title>\r\nx"), nil)
+	e := newUnexpectedResponseError(502, h, []byte("<title>a\x1b[31mred\x00\x7f</title>\r\nx"), nil, testNow)
 	if e.BodySnippet != "a[31mred" {
 		t.Errorf("BodySnippet = %q", e.BodySnippet)
 	}
@@ -356,7 +412,7 @@ func TestUnexpectedResponseErrorStripsControlCharacters(t *testing.T) {
 	if e.CFRay != "abc[0m-FRA" {
 		t.Errorf("CFRay = %q", e.CFRay)
 	}
-	body := newUnexpectedResponseError(502, nil, []byte("a\tb\r\nc\x1bd"), nil)
+	body := newUnexpectedResponseError(502, nil, []byte("a\tb\r\nc\x1bd"), nil, testNow)
 	if body.BodySnippet != "a b cd" {
 		t.Errorf("whitespace must collapse before stripping: %q", body.BodySnippet)
 	}

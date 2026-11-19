@@ -2,19 +2,22 @@ package mineskin
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"time"
 )
 
 // tick checks every job that is due at now. Attempts are counted and the next
 // check is scheduled before any request is sent, so a concurrent tick never
-// counts the same attempt twice. Checks run one after another.
+// counts the same attempt twice. The checks of one tick run in parallel, each
+// through the get throttle, and tick returns when all of them are complete.
 func (p *jobPoller) tick(now time.Time) {
 	due, batched := p.collectDue(now)
 	if len(due) == 0 {
 		return
 	}
-	ctx := context.Background()
+	ctx := p.ctx
 	if batched {
 		p.checkViaList(ctx, due)
 		return
@@ -51,6 +54,7 @@ func (p *jobPoller) collectDue(now time.Time) (due []*pendingJob, batched bool) 
 			continue
 		}
 		pj.nextCheckAt = now.Add(waits[i])
+		pj.wait = waits[i]
 		due = append(due, pj)
 	}
 	return due, len(p.pending) > batchThreshold
@@ -101,11 +105,16 @@ func (p *jobPoller) fetchJob(ctx context.Context, pj *pendingJob, force bool) {
 		return
 	}
 	p.logger.Debug("polling job", "job", pj.id, "attempt", p.attemptOf(pj), "path", queuePath+"/{id}")
-	resp, err := p.fetch.GetJob(ctx, pj.id)
+	// The check may queue in the get throttle; re-check once it holds a slot.
+	resp, err := p.fetch.getJobGated(ctx, pj.id, func() bool { return p.isPending(pj) })
+	if errors.Is(err, errCheckSkipped) {
+		return
+	}
 	if err != nil {
 		p.finish(pj, nil, err)
 		return
 	}
+	p.observeJob(pj, resp.Job)
 	if force || isPollDone(resp.Job) {
 		p.finish(pj, resp, nil)
 		return
@@ -114,15 +123,55 @@ func (p *jobPoller) fetchJob(ctx context.Context, pj *pendingJob, force bool) {
 	defer p.mu.Unlock()
 	if p.pending[pj.id] == pj {
 		pj.job = resp.Job
+		// The next check is due a full interval after this one completed,
+		// however long the request waited in the throttle.
+		pj.nextCheckAt = later(pj.nextCheckAt, p.now().Add(pj.wait))
 	}
 }
 
-// checkIndividually sends one GET per due job. A request error fails only
-// that job.
-func (p *jobPoller) checkIndividually(ctx context.Context, due []*pendingJob) {
-	for _, pj := range due {
-		p.fetchJob(ctx, pj, false)
+// later returns the later of a and b.
+func later(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
 	}
+	return a
+}
+
+// observeJob calls onJobFailure the first time j is seen FAILED for pj. The
+// hook runs without mu held.
+func (p *jobPoller) observeJob(pj *pendingJob, j Job) {
+	p.mu.Lock()
+	notify := p.noteFailureLocked(pj, j)
+	p.mu.Unlock()
+	if notify {
+		p.onJobFailure()
+	}
+}
+
+// noteFailureLocked records that pj was seen FAILED and reports whether this
+// is the first time. The caller must call onJobFailure after unlocking mu.
+func (p *jobPoller) noteFailureLocked(pj *pendingJob, j Job) bool {
+	if j.Status != JobStatusFailed || pj.failureSeen {
+		return false
+	}
+	pj.failureSeen = true
+	return true
+}
+
+// checkIndividually sends one GET per due job, all at once; the get throttle
+// bounds how many are in flight. A request error fails only that job. It
+// returns when every check is complete.
+func (p *jobPoller) checkIndividually(ctx context.Context, due []*pendingJob) {
+	p.fetchAll(ctx, due, false)
+}
+
+// fetchAll runs fetchJob for every job in parallel and waits for all of them.
+func (p *jobPoller) fetchAll(ctx context.Context, jobs []*pendingJob, force bool) {
+	var wg sync.WaitGroup
+	for _, pj := range jobs {
+		wg.Go(func() { p.fetchJob(ctx, pj, force) })
+	}
+	wg.Wait()
 }
 
 // checkViaList sends one list request for all due jobs. A list error fails the
@@ -138,25 +187,30 @@ func (p *jobPoller) checkViaList(ctx context.Context, due []*pendingJob) {
 		}
 		return
 	}
-	for _, pj := range p.applyList(list.Jobs) {
-		p.fetchJob(ctx, pj, true)
-	}
+	p.fetchAll(ctx, p.applyList(list.Jobs), true)
 }
 
 // applyList stores the listed state of every pending job and returns the ones
 // that are done.
 func (p *jobPoller) applyList(jobs []Job) (done []*pendingJob) {
+	failures := 0
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	for _, j := range jobs {
 		pj, ok := p.pending[j.ID]
 		if !ok {
 			continue
 		}
 		pj.job = j
+		if p.noteFailureLocked(pj, j) {
+			failures++
+		}
 		if isPollDone(j) {
 			done = append(done, pj)
 		}
+	}
+	p.mu.Unlock()
+	for range failures {
+		p.onJobFailure()
 	}
 	return done
 }

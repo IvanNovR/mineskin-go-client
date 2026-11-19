@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 const waitTestTimeout = 20 * time.Second
@@ -21,6 +23,25 @@ func waitCtx(t *testing.T) context.Context {
 	ctx, cancel := context.WithTimeout(context.Background(), waitTestTimeout)
 	t.Cleanup(cancel)
 	return ctx
+}
+
+// advanceUntil moves fake forward in step increments until res delivers, and
+// returns that error. A poller timer is never missed and no real delay is
+// waited for.
+func advanceUntil(t *testing.T, fake *clock.Fake, step time.Duration, res <-chan error) error {
+	t.Helper()
+	deadline := time.Now().Add(waitTestTimeout)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-res:
+			return err
+		default:
+		}
+		fake.Advance(step)
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("timed out advancing the fake clock")
+	return nil
 }
 
 func jobJSON(id, status string) string {
@@ -142,17 +163,24 @@ func TestWaitForJobEscapesID(t *testing.T) {
 }
 
 func TestWaitForJobUsesETA(t *testing.T) {
+	const step = 10 * time.Millisecond
 	run := func(useETA bool) (time.Duration, error) {
+		fake := clock.NewFake(pollerT0)
 		var firstGet atomic.Int64
 		srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-			firstGet.CompareAndSwap(0, time.Now().UnixNano())
+			firstGet.CompareAndSwap(0, fake.Now().UnixNano())
 			writeJSON(200, jobJSON("j1", "completed"))(w, r)
 		})
-		c := newTestClient(t, srv.URL, WithJobPolling(PollOptions{
+		c := newTestClient(t, srv.URL, withClock(fake), WithJobPolling(PollOptions{
 			InitialDelay: 600 * time.Millisecond, UseETA: useETA,
 		}))
-		start := time.Now()
-		_, err := c.WaitForJob(waitCtx(t), Job{ID: "j1", ETA: start.Add(50 * time.Millisecond)})
+		start := fake.Now()
+		res := goCall(func() error {
+			_, err := c.WaitForJob(waitCtx(t), Job{ID: "j1", ETA: start.Add(50 * time.Millisecond)})
+			return err
+		})
+		eventually(t, "job registered", func() bool { return pendingCount(c.poller) == 1 })
+		err := advanceUntil(t, fake, step, res)
 		return time.Unix(0, firstGet.Load()).Sub(start), err
 	}
 
@@ -164,10 +192,10 @@ func TestWaitForJobUsesETA(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if withETA >= 400*time.Millisecond {
+	if withETA < 50*time.Millisecond || withETA >= 100*time.Millisecond {
 		t.Errorf("first GET with ETA after %v, want about the 50ms ETA", withETA)
 	}
-	if withoutETA < 500*time.Millisecond {
+	if withoutETA < 600*time.Millisecond {
 		t.Errorf("first GET without ETA after %v, want about InitialDelay (600ms)", withoutETA)
 	}
 }
@@ -359,7 +387,8 @@ func TestWaitForJobBatchedOverHTTP(t *testing.T) {
 		id := strings.TrimPrefix(r.URL.Path, "/v2/queue/")
 		writeJSON(200, jobJSON(id, "completed"))(w, r)
 	})
-	c := newTestClient(t, srv.URL, WithJobPolling(PollOptions{
+	fake := clock.NewFake(pollerT0)
+	c := newTestClient(t, srv.URL, withClock(fake), WithJobPolling(PollOptions{
 		InitialDelay: 300 * time.Millisecond,
 		Interval:     func(int) time.Duration { return time.Millisecond },
 	}))
@@ -373,7 +402,10 @@ func TestWaitForJobBatchedOverHTTP(t *testing.T) {
 			_, errs[i] = c.WaitForJob(waitCtx(t), Job{ID: fmt.Sprintf("j%d", i)})
 		}()
 	}
-	wg.Wait()
+	eventually(t, "all jobs registered", func() bool { return pendingCount(c.poller) == n })
+	allDone := make(chan error, 1)
+	go func() { wg.Wait(); allDone <- nil }()
+	_ = advanceUntil(t, fake, 50*time.Millisecond, allDone)
 
 	for i, err := range errs {
 		if err != nil {
@@ -441,7 +473,8 @@ func TestPollerWakesForSoonerJob(t *testing.T) {
 		id := strings.TrimPrefix(r.URL.Path, "/v2/queue/")
 		writeJSON(200, jobJSON(id, "completed"))(w, r)
 	})
-	c := newTestClient(t, srv.URL, WithJobPolling(PollOptions{
+	fake := clock.NewFake(pollerT0)
+	c := newTestClient(t, srv.URL, withClock(fake), WithJobPolling(PollOptions{
 		InitialDelay: time.Hour, UseETA: true,
 	}))
 	ctx, cancel := context.WithCancel(waitCtx(t))
@@ -455,7 +488,12 @@ func TestPollerWakesForSoonerJob(t *testing.T) {
 		return c.poller.isRunning() && pendingCount(c.poller) == 1
 	})
 
-	_, err := c.WaitForJob(waitCtx(t), Job{ID: "soon", ETA: time.Now().Add(30 * time.Millisecond)})
+	soon := goCall(func() error {
+		_, err := c.WaitForJob(waitCtx(t), Job{ID: "soon", ETA: fake.Now().Add(30 * time.Millisecond)})
+		return err
+	})
+	eventually(t, "sooner job registered", func() bool { return pendingCount(c.poller) == 2 })
+	err := advanceUntil(t, fake, 10*time.Millisecond, soon)
 
 	if err != nil {
 		t.Fatal(err)

@@ -1,14 +1,20 @@
 package mineskin
 
 import (
+	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 	"unicode"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 const (
@@ -27,9 +33,13 @@ const (
 // Client is a MineSkin API client. It is immutable after NewClient returns and
 // safe for concurrent use by multiple goroutines.
 //
-// The only background goroutine is the job poller used by WaitForJob. It is
-// started lazily by the first wait and exits by itself once no wait is
-// pending; a later wait starts it again. There is no Close method.
+// The configuration is immutable; Close only changes lifecycle state. The only
+// background goroutine is the job poller used by WaitForJob. It is started
+// lazily by the first wait and exits by itself once no wait is pending; a
+// later wait starts it again. Close releases the client's resources: it fails
+// queued and waiting calls, cancels requests in flight and waits for the
+// poller to exit (see Close). The client creates its own HTTP transport
+// unless WithTransport is used.
 //
 // Go's HTTP client already strips the Authorization header when a redirect
 // leads to a different host, and this client refuses redirects from https to
@@ -42,7 +52,25 @@ type Client struct {
 	logger     *slog.Logger
 	polling    PollOptions
 	poller     *jobPoller
+	clock      clock.Clock
+	genGroup   *requestGroup
+	getGroup   *requestGroup
+	// rateLimitRetries is the number of automatic retries after an HTTP 429.
+	rateLimitRetries int
+
+	// baseCtx is cancelled by Close and parents every request context.
+	baseCtx    context.Context
+	cancelBase context.CancelCauseFunc
+	closed     atomic.Bool
+	closeOnce  sync.Once
+	// bg tracks the grants load goroutine, which Close waits for.
+	bg sync.WaitGroup
+	// idleCloser closes idle connections of a transport the client created;
+	// nil when the caller supplied the transport.
+	idleCloser func()
 }
+
+var _ io.Closer = (*Client)(nil)
 
 // NewClient creates a Client from the given options. Invalid configuration
 // yields an error matching ErrInvalidInput and ErrClient; the error never
@@ -52,6 +80,8 @@ func NewClient(opts ...Option) (*Client, error) {
 		baseURL:   DefaultBaseURL,
 		userAgent: DefaultUserAgent,
 		timeout:   DefaultTimeout,
+
+		rateLimitRetries: DefaultRateLimitRetries,
 	}
 	for _, opt := range opts {
 		if opt != nil {
@@ -75,9 +105,24 @@ func NewClient(opts ...Option) (*Client, error) {
 		},
 		logger:  r.logger,
 		polling: r.polling,
+		clock:   r.clock,
+
+		rateLimitRetries: r.rateLimitRetries,
 	}
-	c.poller = newJobPoller(c, r.polling, r.logger)
+	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
+	c.idleCloser = r.idleCloser
+	c.genGroup, c.getGroup = c.newRequestGroups(r)
+	c.poller = newJobPoller(c.baseCtx, c.clock, c, r.polling, r.logger, c.failureHook())
 	return c, nil
+}
+
+// failureHook returns the poller's FAILED-job hook: the penalty with
+// auto-tuning, nil (a no-op) otherwise.
+func (c *Client) failureHook() func() {
+	if c.genGroup.tuner == nil {
+		return nil
+	}
+	return c.genGroup.tuner.reportFailure
 }
 
 // resolvedConfig is a validated config with defaults applied.
@@ -89,6 +134,15 @@ type resolvedConfig struct {
 	transport http.RoundTripper
 	logger    *slog.Logger
 	polling   PollOptions
+	clock     clock.Clock
+	// idleCloser is set only when the client created the transport itself.
+	idleCloser func()
+
+	generateThrottle Throttle
+	getThrottle      Throttle
+	autoTuning       bool
+	// rateLimitRetries is never negative.
+	rateLimitRetries int
 }
 
 // resolve validates cfg and fills in defaults. Errors match ErrInvalidInput
@@ -98,6 +152,9 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.rateLimitRetries < 0 {
+		return nil, newInvalidInputError("rate limit retries must not be negative")
+	}
 	if cfg.timeout <= 0 {
 		return nil, newInvalidInputError("timeout must be greater than zero")
 	}
@@ -105,14 +162,26 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	gen, get, err := cfg.resolveThrottles()
+	if err != nil {
+		return nil, err
+	}
 	r := &resolvedConfig{
-		baseURL: baseURL, timeout: cfg.timeout, polling: polling,
+		generateThrottle: gen, getThrottle: get,
+		autoTuning:       cfg.autoTuning,
+		rateLimitRetries: cfg.rateLimitRetries,
+		baseURL:          baseURL, timeout: cfg.timeout, polling: polling,
 		transport: cfg.transport, logger: cfg.logger,
 		userAgent: strings.TrimSpace(cfg.userAgent),
 		apiKey:    strings.TrimSpace(cfg.apiKey),
 	}
 	if r.transport == nil {
-		r.transport = http.DefaultTransport
+		owned := defaultTransport()
+		r.transport, r.idleCloser = owned, owned.CloseIdleConnections
+	}
+	r.clock = cfg.clock
+	if r.clock == nil {
+		r.clock = clock.Real()
 	}
 	if r.logger == nil {
 		r.logger = slog.New(slog.DiscardHandler)
@@ -124,6 +193,22 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 		return nil, err
 	}
 	return r, nil
+}
+
+// resolveThrottles applies the group defaults and rejects auto-tuning
+// combined with an explicit generate throttle.
+func (cfg *config) resolveThrottles() (gen, get Throttle, err error) {
+	if cfg.autoTuning && cfg.generateThrottleSet {
+		return gen, get, newInvalidInputError("auto-tuning and a generate throttle are mutually exclusive")
+	}
+	gen, err = cfg.generateThrottle.withDefaults(
+		Throttle{Interval: DefaultGenerateInterval, Concurrency: DefaultGenerateConcurrency}, "generate")
+	if err != nil {
+		return gen, get, err
+	}
+	get, err = cfg.getThrottle.withDefaults(
+		Throttle{Interval: DefaultGetInterval, Concurrency: DefaultGetConcurrency}, "get")
+	return gen, get, err
 }
 
 // normalizeBaseURL validates raw and returns it without trailing slashes.
@@ -213,4 +298,14 @@ func checkRedirect(req *http.Request, via []*http.Request) error {
 		}
 	}
 	return nil
+}
+
+// defaultTransport returns a private clone of http.DefaultTransport, which the
+// client owns and closes (D20). If the default was replaced by another
+// RoundTripper, a fresh transport with the standard library defaults is used.
+func defaultTransport() *http.Transport {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		return t.Clone()
+	}
+	return &http.Transport{Proxy: http.ProxyFromEnvironment}
 }

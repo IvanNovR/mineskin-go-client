@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 var pollerT0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
@@ -17,14 +19,26 @@ var pollerResult = UUID{1, 2, 3}
 type fakeFetcher struct {
 	mu        sync.Mutex
 	getIDs    []string
+	getCtxs   []context.Context
 	listCalls int
 	getFn     func(id string) (*JobResponse, error)
-	listFn    func() (*JobListResponse, error)
+	// slot, when set, emulates a get throttle of concurrency 1: GetJob
+	// holds it from the start gate to the end of getFn.
+	slot   *sync.Mutex
+	listFn func() (*JobListResponse, error)
 }
 
-func (f *fakeFetcher) GetJob(_ context.Context, id string) (*JobResponse, error) {
+func (f *fakeFetcher) getJobGated(ctx context.Context, id string, proceed func() bool) (*JobResponse, error) {
+	if f.slot != nil {
+		f.slot.Lock()
+		defer f.slot.Unlock()
+		if proceed != nil && !proceed() {
+			return nil, errCheckSkipped
+		}
+	}
 	f.mu.Lock()
 	f.getIDs = append(f.getIDs, id)
+	f.getCtxs = append(f.getCtxs, ctx)
 	fn := f.getFn
 	f.mu.Unlock()
 	if fn == nil {
@@ -61,9 +75,7 @@ func newTestPoller(t *testing.T, f jobFetcher, opts PollOptions) *jobPoller {
 	if err != nil {
 		t.Fatalf("withDefaults() error = %v", err)
 	}
-	p := newJobPoller(f, opts, nil)
-	p.now = func() time.Time { return pollerT0 }
-	return p
+	return newJobPoller(context.Background(), clock.NewFake(pollerT0), f, opts, nil, nil)
 }
 
 // addJobs adds jobs "j0".."j{n-1"} and returns their pending entries.

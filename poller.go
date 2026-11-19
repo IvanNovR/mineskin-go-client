@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 // batchThreshold is the number of pending jobs above which a tick checks jobs
@@ -13,7 +15,7 @@ const batchThreshold = 4
 
 // jobFetcher is the part of Client the poller needs. *Client satisfies it.
 type jobFetcher interface {
-	GetJob(ctx context.Context, id string) (*JobResponse, error)
+	getJobGated(ctx context.Context, id string, proceed func() bool) (*JobResponse, error)
 	ListJobs(ctx context.Context) (*JobListResponse, error)
 }
 
@@ -26,6 +28,8 @@ type pendingJob struct {
 	attempts    int
 	waiters     int
 	nextCheckAt time.Time
+	wait        time.Duration // the interval chosen for the current check
+	failureSeen bool          // onJobFailure already called for this job
 	done        chan struct{}
 	resp        *JobResponse
 	err         error
@@ -41,7 +45,11 @@ type jobPoller struct {
 	fetch  jobFetcher
 	opts   PollOptions
 	logger *slog.Logger
-	now    func() time.Time
+	clock  clock.Clock
+	// ctx is the client base context; every check request runs on it.
+	ctx context.Context
+	// onJobFailure is called when a job is seen FAILED; never nil.
+	onJobFailure func()
 
 	// wakeCh has capacity 1; a send means "recompute the schedule".
 	wakeCh chan struct{}
@@ -49,23 +57,38 @@ type jobPoller struct {
 	mu      sync.Mutex
 	pending map[string]*pendingJob
 	running bool // whether the run goroutine is alive; guarded by mu
+	closed  bool // set by close; guarded by mu
+	// closeErr is the error pending and later waiters finish with once closed.
+	closeErr error
+	// wg tracks the run goroutine; Add happens under mu while !closed.
+	wg sync.WaitGroup
 }
 
 // newJobPoller returns a poller using f and opts, which must already have
-// defaults applied. A nil logger discards logs.
-func newJobPoller(f jobFetcher, opts PollOptions, logger *slog.Logger) *jobPoller {
+// defaults applied. Requests run on ctx, the client base context; clk drives
+// the poller's time and its wait timer. A nil
+// logger discards logs; a nil onJobFailure does nothing.
+func newJobPoller(ctx context.Context, clk clock.Clock, f jobFetcher, opts PollOptions, logger *slog.Logger, onJobFailure func()) *jobPoller {
 	if logger == nil {
 		logger = slog.New(slog.DiscardHandler)
 	}
+	if onJobFailure == nil {
+		onJobFailure = func() {}
+	}
 	return &jobPoller{
-		fetch:   f,
-		opts:    opts,
-		logger:  logger,
-		now:     time.Now,
-		pending: make(map[string]*pendingJob),
-		wakeCh:  make(chan struct{}, 1),
+		ctx:          ctx,
+		onJobFailure: onJobFailure,
+		fetch:        f,
+		opts:         opts,
+		logger:       logger,
+		clock:        clk,
+		pending:      make(map[string]*pendingJob),
+		wakeCh:       make(chan struct{}, 1),
 	}
 }
+
+// now returns the poller clock's current time.
+func (p *jobPoller) now() time.Time { return p.clock.Now() }
 
 // add registers a waiter for job. A job with an id that is already pending
 // shares the existing entry. The first check is scheduled by
@@ -73,6 +96,11 @@ func newJobPoller(f jobFetcher, opts PollOptions, logger *slog.Logger) *jobPolle
 func (p *jobPoller) add(job Job) *pendingJob {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.closed {
+		pj := &pendingJob{id: job.ID, job: job, done: make(chan struct{}), err: p.closeErr}
+		close(pj.done)
+		return pj
+	}
 	if pj, ok := p.pending[job.ID]; ok {
 		pj.waiters++
 		return pj

@@ -2,10 +2,12 @@ package mineskin_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	"github.com/IvanNovR/mineskin-go-client"
 )
@@ -68,4 +70,57 @@ func ExampleClient_Generate() {
 	}
 	fmt.Println(res.Skin.Name)
 	// Output: Steve
+}
+
+func ExampleWithAutoTuning() {
+	srv := exampleServer()
+	defer srv.Close()
+	// The generate group follows the grants of the key; the first Queue or
+	// Generate call loads them. A free key or a failed load keeps a safe
+	// baseline.
+	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL), mineskin.WithAutoTuning())
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+
+	res, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/skin.png"), nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(res.Skin.Name)
+	// Output: Steve
+}
+
+func ExampleWithGenerateThrottle() {
+	// A slower, stricter generate group. A zero field keeps the default.
+	c, err := mineskin.NewClient(
+		mineskin.WithGenerateThrottle(mineskin.Throttle{Interval: time.Second, Concurrency: 1}),
+		mineskin.WithGetThrottle(mineskin.Throttle{Concurrency: 2}),
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer func() { _ = c.Close() }()
+
+	// A negative field is rejected.
+	_, err = mineskin.NewClient(mineskin.WithGetThrottle(mineskin.Throttle{Interval: -time.Second}))
+	fmt.Println(errors.Is(err, mineskin.ErrInvalidInput))
+	// Output: true
+}
+
+func ExampleClient_Close() {
+	srv := exampleServer()
+	defer srv.Close()
+	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL))
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := c.Close(); err != nil {
+		log.Fatal(err)
+	}
+	// Calls after Close fail immediately.
+	_, err = c.GetSkin(context.Background(), exampleSkinID)
+	fmt.Println(errors.Is(err, mineskin.ErrClientClosed))
+	// Output: true
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,12 +36,42 @@ func newTestServer(t *testing.T, h http.HandlerFunc) *httptest.Server {
 // defaults so they can override them.
 func newTestClient(t *testing.T, baseURL string, opts ...Option) *Client {
 	t.Helper()
-	all := append([]Option{WithBaseURL(baseURL), WithUserAgent("test/1.0")}, opts...)
+	all := append([]Option{WithBaseURL(baseURL), WithUserAgent("test/1.0"), fastThrottles()}, opts...)
 	c, err := NewClient(all...)
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 	return c
+}
+
+// fastThrottles makes both groups practically unthrottled (1 ns interval, 100
+// in flight) so tests that are not about throttling stay fast. It does not
+// mark the generate throttle as explicitly set, so WithAutoTuning may still be
+// added; tests about throttling override it with their own options.
+func fastThrottles() Option {
+	fast := Throttle{Interval: time.Nanosecond, Concurrency: 100}
+	return func(c *config) {
+		c.generateThrottle = fast
+		c.getThrottle = fast
+	}
+}
+
+// trackConcurrency wraps h and records how many requests are inside it at
+// once. peak returns the highest number seen.
+func trackConcurrency(h http.HandlerFunc) (wrapped http.HandlerFunc, peak func() int) {
+	var cur, high atomic.Int32
+	wrapped = func(w http.ResponseWriter, r *http.Request) {
+		n := cur.Add(1)
+		defer cur.Add(-1)
+		for {
+			old := high.Load()
+			if n <= old || high.CompareAndSwap(old, n) {
+				break
+			}
+		}
+		h(w, r)
+	}
+	return wrapped, func() int { return int(high.Load()) }
 }
 
 // multipartPart is one parsed multipart part.

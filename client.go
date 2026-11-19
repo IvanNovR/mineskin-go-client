@@ -45,6 +45,8 @@ type Client struct {
 	polling    PollOptions
 	poller     *jobPoller
 	clock      clock.Clock
+	genGroup   *requestGroup
+	getGroup   *requestGroup
 }
 
 // NewClient creates a Client from the given options. Invalid configuration
@@ -80,6 +82,7 @@ func NewClient(opts ...Option) (*Client, error) {
 		polling: r.polling,
 		clock:   r.clock,
 	}
+	c.genGroup, c.getGroup = c.newRequestGroups(r)
 	c.poller = newJobPoller(c, r.polling, r.logger)
 	return c, nil
 }

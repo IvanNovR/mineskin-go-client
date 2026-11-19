@@ -81,19 +81,20 @@ func readLimited(r io.Reader) ([]byte, error) {
 	return body, nil
 }
 
-// get sends a GET request and interprets the response with handleResponse.
+// get sends a GET request through the get group (GetSkin, GetUser, GetJob,
+// ListJobs and the poller) and interprets the response with handleResponse.
 func (c *Client) get(ctx context.Context, path string, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
-	raw, err := c.do(ctx, http.MethodGet, path, nil)
+	raw, err := c.exchange(ctx, c.getGroup, http.MethodGet, path, nil)
 	if err != nil {
 		return ResponseMeta{}, err
 	}
 	return handleResponse(raw, decodeBody)
 }
 
-// post sends a POST request with body and interprets the response with
-// handleResponse.
+// post sends a POST request with body through the generate group (Queue and
+// Generate) and interprets the response with handleResponse.
 func (c *Client) post(ctx context.Context, path string, body *requestBody, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
-	raw, err := c.do(ctx, http.MethodPost, path, body)
+	raw, err := c.exchange(ctx, c.genGroup, http.MethodPost, path, body)
 	if err != nil {
 		return ResponseMeta{}, err
 	}

@@ -66,10 +66,10 @@ func TestErrorMessageStyle(t *testing.T) {
 		err  error
 		want string // exact text; empty skips the exact check
 	}{
-		{"API error verbatim", &APIError{Code: "not_found", Message: "No Such Skin", ResponseMeta: ResponseMeta{Status: 404}}, "mineskin: API error (HTTP 404, not_found): No Such Skin"},
+		{"API error verbatim", &APIError{Code: "not_found", Message: "No Such Skin", Meta: ResponseMeta{Status: 404}}, "mineskin: API error (HTTP 404, not_found): No Such Skin"},
 		{"unexpected response", newUnexpectedResponseError(502, http.Header{}, []byte("bad gateway"), nil, testNow), "mineskin: HTTP 502: bad gateway"},
 		{"unexpected response empty body", newUnexpectedResponseError(502, http.Header{}, nil, nil, testNow), "mineskin: HTTP 502: empty response body"},
-		{"job failed", &JobFailedError{Job: Job{ID: "j1"}, Code: "bad_image", Message: "Nope"}, "mineskin: job j1 failed (bad_image): Nope"},
+		{"job failed", &JobFailedError{Job: Job{ID: "j1"}, Errors: []CodeAndMessage{{Code: "bad_image", Message: "Nope"}}}, "mineskin: job j1 failed (bad_image): Nope"},
 		{"validation", invalidInput("id is empty"), "mineskin: invalid input: id is empty"},
 		{"closed sentinel", ErrClientClosed, "mineskin: client is closed"},
 		{"group closed", mapGroupErr("GET /v2/x", throttle.ErrClosed), "mineskin: client is closed: GET /v2/x"},
@@ -131,14 +131,16 @@ func TestEndToEndMessagesHaveOnePrefix(t *testing.T) {
 	assertGoStyleMessage(t, err)
 }
 
-func TestInventedDefaultsAreLowerCase(t *testing.T) {
+// TestNoInventedDefaults pins that a failure without a server-sent error has
+// no made-up code or message.
+func TestNoInventedDefaults(t *testing.T) {
 	err := newJobFailedError(&JobResponse{Job: Job{ID: "j1"}})
-	if err.Message != "job failed" {
-		t.Errorf("default job failure message = %q, want %q", err.Message, "job failed")
+	if len(err.Errors) != 0 || err.Error() != "mineskin: job j1 failed" {
+		t.Errorf("job failure = %+v (%q), want no errors and %q", err, err.Error(), "mineskin: job j1 failed")
 	}
 	_, herr := decodeMeta[struct{}](transport.Response{Status: 400, Body: []byte(`{"success":false}`)})
 	var apiErr *APIError
-	if !errors.As(herr, &apiErr) || apiErr.Message != "request failed" {
-		t.Errorf("default API message = %+v, want %q", apiErr, "request failed")
+	if !errors.As(herr, &apiErr) || apiErr.Code != "" || apiErr.Message != "" || apiErr.Error() != "mineskin: API error (HTTP 400)" {
+		t.Errorf("API error = %+v, want empty Code and Message and text %q", apiErr, "mineskin: API error (HTTP 400)")
 	}
 }

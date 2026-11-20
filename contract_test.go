@@ -100,7 +100,7 @@ func apiNotFoundCase() contractCase {
 			if !errors.As(err, &apiErr) {
 				t.Fatalf("errors.As(%v, *APIError) = false", err)
 			}
-			if apiErr.Status != http.StatusNotFound || apiErr.Code != "not_found" || IsRetryable(err) {
+			if apiErr.Meta.Status != http.StatusNotFound || apiErr.Code != "not_found" || IsRetryable(err) {
 				t.Errorf("APIError = %+v, retryable %v", apiErr, IsRetryable(err))
 			}
 		},
@@ -245,7 +245,7 @@ func ctxCancelledDuring429RetryCase() contractCase {
 		isNot: []error{ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			var apiErr *APIError
-			if !errors.As(err, &apiErr) || apiErr.Status != http.StatusTooManyRequests {
+			if !errors.As(err, &apiErr) || apiErr.Meta.Status != http.StatusTooManyRequests {
 				t.Errorf("errors.As(%v, *APIError) status 429 = false", err)
 			}
 		},
@@ -348,7 +348,7 @@ func jobFailedCase() contractCase {
 			if !errors.As(err, &jf) {
 				t.Fatalf("errors.As(%v, *JobFailedError) = false", err)
 			}
-			if jf.Job.ID != "j1" || jf.Code != "bad_image" || jf.Message != "nope" {
+			if jf.Job.ID != "j1" || len(jf.Errors) != 1 || jf.Errors[0] != (CodeAndMessage{Code: "bad_image", Message: "nope"}) {
 				t.Errorf("JobFailedError = %+v", jf)
 			}
 		},

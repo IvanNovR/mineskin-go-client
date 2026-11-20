@@ -174,7 +174,7 @@ func (s jobSource) List(ctx context.Context) ([]poll.State, error) {
 
 // jobState derives the neutral poll state of j.
 func jobState(j Job) poll.State {
-	return poll.State{ID: j.ID, ETA: j.ETA, Done: isPollDone(j), Failed: j.Status == JobStatusFailed}
+	return poll.State{ID: j.ID, ETA: j.ETA, Done: j.IsTerminal(), Failed: j.Status == JobStatusFailed}
 }
 
 // toPollOptions maps the resolved public polling options to the neutral ones.

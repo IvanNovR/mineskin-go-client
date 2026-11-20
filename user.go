@@ -26,8 +26,8 @@ type Grants struct {
 	Raw map[string]json.RawMessage
 }
 
-// UserInfo describes the current user.
-type UserInfo struct {
+// User describes the current user.
+type User struct {
 	// UUID is the value of the "user" field of the response; it is the zero
 	// UUID when the field is absent or null.
 	UUID UUID
@@ -37,9 +37,10 @@ type UserInfo struct {
 
 // UserResponse is the response to GetUser.
 type UserResponse struct {
-	ResponseMeta
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 	// User is the current user.
-	User UserInfo
+	User User
 }
 
 // userWire is the wire shape of a /v2/me response.
@@ -94,5 +95,5 @@ func (c *Client) GetUser(ctx context.Context) (*UserResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &UserResponse{ResponseMeta: meta, User: UserInfo{UUID: wire.User, Grants: wire.Grants}}, nil
+	return &UserResponse{Meta: meta, User: User{UUID: wire.User, Grants: wire.Grants}}, nil
 }

@@ -93,7 +93,7 @@ func TestWaitForJobFailed(t *testing.T) {
 	if !errors.As(err, &jfe) || got != nil {
 		t.Fatalf("got = %+v err = %v, want *JobFailedError", got, err)
 	}
-	if jfe.Job.ID != "j1" || jfe.Code != "bad_image" {
+	if jfe.Job.ID != "j1" || len(jfe.Errors) != 1 || jfe.Errors[0].Code != "bad_image" {
 		t.Errorf("err = %+v", jfe)
 	}
 }

@@ -19,7 +19,7 @@ func TestGetUserWithoutSuccessField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uri != "/v2/me" || !got.Success || got.Status != 200 || got.User.UUID.String() != testSkinID {
+	if uri != "/v2/me" || got.Meta.Status != 200 || got.User.UUID.String() != testSkinID {
 		t.Errorf("uri=%q got=%+v", uri, got)
 	}
 	g := got.User.Grants
@@ -35,8 +35,8 @@ func TestGetUserFullEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Warnings) != 1 || got.Warnings[0].Code != "w" || len(got.Messages) != 1 || got.Messages[0].Message != "msg" {
-		t.Errorf("meta = %+v", got.ResponseMeta)
+	if len(got.Meta.Warnings) != 1 || got.Meta.Warnings[0].Code != "w" || len(got.Meta.Messages) != 1 || got.Meta.Messages[0].Message != "msg" {
+		t.Errorf("meta = %+v", got.Meta)
 	}
 }
 
@@ -86,16 +86,16 @@ func TestGetUserUnauthorizedWithoutUserIsAPIError(t *testing.T) {
 	srv := newTestServer(t, writeJSON(401, `{"success":false,"errors":[{"code":"invalid_api_key","message":"Invalid API key"}]}`))
 	got, err := newTestClient(t, srv.URL).GetUser(context.Background())
 	var apiErr *APIError
-	if got != nil || !errors.As(err, &apiErr) || apiErr.Status != 401 || apiErr.Code != "invalid_api_key" {
+	if got != nil || !errors.As(err, &apiErr) || apiErr.Meta.Status != 401 || apiErr.Code != "invalid_api_key" {
 		t.Fatalf("got=%v err=%T %v", got, err, err)
 	}
 }
 
-func TestGetUser403WithoutSuccessIsRequestFailed(t *testing.T) {
+func TestGetUser403WithoutSuccessHasEmptyCode(t *testing.T) {
 	srv := newTestServer(t, writeJSON(403, `{}`))
 	_, err := newTestClient(t, srv.URL).GetUser(context.Background())
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Code != "request_failed" || apiErr.Status != 403 {
+	if !errors.As(err, &apiErr) || apiErr.Code != "" || apiErr.Message != "" || apiErr.Meta.Status != 403 {
 		t.Fatalf("err = %T %v", err, err)
 	}
 }

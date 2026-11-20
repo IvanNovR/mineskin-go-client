@@ -9,7 +9,8 @@ const (
 
 // QueueResponse is the response to a queued generation request.
 type QueueResponse struct {
-	ResponseMeta
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 	// Job is the queued job.
 	Job Job
 	// RateLimit is the rate limit state, or nil when absent.
@@ -20,9 +21,10 @@ type QueueResponse struct {
 
 // GenerateResponse is the response to a synchronous generation request.
 type GenerateResponse struct {
-	ResponseMeta
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 	// Skin is the generated skin.
-	Skin SkinInfo
+	Skin Skin
 	// RateLimit is the rate limit state, or nil when absent.
 	RateLimit *RateLimitInfo
 	// Usage is the usage state, or nil when absent.
@@ -40,8 +42,7 @@ func (c *Client) Queue(ctx context.Context, src Source, opts *GenerateOptions) (
 	if err != nil {
 		return nil, err
 	}
-	wire.Job.Breadcrumb = meta.Breadcrumb
-	return &QueueResponse{ResponseMeta: meta, Job: wire.Job, RateLimit: wire.RateLimit, Usage: wire.Usage}, nil
+	return &QueueResponse{Meta: meta, Job: wire.Job, RateLimit: wire.RateLimit, Usage: wire.Usage}, nil
 }
 
 // Generate generates a skin and waits for it in a single request. The request
@@ -58,8 +59,7 @@ func (c *Client) Generate(ctx context.Context, src Source, opts *GenerateOptions
 	if err != nil {
 		return nil, err
 	}
-	wire.Skin.Breadcrumb = meta.Breadcrumb
-	return &GenerateResponse{ResponseMeta: meta, Skin: wire.Skin, RateLimit: wire.RateLimit, Usage: wire.Usage}, nil
+	return &GenerateResponse{Meta: meta, Skin: wire.Skin, RateLimit: wire.RateLimit, Usage: wire.Usage}, nil
 }
 
 // queueWire is the wire shape of a queued generation response.
@@ -71,7 +71,7 @@ type queueWire struct {
 
 // generateWire is the wire shape of a synchronous generation response.
 type generateWire struct {
-	Skin      SkinInfo       `json:"skin"`
+	Skin      Skin           `json:"skin"`
 	RateLimit *RateLimitInfo `json:"rateLimit"`
 	Usage     *UsageInfo     `json:"usage"`
 }

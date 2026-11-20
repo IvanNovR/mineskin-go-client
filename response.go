@@ -12,10 +12,6 @@ import (
 )
 
 const (
-	defaultErrorCode    = "request_failed"
-	defaultErrorMessage = "request failed"
-
-	headerMineskinSrv   = "mineskin-server"
 	headerMineskinCrumb = transport.HeaderMineskinCrumb
 
 	parseFailureMessage = "failed to parse response"
@@ -39,26 +35,24 @@ type failureWire struct {
 	Usage     *UsageInfo     `json:"usage"`
 }
 
-// ResponseMeta describes the envelope of a MineSkin API response.
+// ResponseMeta describes the envelope of a MineSkin API response. Every
+// response type has it in a field named Meta, and so do *APIError and
+// *JobFailedError.
 type ResponseMeta struct {
 	// Status is the HTTP status code.
 	Status int
-	// Success is the value of the response's success field, or whether the
-	// status is 200 when the field is absent.
-	Success bool
-	// Errors lists the errors reported by the API.
-	Errors []CodeAndMessage
+	// Header holds the mineskin-* and x-mineskin-* response headers, keyed by
+	// canonical name. It is a copy: other headers are not passed on and the
+	// caller may modify it.
+	Header http.Header
+	// Breadcrumb is the value of the mineskin-breadcrumb header, which MineSkin
+	// asks to be quoted in support requests. Repeated headers are joined with
+	// commas.
+	Breadcrumb string
 	// Warnings lists the warnings reported by the API.
 	Warnings []CodeAndMessage
 	// Messages lists the informational messages reported by the API.
 	Messages []CodeAndMessage
-	// Headers holds the mineskin-* and x-mineskin-* response headers, keyed
-	// by lower-case name.
-	Headers map[string]string
-	// Server is the value of the mineskin-server header.
-	Server string
-	// Breadcrumb is the value of the mineskin-breadcrumb header.
-	Breadcrumb string
 	// Links is the raw links field of the response, or nil when absent.
 	Links json.RawMessage
 }
@@ -88,7 +82,7 @@ func decodeResponse[W any](raw transport.Response) (W, ResponseMeta, error) {
 		return wire, ResponseMeta{}, parseFailure(err)
 	}
 	meta := newMeta(raw, head.envelope)
-	if !meta.Success {
+	if !head.succeeded(raw.Status) {
 		return wire, ResponseMeta{}, newAPIError(meta, head, raw.Header, raw.Received)
 	}
 	if err := json.Unmarshal(body, &wire); err != nil {
@@ -109,25 +103,27 @@ func parseFailure(err error) error {
 	return fmt.Errorf("%s%s: %w", errorPrefix, parseFailureMessage, err)
 }
 
+// succeeded reports whether the response was successful: the value of its
+// success field, or whether the status is 200 when the field is absent.
+func (e envelope) succeeded(status int) bool {
+	if e.Success != nil {
+		return *e.Success
+	}
+	return status == http.StatusOK
+}
+
 // newMeta builds the metadata from the raw response and its decoded envelope.
 // The lists are never nil.
 func newMeta(raw transport.Response, env envelope) ResponseMeta {
-	headers := transport.FilterHeaders(raw.Header)
-	meta := ResponseMeta{
+	header := transport.FilterHeaders(raw.Header)
+	return ResponseMeta{
 		Status:     raw.Status,
-		Success:    raw.Status == http.StatusOK,
-		Errors:     nonNilList(env.Errors),
+		Header:     header,
+		Breadcrumb: strings.Join(header.Values(headerMineskinCrumb), ","),
 		Warnings:   nonNilList(env.Warnings),
 		Messages:   nonNilList(env.Messages),
-		Headers:    headers,
-		Server:     headers[headerMineskinSrv],
-		Breadcrumb: headers[headerMineskinCrumb],
 		Links:      env.Links,
 	}
-	if env.Success != nil {
-		meta.Success = *env.Success
-	}
-	return meta
 }
 
 // nonNilList returns l, or an empty non-nil slice when l is nil.
@@ -138,19 +134,20 @@ func nonNilList(l []CodeAndMessage) []CodeAndMessage {
 	return l
 }
 
-// newAPIError builds the error for an unsuccessful response, using the first
-// reported error or the defaults. The rateLimit, usage and Retry-After values
-// are decoded leniently: anything missing or malformed stays nil or zero and
-// never replaces the original error (JB-13).
+// newAPIError builds the error for an unsuccessful response. Code and Message
+// are those of the first reported error and stay empty when the server sent
+// none. The rateLimit, usage and Retry-After values are decoded leniently:
+// anything missing or malformed stays zero and never replaces the original
+// error (JB-13).
 func newAPIError(meta ResponseMeta, head failureWire, h http.Header, now time.Time) *APIError {
 	e := &APIError{
-		Code: defaultErrorCode, Message: defaultErrorMessage, ResponseMeta: meta,
+		Errors: nonNilList(head.Errors), Meta: meta,
 		RateLimit: head.RateLimit, Usage: head.Usage,
 	}
 	e.RetryAfter, _ = transport.ParseRetryAfter(h.Get(transport.HeaderRetryAfter), now)
-	if len(meta.Errors) > 0 {
-		e.Code = meta.Errors[0].Code
-		e.Message = meta.Errors[0].Message
+	if len(e.Errors) > 0 {
+		e.Code = e.Errors[0].Code
+		e.Message = e.Errors[0].Message
 	}
 	return e
 }

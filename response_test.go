@@ -40,15 +40,14 @@ func mhdr(kv ...string) http.Header {
 
 func TestHandleResponseSuccess(t *testing.T) {
 	tests := []struct {
-		name        string
-		status      int
-		body        string
-		wantSuccess bool
+		name   string
+		status int
+		body   string
 	}{
-		{"valid json", 200, `{"success":true,"user":"abc","grants":{}}`, true},
-		{"success absent with 200", 200, `{"user":"abc"}`, true},
-		{"success true with 500 counts as success", 500, `{"success":true}`, true},
-		{"leading whitespace", 200, " \n\t{\"success\":true}", true},
+		{"valid json", 200, `{"success":true,"user":"abc","grants":{}}`},
+		{"success absent with 200", 200, `{"user":"abc"}`},
+		{"success true with 500 counts as success", 500, `{"success":true}`},
+		{"leading whitespace", 200, " \n\t{\"success\":true}"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -56,7 +55,7 @@ func TestHandleResponseSuccess(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if meta.Success != tt.wantSuccess || meta.Status != tt.status {
+			if meta.Status != tt.status {
 				t.Errorf("meta = %+v", meta)
 			}
 		})
@@ -74,8 +73,8 @@ func TestHandleResponseAPIError(t *testing.T) {
 	}{
 		{"invalid api key", 401, `{"success":false,"errors":[{"code":"invalid_api_key","message":"Invalid API key"}]}`, "invalid_api_key", "Invalid API key", false},
 		{"first error wins", 400, `{"success":false,"errors":[{"code":"a","message":"A"},{"code":"b","message":"B"}]}`, "a", "A", false},
-		{"fallbacks without errors", 400, `{"success":false}`, "request_failed", "request failed", false},
-		{"fallbacks with empty errors", 400, `{"success":false,"errors":[]}`, "request_failed", "request failed", false},
+		{"fallbacks without errors", 400, `{"success":false}`, "", "", false},
+		{"fallbacks with empty errors", 400, `{"success":false,"errors":[]}`, "", "", false},
 		{"success absent with 404", 404, `{"errors":[{"code":"skin_not_found","message":"nope"}]}`, "skin_not_found", "nope", true},
 	}
 	for _, tt := range tests {
@@ -85,7 +84,7 @@ func TestHandleResponseAPIError(t *testing.T) {
 			if !errors.As(err, &apiErr) {
 				t.Fatalf("want *APIError, got %T %v", err, err)
 			}
-			if apiErr.Code != tt.wantCode || apiErr.Message != tt.wantMessage || apiErr.Status != tt.status || apiErr.Success {
+			if apiErr.Code != tt.wantCode || apiErr.Message != tt.wantMessage || apiErr.Meta.Status != tt.status {
 				t.Errorf("apiErr = %+v", apiErr)
 			}
 			if errors.Is(err, ErrNotFound) != tt.wantNotFnd {
@@ -207,20 +206,19 @@ func TestHandleResponseListsAndLinks(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if meta.Errors == nil || meta.Warnings == nil || meta.Messages == nil ||
-			len(meta.Errors)+len(meta.Warnings)+len(meta.Messages) != 0 {
-			t.Errorf("lists = %#v %#v %#v", meta.Errors, meta.Warnings, meta.Messages)
+		if meta.Warnings == nil || meta.Messages == nil || len(meta.Warnings)+len(meta.Messages) != 0 {
+			t.Errorf("lists = %#v %#v", meta.Warnings, meta.Messages)
 		}
 		if meta.Links != nil {
 			t.Errorf("Links = %s, want nil", meta.Links)
 		}
-		if meta.Headers == nil {
-			t.Error("Headers must be non-nil")
+		if meta.Header == nil {
+			t.Error("Header must be non-nil")
 		}
 	})
 	t.Run("null lists are empty", func(t *testing.T) {
 		meta, err := decodeMeta[struct{}](transport.Response{Status: 200, Body: []byte(`{"errors":null,"warnings":null,"messages":null}`)})
-		if err != nil || meta.Errors == nil || meta.Warnings == nil || meta.Messages == nil {
+		if err != nil || meta.Warnings == nil || meta.Messages == nil {
 			t.Errorf("meta=%+v err=%v", meta, err)
 		}
 	})
@@ -250,12 +248,15 @@ func TestHandleResponseHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if meta.Server != "api-1" || meta.Breadcrumb != "crumb" {
-		t.Errorf("server=%q breadcrumb=%q", meta.Server, meta.Breadcrumb)
+	if meta.Breadcrumb != "crumb" {
+		t.Errorf("Breadcrumb = %q, want crumb", meta.Breadcrumb)
 	}
-	want := map[string]string{"mineskin-server": "api-1", "mineskin-breadcrumb": "crumb", "x-mineskin-foo": "bar"}
-	if !reflect.DeepEqual(meta.Headers, want) {
-		t.Errorf("Headers = %v", meta.Headers)
+	want := http.Header{"Mineskin-Server": {"api-1"}, "Mineskin-Breadcrumb": {"crumb"}, "X-Mineskin-Foo": {"bar"}}
+	if !reflect.DeepEqual(meta.Header, want) {
+		t.Errorf("Header = %v, want %v", meta.Header, want)
+	}
+	if meta.Status != 200 {
+		t.Errorf("Status = %d, want 200", meta.Status)
 	}
 }
 
@@ -263,7 +264,7 @@ func TestHandleResponseAPIErrorCarriesHeaders(t *testing.T) {
 	raw := transport.Response{Status: 401, Header: mhdr("Mineskin-Breadcrumb", "b1"), Body: []byte(`{"success":false}`)}
 	_, err := decodeMeta[struct{}](raw)
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Breadcrumb != "b1" || apiErr.Headers["mineskin-breadcrumb"] != "b1" {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Breadcrumb != "b1" || apiErr.Meta.Header.Get("Mineskin-Breadcrumb") != "b1" {
 		t.Errorf("err = %#v", err)
 	}
 }
@@ -271,7 +272,7 @@ func TestHandleResponseAPIErrorCarriesHeaders(t *testing.T) {
 func TestHandleResponseDuplicateHeadersDoNotFail(t *testing.T) {
 	raw := transport.Response{Status: 200, Header: http.Header{"Mineskin-Server": {"a", "b"}}, Body: []byte(`{}`)}
 	meta, err := decodeMeta[struct{}](raw)
-	if err != nil || meta.Server != "a,b" {
+	if err != nil || !reflect.DeepEqual(meta.Header["Mineskin-Server"], []string{"a", "b"}) {
 		t.Errorf("meta=%+v err=%v", meta, err)
 	}
 }
@@ -287,7 +288,7 @@ func TestHandleResponseUnexpectedIsClientError(t *testing.T) {
 func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
 	body := append([]byte("\xef\xbb\xbf"), `{"success":true,"user":"x"}`...)
 	meta, err := decodeMeta[testWire](transport.Response{Status: 200, Body: body})
-	if err != nil || !meta.Success {
+	if err != nil || meta.Status != 200 {
 		t.Fatalf("meta = %+v err = %v", meta, err)
 	}
 	body = append([]byte("\xef\xbb\xbf"), `{"success":false,"errors":[{"code":"c","message":"m"}]}`...)
@@ -295,5 +296,51 @@ func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Errorf("err = %v, want *APIError", err)
+	}
+}
+
+func TestDecodeResponseHeaderIsAClone(t *testing.T) {
+	src := mhdr("Mineskin-Breadcrumb", "crumb", "Set-Cookie", "secret=1")
+	meta, err := decodeMeta[struct{}](transport.Response{Status: 200, Header: src, Body: []byte(`{}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta.Header.Set("Mineskin-Breadcrumb", "changed")
+	if got := src.Get("Mineskin-Breadcrumb"); got != "crumb" {
+		t.Errorf("source header = %q, want crumb (Meta.Header must be a clone)", got)
+	}
+	if meta.Header.Get("Set-Cookie") != "" {
+		t.Errorf("Set-Cookie passed on: %v", meta.Header)
+	}
+}
+
+func TestDecodeResponseDuplicateBreadcrumbsAreJoined(t *testing.T) {
+	raw := transport.Response{Status: 200, Header: http.Header{"Mineskin-Breadcrumb": {"a", "b"}}, Body: []byte(`{}`)}
+	meta, err := decodeMeta[struct{}](raw)
+	if err != nil || meta.Breadcrumb != "a,b" {
+		t.Errorf("Breadcrumb = %q err = %v, want a,b", meta.Breadcrumb, err)
+	}
+}
+
+func TestDecodeResponseAPIErrorKeepsAllErrors(t *testing.T) {
+	body := `{"success":false,"errors":[{"code":"a","message":"A"},{"code":"b","message":"B"}],"warnings":[{"code":"w","message":"W"}],"links":{"x":1}}`
+	_, err := decodeMeta[struct{}](transport.Response{Status: 400, Body: []byte(body)})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want *APIError", err)
+	}
+	if want := []CodeAndMessage{{"a", "A"}, {"b", "B"}}; !reflect.DeepEqual(apiErr.Errors, want) {
+		t.Errorf("Errors = %v, want %v", apiErr.Errors, want)
+	}
+	if want := []CodeAndMessage{{"w", "W"}}; !reflect.DeepEqual(apiErr.Meta.Warnings, want) || string(apiErr.Meta.Links) != `{"x":1}` {
+		t.Errorf("Meta = %+v", apiErr.Meta)
+	}
+}
+
+func TestDecodeResponseAPIErrorWithoutErrorsHasEmptyCode(t *testing.T) {
+	_, err := decodeMeta[struct{}](transport.Response{Status: 403, Body: []byte(`{}`)})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != "" || apiErr.Message != "" || apiErr.Errors == nil || len(apiErr.Errors) != 0 {
+		t.Fatalf("apiErr = %+v, want empty Code, Message and an empty non-nil Errors", apiErr)
 	}
 }

@@ -10,7 +10,7 @@ import (
 )
 
 func apiErrorWithStatus(status int) *APIError {
-	return &APIError{ResponseMeta: ResponseMeta{Status: status}}
+	return &APIError{Meta: ResponseMeta{Status: status}}
 }
 
 func TestIsRetryable(t *testing.T) {

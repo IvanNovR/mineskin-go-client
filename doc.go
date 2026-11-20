@@ -17,8 +17,8 @@
 //	}
 //	res, err := c.GetSkin(ctx, "c1a1982831874868a37f5be375d38d5b")
 //
-// Every response embeds ResponseMeta with the HTTP status, API messages and
-// the mineskin-* headers.
+// Every response has a Meta field (a ResponseMeta) with the HTTP status, API
+// warnings and messages, the breadcrumb and the mineskin-* headers.
 //
 // # Generating skins
 //

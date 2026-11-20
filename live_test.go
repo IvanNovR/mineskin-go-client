@@ -103,8 +103,8 @@ func TestLiveGetSkin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSkin() error = %v", err)
 	}
-	if !res.Success || res.Status != http.StatusOK {
-		t.Fatalf("Success = %v, Status = %d; want true, 200", res.Success, res.Status)
+	if res.Meta.Status != http.StatusOK {
+		t.Fatalf("Status = %d; want 200", res.Meta.Status)
 	}
 	want, err := ParseUUID(id)
 	if err != nil {
@@ -143,7 +143,7 @@ func TestLiveGetSkinNotFound(t *testing.T) {
 		t.Fatalf("GetSkinByUUID() error = %v, want ErrNotFound", err)
 	}
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != http.StatusNotFound {
 		t.Errorf("error = %#v, want *APIError with status 404", err)
 	}
 }
@@ -156,12 +156,12 @@ func TestLiveGetUser(t *testing.T) {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) {
 			t.Fatalf("GetUser() failed: HTTP %d, code %q, message %q (the key may lack access to /v2/me; consider gating this test behind MINESKIN_LIVE_PAID): %v",
-				apiErr.Status, apiErr.Code, apiErr.Message, err)
+				apiErr.Meta.Status, apiErr.Code, apiErr.Message, err)
 		}
 		t.Fatalf("GetUser() failed: %v", err)
 	}
-	if !res.Success {
-		t.Errorf("Success = false, want true")
+	if res.Meta.Status != http.StatusOK {
+		t.Errorf("Status = %d, want 200", res.Meta.Status)
 	}
 	if res.User.UUID == (UUID{}) {
 		t.Error("User.UUID is zero")
@@ -236,7 +236,7 @@ func isInvalidSkinData(err error) bool {
 		return true
 	}
 	var failed *JobFailedError
-	return errors.As(err, &failed) && failed.Code == codeInvalidSkinData
+	return errors.As(err, &failed) && len(failed.Errors) > 0 && failed.Errors[0].Code == codeInvalidSkinData
 }
 
 // withFreshImage runs try, which must build a fresh random image or URL on
@@ -308,7 +308,7 @@ func TestLiveQueueURLAndWait(t *testing.T) {
 		}
 		for _, j := range list.Jobs {
 			if j.ID == q.Job.ID {
-				if !j.Status.IsDone() {
+				if j.Status != JobStatusCompleted && j.Status != JobStatusFailed {
 					t.Errorf("listed job status = %q, want a done status", j.Status)
 				}
 				return

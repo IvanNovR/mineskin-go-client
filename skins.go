@@ -137,9 +137,9 @@ func optionalInt64(v json.RawMessage) (n int64, ok bool, err error) {
 	return n, true, nil
 }
 
-// SkinInfo describes a skin stored by MineSkin. Its UUID is the MineSkin skin
-// id, not a player UUID.
-type SkinInfo struct {
+// Skin describes a skin stored by MineSkin. Its UUID is the MineSkin skin id,
+// not a player UUID.
+type Skin struct {
 	UUID       UUID          `json:"uuid"`
 	Name       string        `json:"name"`
 	Variant    Variant       `json:"variant"`
@@ -148,15 +148,14 @@ type SkinInfo struct {
 	Generator  GeneratorInfo `json:"generator"`
 	Views      int           `json:"views"`
 	Duplicate  bool          `json:"duplicate"`
-	// Breadcrumb is the mineskin-breadcrumb header of the response.
-	Breadcrumb string `json:"-"`
 }
 
 // SkinResponse is the response to a skin lookup.
 type SkinResponse struct {
-	ResponseMeta
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 	// Skin is the requested skin.
-	Skin SkinInfo
+	Skin Skin
 }
 
 // GetSkin fetches a skin by its MineSkin skin id. The id must be a UUID in
@@ -176,8 +175,7 @@ func (c *Client) GetSkin(ctx context.Context, id string) (*SkinResponse, error) 
 	if err != nil {
 		return nil, err
 	}
-	wire.Skin.Breadcrumb = meta.Breadcrumb
-	return &SkinResponse{ResponseMeta: meta, Skin: wire.Skin}, nil
+	return &SkinResponse{Meta: meta, Skin: wire.Skin}, nil
 }
 
 // GetSkinByUUID fetches a skin by its MineSkin skin id, sent in dashed form.
@@ -193,5 +191,5 @@ func (c *Client) GetSkinByUUID(ctx context.Context, id UUID) (*SkinResponse, err
 // the zero value so that error responses without a skin still produce an
 // *APIError.
 type skinWire struct {
-	Skin SkinInfo `json:"skin"`
+	Skin Skin `json:"skin"`
 }

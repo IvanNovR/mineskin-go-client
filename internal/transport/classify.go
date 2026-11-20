@@ -12,7 +12,6 @@ import (
 const (
 	headerPrefix      = "mineskin-"
 	headerPrefixExtra = "x-mineskin-"
-	headerValueSep    = ","
 )
 
 // utf8BOM is the byte order mark some proxies prepend to JSON bodies.
@@ -80,25 +79,23 @@ func IsFailure(r Response) bool {
 	return r.Status != http.StatusOK
 }
 
-// FilterHeaders keeps the mineskin-* and x-mineskin-* headers, keyed by
-// lower-case name. Repeated headers are joined with commas, so duplicates
-// never cause a failure.
-func FilterHeaders(h http.Header) map[string]string {
+// FilterHeaders returns a clone of the mineskin-* and x-mineskin-* headers of
+// h, under their canonical names. Header names that differ only in case are
+// merged, their values in the order of the sorted names. The result is never
+// nil and shares no memory with h.
+func FilterHeaders(h http.Header) http.Header {
 	keys := make([]string, 0, len(h))
 	for k := range h {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
-	joined := make(map[string][]string)
+	out := make(http.Header)
 	for _, k := range keys {
 		name := strings.ToLower(k)
 		if strings.HasPrefix(name, headerPrefix) || strings.HasPrefix(name, headerPrefixExtra) {
-			joined[name] = append(joined[name], h[k]...)
+			canonical := http.CanonicalHeaderKey(k)
+			out[canonical] = append(out[canonical], h[k]...)
 		}
-	}
-	out := make(map[string]string, len(joined))
-	for name, values := range joined {
-		out[name] = strings.Join(values, headerValueSep)
 	}
 	return out
 }

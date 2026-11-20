@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
@@ -56,10 +57,15 @@ type CodeAndMessage struct {
 // successful. It matches ErrNotFound with errors.Is when the HTTP status is
 // 404 and ErrRateLimited when it is 429. Use errors.As to obtain it.
 type APIError struct {
-	// Code is the first error code of the response, or "request_failed".
+	// Code is the code of the first error of the response, or empty when the
+	// server sent none.
 	Code string
-	// Message is the first error message of the response, or "request failed".
+	// Message is the message of the first error of the response, or empty when
+	// the server sent none.
 	Message string
+	// Errors lists every error reported by the API; empty, never nil, when
+	// there were none.
+	Errors []CodeAndMessage
 	// RateLimit is the rateLimit field of the response, or nil when absent or
 	// malformed.
 	RateLimit *RateLimitInfo
@@ -69,18 +75,29 @@ type APIError struct {
 	// RetryAfter is the Retry-After header (RFC 9110, delta-seconds or
 	// HTTP-date), or 0 when absent or invalid.
 	RetryAfter time.Duration
-	// ResponseMeta holds the status, lists and headers of the response.
-	ResponseMeta
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 }
 
-// Error implements the error interface.
+// Error implements the error interface. The text is
+// "mineskin: API error (HTTP <status>[, <code>])[: <message>]"; the code and
+// the message are left out when the server sent none.
 func (e *APIError) Error() string {
-	return fmt.Sprintf("mineskin: API error (HTTP %d, %s): %s", e.Status, e.Code, e.Message)
+	var b strings.Builder
+	fmt.Fprintf(&b, "mineskin: API error (HTTP %d", e.Meta.Status)
+	if e.Code != "" {
+		b.WriteString(", " + e.Code)
+	}
+	b.WriteString(")")
+	if e.Message != "" {
+		b.WriteString(": " + e.Message)
+	}
+	return b.String()
 }
 
 // Is reports whether target is the sentinel of the HTTP status: ErrNotFound
 // for 404 and ErrRateLimited for 429.
-func (e *APIError) Is(target error) bool { return matchesStatus(e.Status, target) }
+func (e *APIError) Is(target error) bool { return matchesStatus(e.Meta.Status, target) }
 
 // statusSentinel returns the sentinel that classifies an HTTP status: 404 is
 // ErrNotFound and 429 is ErrRateLimited. Other statuses have none (nil).
@@ -115,7 +132,7 @@ func IsRetryable(err error) bool {
 	}
 	var api *APIError
 	if errors.As(err, &api) {
-		return transport.IsRetryableStatus(api.Status)
+		return transport.IsRetryableStatus(api.Meta.Status)
 	}
 	var unexpected *UnexpectedResponseError
 	if errors.As(err, &unexpected) {
@@ -135,28 +152,26 @@ func invalidInput(format string, args ...any) error {
 // JobFailedError is returned when a job has the FAILED status. Use errors.As
 // to obtain it.
 type JobFailedError struct {
-	// Code is the first error code of the response, or "job_failed".
-	Code string
-	// Message is the first error message of the response, or "job failed".
-	Message string
 	// Job is the failed job.
 	Job Job
-	// ResponseMeta holds the status, lists and headers of the response.
-	ResponseMeta
+	// Errors lists the errors the API reported with the job; empty when it
+	// reported none.
+	Errors []CodeAndMessage
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 }
 
-// Error implements the error interface.
+// Error implements the error interface. The text is
+// "mineskin: job <id> failed[ (<code>): <message>]", where code and message
+// are those of the first entry of Errors.
 func (e *JobFailedError) Error() string {
-	return fmt.Sprintf("mineskin: job %s failed (%s): %s", e.Job.ID, e.Code, e.Message)
+	if len(e.Errors) == 0 {
+		return fmt.Sprintf("mineskin: job %s failed", e.Job.ID)
+	}
+	return fmt.Sprintf("mineskin: job %s failed (%s): %s", e.Job.ID, e.Errors[0].Code, e.Errors[0].Message)
 }
 
-// newJobFailedError builds the error for a failed job, using the first
-// reported error or the defaults.
+// newJobFailedError builds the error for a failed job from its response.
 func newJobFailedError(r *JobResponse) *JobFailedError {
-	e := &JobFailedError{Code: defaultJobFailedCode, Message: defaultJobFailedMessage, Job: r.Job, ResponseMeta: r.ResponseMeta}
-	if len(r.Errors) > 0 {
-		e.Code = r.Errors[0].Code
-		e.Message = r.Errors[0].Message
-	}
-	return e
+	return &JobFailedError{Job: r.Job, Errors: r.errs, Meta: r.Meta}
 }

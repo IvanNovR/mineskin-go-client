@@ -40,11 +40,11 @@ func TestQueueURLSendsJSON(t *testing.T) {
 	if sent["url"] != "https://example.com/s.png" || sent["name"] != "n" || sent["variant"] != "slim" {
 		t.Errorf("body = %v", sent)
 	}
-	if got.Job.ID != "job-1" || got.Job.Status != JobStatusWaiting || got.Job.Breadcrumb != "crumb-q" {
+	if got.Job.ID != "job-1" || got.Job.Status != JobStatusWaiting {
 		t.Errorf("job = %+v", got.Job)
 	}
-	if got.Breadcrumb != "crumb-q" || got.Status != 200 || !got.Success {
-		t.Errorf("meta = %+v", got.ResponseMeta)
+	if got.Meta.Breadcrumb != "crumb-q" || got.Meta.Status != 200 {
+		t.Errorf("meta = %+v", got.Meta)
 	}
 	if got.RateLimit == nil || got.RateLimit.Next == nil || got.RateLimit.Next.Relative != 500*time.Millisecond ||
 		got.RateLimit.Limit == nil || got.RateLimit.Limit.Remaining != 9 {
@@ -105,8 +105,8 @@ func TestGenerateDecodesSkin(t *testing.T) {
 	if got.Skin.UUID.String() != testSkinID || got.Skin.Name != "Steve" || got.Skin.Texture.Data.Value != "VAL" {
 		t.Errorf("skin = %+v", got.Skin)
 	}
-	if got.Skin.Breadcrumb != "crumb-g" || got.Breadcrumb != "crumb-g" {
-		t.Errorf("breadcrumb skin=%q meta=%q", got.Skin.Breadcrumb, got.Breadcrumb)
+	if got.Meta.Breadcrumb != "crumb-g" || got.Meta.Status != 200 {
+		t.Errorf("meta = %+v", got.Meta)
 	}
 	if got.RateLimit == nil || got.RateLimit.Limit == nil || got.RateLimit.Limit.Limit != 5 {
 		t.Errorf("rateLimit = %+v", got.RateLimit)
@@ -171,7 +171,7 @@ func TestQueueAPIError(t *testing.T) {
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("error = %v, want *APIError", err)
 	}
-	if got != nil || apiErr.Status != 429 || apiErr.Code != "too_many_requests" {
+	if got != nil || apiErr.Meta.Status != 429 || apiErr.Code != "too_many_requests" {
 		t.Errorf("got=%v apiErr=%+v", got, apiErr)
 	}
 }

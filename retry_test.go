@@ -102,7 +102,7 @@ func TestRetryGivesUpAfterConfiguredRetries(t *testing.T) {
 			c := newTestClient(t, srv.URL, tt.opts...)
 			err := queueCall(c)()
 			var apiErr *APIError
-			if !errors.As(err, &apiErr) || apiErr.Status != 429 || apiErr.Code != "rate_limit" {
+			if !errors.As(err, &apiErr) || apiErr.Meta.Status != 429 || apiErr.Code != "rate_limit" {
 				t.Fatalf("error = %v, want the original 429 *APIError", err)
 			}
 			if got := srv.hits(); got != tt.wantHits {
@@ -208,7 +208,7 @@ func TestRetryReturns429WhenDelayEndsAfterCtxDeadline(t *testing.T) {
 	defer cancel()
 	err := mustDone(t, "GetSkin", goCall(skinCall(ctx, c)))
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 429 {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != 429 {
 		t.Fatalf("error = %v, want the original 429 *APIError", err)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -357,7 +357,7 @@ func TestRetryPenaltyIsPerResponse(t *testing.T) {
 func assertOriginal429(t *testing.T, err error) {
 	t.Helper()
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 429 {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != 429 {
 		t.Fatalf("error = %v, want the original 429 *APIError", err)
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -373,7 +373,7 @@ func assertCtxAnd429(t *testing.T, err, ctxErr error) {
 		t.Errorf("error = %v, want it to match %v", err, ctxErr)
 	}
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 429 {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != 429 {
 		t.Errorf("error = %v, want it to hold the 429 *APIError", err)
 	}
 	if !strings.Contains(err.Error(), "429") {

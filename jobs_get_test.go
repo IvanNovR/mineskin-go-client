@@ -27,10 +27,10 @@ func TestGetJobDecodesJobAndSkin(t *testing.T) {
 	if got.Job.ID != "job-1" || got.Job.Status != JobStatusCompleted || got.Job.Result.String() != jobResultID {
 		t.Errorf("job = %+v", got.Job)
 	}
-	if got.Job.Breadcrumb != "crumb-j" || got.Breadcrumb != "crumb-j" {
-		t.Errorf("job breadcrumb = %q, meta = %q", got.Job.Breadcrumb, got.Breadcrumb)
+	if got.Meta.Breadcrumb != "crumb-j" {
+		t.Errorf("meta breadcrumb = %q, want crumb-j", got.Meta.Breadcrumb)
 	}
-	if got.Skin == nil || got.Skin.Name != "n" || got.Skin.Breadcrumb != "crumb-j" {
+	if got.Skin == nil || got.Skin.Name != "n" {
 		t.Errorf("skin = %+v", got.Skin)
 	}
 
@@ -81,7 +81,7 @@ func TestGetJobNotFound(t *testing.T) {
 		t.Errorf("response = %+v, want nil", got)
 	}
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || !errors.Is(err, ErrNotFound) || apiErr.Status != 404 {
+	if !errors.As(err, &apiErr) || !errors.Is(err, ErrNotFound) || apiErr.Meta.Status != 404 {
 		t.Fatalf("err = %T %v, want 404 *APIError matching ErrNotFound", err, err)
 	}
 }
@@ -103,13 +103,8 @@ func TestListJobsDecodes(t *testing.T) {
 	if len(got.Jobs) != 2 || got.Jobs[0].ID != "a" || got.Jobs[1].Status != JobStatusProcessing {
 		t.Errorf("jobs = %+v", got.Jobs)
 	}
-	for _, j := range got.Jobs {
-		if j.Breadcrumb != "" {
-			t.Errorf("job %q breadcrumb = %q, want empty", j.ID, j.Breadcrumb)
-		}
-	}
-	if got.Breadcrumb != "crumb-l" {
-		t.Errorf("list meta breadcrumb = %q, want crumb-l", got.Breadcrumb)
+	if got.Meta.Breadcrumb != "crumb-l" {
+		t.Errorf("list meta breadcrumb = %q, want crumb-l", got.Meta.Breadcrumb)
 	}
 
 	for name, body := range map[string]string{

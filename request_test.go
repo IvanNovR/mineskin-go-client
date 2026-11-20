@@ -331,7 +331,7 @@ func TestGetHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get() error = %v", err)
 	}
-	if user := wire.User; user != "jeb" || !meta.Success || meta.Status != 200 || meta.Breadcrumb != "bc" {
+	if user := wire.User; user != "jeb" || meta.Status != 200 || meta.Breadcrumb != "bc" {
 		t.Errorf("user=%q meta=%+v", user, meta)
 	}
 }
@@ -344,7 +344,7 @@ func TestGetAPIError(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 404 || apiErr.Code != "skin_not_found" {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != 404 || apiErr.Code != "skin_not_found" {
 		t.Fatalf("err = %v, want 404 APIError", err)
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -447,7 +447,7 @@ func TestPostHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post() error = %v", err)
 	}
-	if user := wire.User; user != "jeb" || !meta.Success || meta.Status != 200 || meta.Breadcrumb != "bc" {
+	if user := wire.User; user != "jeb" || meta.Status != 200 || meta.Breadcrumb != "bc" {
 		t.Errorf("user=%q meta=%+v", user, meta)
 	}
 	if string(gotBody) != `{"a":1}` {
@@ -463,7 +463,7 @@ func TestPostAPIError(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	_, _, err := postResponse[struct{}](context.Background(), c, "/v2/x", nil)
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 404 || apiErr.Code != "skin_not_found" {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != 404 || apiErr.Code != "skin_not_found" {
 		t.Fatalf("err = %v, want 404 APIError", err)
 	}
 	if !errors.Is(err, ErrNotFound) {

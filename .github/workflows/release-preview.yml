@@ -61,10 +61,15 @@ jobs:
           git -c user.name=release-preview -c user.email=release-preview@invalid \
             commit --quiet --allow-empty --allow-empty-message --cleanup=verbatim -m "$PR_TITLE"
 
+          # A missing or unreadable config makes svu silently use no config
+          # (and compute v1.0.0 for a breaking change), so only a .svu.yml that
+          # is absent on main falls back to the PR's copy; anything else fails.
+          git rev-parse --verify --quiet 'origin/main^{commit}' >/dev/null || fail "origin/main is not available."
           cfg="${RUNNER_TEMP}/svu.yml"
           note=""
-          if ! git show origin/main:.svu.yml > "$cfg" 2>/dev/null; then
-            rm -f "$cfg"
+          if git cat-file -e origin/main:.svu.yml 2>/dev/null; then
+            git cat-file blob origin/main:.svu.yml > "$cfg" || fail "Could not read .svu.yml from main."
+          else
             cfg=.svu.yml
             note="Note: main has no .svu.yml yet, so this preview uses the pull request's own .svu.yml."
           fi

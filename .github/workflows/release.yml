@@ -17,9 +17,8 @@
 # read-only resolve job; the release job runs nothing but gh and git, and only
 # its gh/git step sees the token. Jobs that write are skipped unless the
 # repository variable RELEASE_AUTOMATION_READY is 'true' (CI still runs on
-# push; a manual dispatch with the switch off fails). The release and proxy
-# jobs run in the Environment `release`, which must exist before the first run
-# (GitHub would otherwise create it unprotected).
+# push; a manual dispatch with the switch off fails). See RELEASING.md "Trust
+# model" for what this does and does not protect against.
 name: Release
 
 on:
@@ -208,8 +207,10 @@ jobs:
             fail "Retry asserted ${TAG_IN}, but the version for ${SHA} is ${tag}."
           fi
 
+          # Latest only when the new tag is the highest v0 tag (counting it).
+          highest=$( { git tag --list 'v0.*'; echo "$tag"; } | grep -E "$tag_re" | sort -V | tail -n 1)
           latest=false
-          if [ "$SHA" = "$(git rev-parse origin/main)" ]; then latest=true; fi
+          if [ "$highest" = "$tag" ]; then latest=true; fi
 
           {
             echo "tag=${tag}"
@@ -232,8 +233,6 @@ jobs:
     if: vars.RELEASE_AUTOMATION_READY == 'true' && needs.resolve.outputs.mode != 'proxy-only' && needs.resolve.outputs.tag != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # Limited to the main branch by the Environment's deployment branch policy.
-    environment: release
     permissions:
       contents: write
     outputs:
@@ -289,8 +288,6 @@ jobs:
     if: ${{ !cancelled() && vars.RELEASE_AUTOMATION_READY == 'true' && (needs.release.outputs.tag != '' || needs.resolve.outputs.mode == 'proxy-only') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-    # Limited to the main branch by the Environment's deployment branch policy.
-    environment: release
     permissions: {}
     steps:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0

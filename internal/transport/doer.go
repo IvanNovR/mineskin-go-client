@@ -69,8 +69,9 @@ func (e *BuildError) Unwrap() error { return e.Err }
 type Doer struct {
 	BaseURL   string
 	UserAgent string
-	// APIKey, when not empty, is sent as a bearer token. It is never logged.
-	APIKey string
+	// APIKey, when not empty, is sent as a bearer token. It is redacted when
+	// formatted or logged.
+	APIKey Secret
 	HTTP   *http.Client
 	// Timeout bounds each call of Do, including reading the response body;
 	// zero or less means no timeout. It is applied per call with a context
@@ -141,25 +142,29 @@ func (d *Doer) send(ctx context.Context, method, path string, body *Body) (Respo
 	if body != nil {
 		req.Header.Set("Content-Type", body.ContentType)
 	}
-	if d.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+d.APIKey)
+	if !d.APIKey.IsEmpty() {
+		req.Header.Set("Authorization", "Bearer "+d.APIKey.Reveal())
 	}
 
-	start := time.Now()
+	clk := d.clock()
+	start := clk.Now()
 	resp, err := d.HTTP.Do(req)
 	if err != nil {
 		return Response{}, err
 	}
+	// The body is fully read (or abandoned on error) below; a Close error then
+	// carries no information the caller could act on.
 	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := ReadLimited(resp.Body)
 	if err != nil {
 		return Response{}, err
 	}
+	received := clk.Now()
 	d.logger().Debug("MineSkin request completed",
 		"method", method, "path", path, "status", resp.StatusCode,
-		"breadcrumb", resp.Header.Get(HeaderMineskinCrumb), "elapsed", time.Since(start))
-	return Response{Status: resp.StatusCode, Header: resp.Header, Body: respBody, Received: d.clock().Now()}, nil
+		"breadcrumb", resp.Header.Get(HeaderMineskinCrumb), "elapsed", received.Sub(start))
+	return Response{Status: resp.StatusCode, Header: resp.Header, Body: respBody, Received: received}, nil
 }
 
 func (d *Doer) logger() *slog.Logger {

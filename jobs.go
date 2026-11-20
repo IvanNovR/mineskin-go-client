@@ -96,9 +96,7 @@ func (j Job) IsTerminal() bool {
 		(j.Status == JobStatusCompleted && !j.Result.IsZero())
 }
 
-// JobResponse is the response to a job lookup. Responses returned by
-// WaitForJob may share pointers (Skin, the Meta lists) with other waiters on
-// the same job; treat them as read-only.
+// JobResponse is the response to a job lookup.
 type JobResponse struct {
 	// Meta holds the status, headers and messages of the response.
 	Meta ResponseMeta

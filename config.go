@@ -36,6 +36,9 @@ func (cfg *config) validate() error {
 		return err
 	}
 	cfg.baseURL = baseURL
+	if !cfg.apiKey.IsEmpty() && !cfg.insecureHTTP && sendsKeyOverPlainHTTP(baseURL) {
+		return invalidInput("API key over plain http to a non-loopback host; use https or WithInsecureHTTP()")
+	}
 	if cfg.rateLimitRetries < 0 {
 		return invalidInput("rate limit retries must not be negative")
 	}
@@ -51,5 +54,5 @@ func (cfg *config) validate() error {
 	if err := cfg.getThrottle.validate("get"); err != nil {
 		return err
 	}
-	return validateHeaderValues(cfg.userAgent, cfg.apiKey)
+	return validateHeaderValues(cfg.userAgent, cfg.apiKey.Reveal())
 }

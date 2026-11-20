@@ -85,7 +85,7 @@ func TestDefaultConfigValues(t *testing.T) {
 	cfg := defaultConfig()
 	if cfg.baseURL != DefaultBaseURL || cfg.userAgent != DefaultUserAgent ||
 		cfg.timeout != 10*time.Second || cfg.rateLimitRetries != 2 ||
-		cfg.logger == nil || cfg.clock == nil || cfg.apiKey != "" || cfg.transport != nil {
+		cfg.logger == nil || cfg.clock == nil || !cfg.apiKey.IsEmpty() || cfg.transport != nil {
 		t.Errorf("defaultConfig() = %+v", cfg)
 	}
 	if cfg.polling.InitialDelay != 2*time.Second || cfg.polling.MaxAttempts != 10 ||

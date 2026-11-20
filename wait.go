@@ -1,8 +1,10 @@
 package mineskin
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/poll"
 )
@@ -11,20 +13,18 @@ import (
 // state. Waits for several jobs share one background poller, which uses a
 // single list request instead of one request per job when more than a few are
 // pending. Waits for the same job id share one stream of requests; each waiter
-// gets its own shallow copy of the response.
+// gets its own deep copy of the response (or of the error's data), so a caller
+// may modify its result freely.
 //
 // WaitForJob panics when ctx is nil, as the standard library does. A job id
 // that is empty, "." or ".." fails with ErrInvalidInput without a request. The
 // total wait is bounded only by ctx and PollOptions.MaxAttempts; WithTimeout
-// bounds each status request, not the wait. A failed job gives a *JobFailedError, and
-// a job still unfinished after PollOptions.MaxAttempts checks gives
-// ErrMaxAttempts. When ctx ends, the error matches ctx.Err(); the job stops being polled unless another waiter still needs it.
+// bounds each status request, not the wait. A failed job gives a
+// *JobFailedError, and a job still unfinished after PollOptions.MaxAttempts
+// checks gives ErrMaxAttempts. When ctx ends, the error matches ctx.Err(); the
+// job stops being polled unless another waiter still needs it.
 // Errors of the status requests are returned as they are. A wait that Close
 // interrupts, and any wait started after Close, fails with ErrClientClosed.
-//
-// Waiters on the same job share pointers inside the returned response (for
-// example Skin and the Meta lists): the copy is shallow, so treat the
-// result as read-only.
 //
 // When more than a few jobs are pending, the poller checks them with one list
 // request. A job reported done by the list is completed with whatever the
@@ -64,8 +64,24 @@ func copyResult(w *poll.Waiter[*JobResponse]) (*JobResponse, error) {
 		return nil, mapPollErr(err)
 	}
 	if state.Failed {
-		return nil, newJobFailedError(resp)
+		return nil, newJobFailedError(cloneJobResponse(resp))
 	}
-	cp := *resp
-	return &cp, nil
+	return cloneJobResponse(resp), nil
+}
+
+// cloneJobResponse returns a deep copy of r that shares no memory with it:
+// the header map, the warning, message and error lists, the raw links and the
+// skin are all copied, so one waiter's changes never reach another.
+func cloneJobResponse(r *JobResponse) *JobResponse {
+	cp := *r
+	cp.Meta.Header = r.Meta.Header.Clone()
+	cp.Meta.Warnings = slices.Clone(r.Meta.Warnings)
+	cp.Meta.Messages = slices.Clone(r.Meta.Messages)
+	cp.Meta.Links = bytes.Clone(r.Meta.Links)
+	cp.errs = slices.Clone(r.errs)
+	if r.Skin != nil {
+		skin := *r.Skin // Skin holds only values, so a struct copy is deep
+		cp.Skin = &skin
+	}
+	return &cp
 }

@@ -2,11 +2,15 @@ package mineskin
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,8 +26,8 @@ func TestNewClientDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	if c.doer.BaseURL != DefaultBaseURL || c.doer.UserAgent != DefaultUserAgent || c.doer.APIKey != "" {
-		t.Errorf("defaults wrong: %q %q %q", c.doer.BaseURL, c.doer.UserAgent, c.doer.APIKey)
+	if c.doer.BaseURL != DefaultBaseURL || c.doer.UserAgent != DefaultUserAgent || !c.doer.APIKey.IsEmpty() {
+		t.Errorf("defaults wrong: %q %q %q", c.doer.BaseURL, c.doer.UserAgent, c.doer.APIKey.Reveal())
 	}
 	if c.doer.Timeout != defaultTimeout || defaultTimeout != 10*time.Second {
 		t.Errorf("timeout = %v", c.doer.Timeout)
@@ -122,8 +126,8 @@ func TestNewClientAPIKey(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.doer.APIKey != tt.wantKey {
-				t.Errorf("apiKey = %q, want %q", c.doer.APIKey, tt.wantKey)
+			if c.doer.APIKey.Reveal() != tt.wantKey {
+				t.Errorf("apiKey = %q, want %q", c.doer.APIKey.Reveal(), tt.wantKey)
 			}
 			if got := strings.Contains(buf.String(), "without API key"); got != tt.wantWarn {
 				t.Errorf("key warning = %v, want %v", got, tt.wantWarn)
@@ -284,33 +288,60 @@ func TestNewClientRejectsUserinfoInBaseURL(t *testing.T) {
 	}
 }
 
-func TestNewClientWarnsOnPlainHTTPWithKey(t *testing.T) {
+func TestNewClientPlainHTTPWithKey(t *testing.T) {
 	const key = "msk_abc_secretpart"
 	tests := []struct {
 		name, url, key string
+		insecure       bool
+		wantReject     bool
 		wantWarn       bool
 	}{
-		{"remote http with key", "http://api.example.com", key, true},
-		{"remote http no key", "http://api.example.com", "", false},
-		{"https with key", "https://api.example.com", key, false},
-		{"localhost", "http://localhost:8080", key, false},
-		{"ipv4 loopback", "http://127.0.0.1:8080", key, false},
-		{"ipv4 loopback range", "http://127.5.5.5", key, false},
-		{"ipv6 loopback", "http://[::1]:8080", key, false},
-		{"remote ip", "http://10.0.0.1", key, true},
+		{"remote http with key is rejected", "http://api.example.com", key, false, true, false},
+		{"remote ip http with key is rejected", "http://10.0.0.1", key, false, true, false},
+		{"remote http with key and opt-in warns", "http://api.example.com", key, true, false, true},
+		{"remote ip http with key and opt-in warns", "http://10.0.0.1", key, true, false, true},
+		{"remote http no key", "http://api.example.com", "", false, false, false},
+		{"remote http blank key", "http://api.example.com", "  ", false, false, false},
+		{"remote http no key with opt-in", "http://api.example.com", "", true, false, false},
+		{"https with key", "https://api.example.com", key, false, false, false},
+		{"https with key and opt-in", "https://api.example.com", key, true, false, false},
+		{"localhost", "http://localhost:8080", key, false, false, false},
+		{"ipv4 loopback", "http://127.0.0.1:8080", key, false, false, false},
+		{"ipv4 loopback range", "http://127.5.5.5", key, false, false, false},
+		{"ipv6 loopback", "http://[::1]:8080", key, false, false, false},
+		{"loopback with opt-in does not warn", "http://127.0.0.1:8080", key, true, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf bytes.Buffer
-			if _, err := NewClient(WithBaseURL(tt.url), WithAPIKey(tt.key), WithUserAgent("A/1"), WithLogger(captureLogger(&buf))); err != nil {
-				t.Fatal(err)
+			opts := []Option{WithBaseURL(tt.url), WithAPIKey(tt.key), WithUserAgent("A/1"), WithLogger(captureLogger(&buf))}
+			if tt.insecure {
+				opts = append(opts, WithInsecureHTTP())
 			}
+			c, err := NewClient(opts...)
 			out := buf.String()
-			if got := strings.Contains(out, "plain HTTP"); got != tt.wantWarn {
-				t.Errorf("warn = %v, want %v; log: %s", got, tt.wantWarn, out)
-			}
 			if strings.Contains(out, "secretpart") || strings.Contains(out, key) {
 				t.Errorf("log leaks key: %s", out)
+			}
+			if tt.wantReject {
+				if !errors.Is(err, ErrInvalidInput) || c != nil {
+					t.Fatalf("NewClient() = %v, %v; want nil client and ErrInvalidInput", c, err)
+				}
+				const want = "mineskin: invalid input: API key over plain http to a non-loopback host; use https or WithInsecureHTTP()"
+				if err.Error() != want {
+					t.Errorf("error = %q, want %q", err.Error(), want)
+				}
+				if strings.Contains(err.Error(), "secretpart") || strings.Contains(err.Error(), "api.example.com") {
+					t.Errorf("error echoes the key or host: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = c.Close() })
+			if got := strings.Contains(out, "plain HTTP"); got != tt.wantWarn {
+				t.Errorf("warn = %v, want %v; log: %s", got, tt.wantWarn, out)
 			}
 		})
 	}
@@ -338,5 +369,132 @@ func TestNewClientRejectsControlCharacters(t *testing.T) {
 				t.Errorf("error contains key: %v", err)
 			}
 		})
+	}
+}
+
+func TestRedirectToAnotherHostDropsAuthorization(t *testing.T) {
+	var seen atomic.Pointer[string]
+	other := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		got := r.Header.Get("Authorization")
+		seen.Store(&got)
+		okHandler(w, r)
+	})
+	var firstAuth atomic.Pointer[string]
+	first := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		got := r.Header.Get("Authorization")
+		firstAuth.Store(&got)
+		http.Redirect(w, r, other.URL+"/v2/x", http.StatusFound)
+	})
+	c := newTestClient(t, first.URL, WithAPIKey("msk_abc_secretpart"))
+	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil); err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	if got := firstAuth.Load(); got == nil || *got != "Bearer msk_abc_secretpart" {
+		t.Errorf("first hop Authorization = %v, want the bearer key", got)
+	}
+	if got := seen.Load(); got == nil || *got != "" {
+		t.Errorf("redirected host received Authorization %v, want none", got)
+	}
+}
+
+func TestCheckRedirectStripsAuthorizationOnHostChange(t *testing.T) {
+	tests := []struct {
+		name     string
+		first    string
+		next     string
+		wantAuth string
+	}{
+		{"different host", "https://api.mineskin.org/v2/x", "https://evil.example/y", ""},
+		{"sibling subdomain api2", "https://api.mineskin.org/v2/x", "https://api2.mineskin.org/v2/x", ""},
+		{"different port", "http://127.0.0.1:8080/x", "http://127.0.0.1:9090/x", ""},
+		{"same host keeps it", "https://api.mineskin.org/v2/x", "https://api.mineskin.org/v2/y", "Bearer k"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			first, next := redirectReq(t, tt.first), redirectReq(t, tt.next)
+			first.Header = http.Header{"Authorization": {"Bearer k"}}
+			next.Header = http.Header{"Authorization": {"Bearer k"}, "User-Agent": {"A/1"}}
+			if err := transport.CheckRedirect(next, []*http.Request{first}); err != nil {
+				t.Fatal(err)
+			}
+			if got := next.Header.Get("Authorization"); got != tt.wantAuth {
+				t.Errorf("Authorization = %q, want %q", got, tt.wantAuth)
+			}
+			if next.Header.Get("User-Agent") != "A/1" {
+				t.Error("other headers must be kept")
+			}
+		})
+	}
+}
+
+func TestNewClientLogsKeyIDOnlyForWellFormedKeys(t *testing.T) {
+	tests := []struct {
+		name   string
+		key    string
+		wantID string
+	}{
+		{"well formed", "msk_abc123_secretpart", "abc123"},
+		{"secret with underscores", "msk_abc123_secret_part", "abc123"},
+		{"no id separator", "msk_SECRETVALUE", ""},
+		{"empty id", "msk__SECRETVALUE", ""},
+		{"empty secret", "msk_abc123_", ""},
+		{"id with symbols", "msk_ab-c$_SECRETVALUE", ""},
+		{"id too long", "msk_" + strings.Repeat("a", 33) + "_SECRETVALUE", ""},
+		{"id at the length limit", "msk_" + strings.Repeat("a", 32) + "_SECRETVALUE", strings.Repeat("a", 32)},
+		{"wrong prefix", "abc_def_SECRETVALUE", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if _, err := NewClient(WithAPIKey(tt.key), WithUserAgent("A/1"), WithLogger(captureLogger(&buf))); err != nil {
+				t.Fatal(err)
+			}
+			out := buf.String()
+			if tt.wantID == "" {
+				if strings.Contains(out, "key_id") {
+					t.Errorf("key id logged for a malformed key: %s", out)
+				}
+			} else if !strings.Contains(out, "key_id="+tt.wantID) {
+				t.Errorf("log = %s, want key_id=%s", out, tt.wantID)
+			}
+			if strings.Contains(out, "SECRETVALUE") || strings.Contains(out, "secretpart") || strings.Contains(out, "secret_part") {
+				t.Errorf("log leaks the secret part: %s", out)
+			}
+		})
+	}
+}
+
+func TestRedirectAwayAndBackRestoresAuthorizationOnTheOriginalHost(t *testing.T) {
+	var mu sync.Mutex
+	var trail []string // "host-label:authorization" per request
+	record := func(label string, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		trail = append(trail, label+":"+r.Header.Get("Authorization"))
+	}
+	var aURL, bURL string
+	b := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		record("B", r)
+		http.Redirect(w, r, aURL+"/v2/final", http.StatusFound)
+	})
+	bURL = b.URL
+	a := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		record("A", r)
+		if r.URL.Path == "/v2/start" {
+			http.Redirect(w, r, bURL+"/v2/mid", http.StatusFound)
+			return
+		}
+		okHandler(w, r)
+	})
+	aURL = a.URL
+	c := newTestClient(t, a.URL, WithAPIKey("msk_abc_secretpart"))
+	if _, err := c.do(context.Background(), http.MethodGet, "/v2/start", nil); err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	want := []string{"A:Bearer msk_abc_secretpart", "B:", "A:Bearer msk_abc_secretpart"}
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(trail, want) {
+		t.Errorf("requests = %q, want %q", trail, want)
 	}
 }

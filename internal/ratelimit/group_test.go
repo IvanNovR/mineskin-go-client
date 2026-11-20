@@ -174,7 +174,8 @@ func TestDoNeverRetriesOtherStatuses(t *testing.T) {
 
 func TestDoReturns429WhenDelayEndsAfterCtxDeadline(t *testing.T) {
 	g, fake := newTestGroup(2, openLimits)
-	ctx, cancel := context.WithDeadline(context.Background(), fake.Now().Add(time.Hour))
+	// The 2 h server delay is capped at 1 h, so the deadline must lie before that.
+	ctx, cancel := context.WithDeadline(context.Background(), fake.Now().Add(30*time.Minute))
 	defer cancel()
 	var sent atomic.Int32
 	body := `{"success":false,"rateLimit":{"next":{"relative":7200000}}}`
@@ -270,5 +271,35 @@ func TestDoLogsOneDebugLinePerRetry(t *testing.T) {
 	}
 	if got := strings.Count(buf.String(), "retrying rate-limited request"); got != 1 || !strings.Contains(buf.String(), "group=test") {
 		t.Errorf("log lines = %d, log:\n%s", got, buf.String())
+	}
+}
+
+func TestDoCapsServerDelayAndGroupRecovers(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		status int
+		header string
+		body   string
+	}{
+		{"Retry-After", 429, "99999999", rateLimitJSON},
+		{"next.relative", 200, "", `{"success":true,"rateLimit":{"next":{"relative":9223372036854}}}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			g, fake := newTestGroup(0, openLimits)
+			r := resp(fake, tt.status, tt.body)
+			if tt.header != "" {
+				r.Header.Set(transport.HeaderRetryAfter, tt.header)
+			}
+			if _, err := g.Do(context.Background(), func(context.Context) (transport.Response, error) { return r, nil }, nil); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := g.Throttle.EarliestStart(), fake.Now().Add(time.Hour); !got.Equal(want) {
+				t.Errorf("earliest start = %v, want exactly one hour ahead (%v)", got, want)
+			}
+			fake.Advance(time.Hour)
+			if got := g.Throttle.EarliestStart(); got.After(fake.Now()) {
+				t.Errorf("earliest start = %v after Advance(1h), want not after now (%v)", got, fake.Now())
+			}
+		})
 	}
 }

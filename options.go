@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // config collects the settings applied by Option values. defaultConfig
@@ -15,8 +16,10 @@ import (
 type config struct {
 	baseURL   string
 	userAgent string
-	apiKey    string
-	timeout   time.Duration
+	apiKey    transport.Secret
+	// insecureHTTP allows the API key over plain http to a non-loopback host.
+	insecureHTTP bool
+	timeout      time.Duration
 	// transport is nil until WithTransport sets it; NewClient then creates and
 	// owns a transport.
 	transport http.RoundTripper
@@ -43,9 +46,24 @@ type Option func(*config)
 
 // WithAPIKey sets the MineSkin API key. Surrounding whitespace is trimmed. A
 // missing or blank key is allowed, but logs a warning and sends no
-// Authorization header. The key is never logged.
+// Authorization header. The key is never logged or printed. With an http://
+// base URL to a non-loopback host, NewClient fails with ErrInvalidInput unless
+// WithInsecureHTTP is also given.
 func WithAPIKey(key string) Option {
-	return func(c *config) { c.apiKey = strings.TrimSpace(key) }
+	return func(c *config) { c.apiKey = transport.NewSecret(strings.TrimSpace(key)) }
+}
+
+// WithInsecureHTTP allows NewClient to combine an API key with an http:// base
+// URL whose host is not loopback (localhost, 127.0.0.0/8 or ::1). The name
+// localhost is trusted as loopback without DNS resolution, as is any IP in
+// those ranges; any other name counts as remote. Without it
+// such a configuration fails with ErrInvalidInput, because the key would cross
+// the network unencrypted. With it the key is sent and NewClient logs a
+// warning. Use it only for a trusted private network or a TLS-terminating
+// proxy you control; the default base URL is https. Loopback hosts and
+// clients without an API key need no opt-in.
+func WithInsecureHTTP() Option {
+	return func(c *config) { c.insecureHTTP = true }
 }
 
 // WithUserAgent sets the User-Agent header, for example "AppName/1.2.3". An

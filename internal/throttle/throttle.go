@@ -200,7 +200,9 @@ func (t *Throttle) Close() {
 	t.queue.Init()
 }
 
-// Stats returns a snapshot of the Throttle's state.
+// Stats returns a snapshot of the Throttle's state. It is for diagnostics and
+// tests only: the values may be stale as soon as it returns, so never base a
+// decision on them.
 func (t *Throttle) Stats() Stats {
 	t.mu.Lock()
 	defer t.mu.Unlock()

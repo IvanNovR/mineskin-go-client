@@ -25,7 +25,7 @@ func newDoer(t *testing.T, h http.HandlerFunc) *Doer {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return &Doer{
-		BaseURL: srv.URL, UserAgent: "test/1.0", APIKey: testKey,
+		BaseURL: srv.URL, UserAgent: "test/1.0", APIKey: NewSecret(testKey),
 		HTTP: srv.Client(), Clock: clock.NewFake(epoch),
 	}
 }
@@ -65,7 +65,7 @@ func TestDoSendsHeadersAndPath(t *testing.T) {
 func TestDoWithoutBodyOrKey(t *testing.T) {
 	var got *http.Request
 	d := newDoer(t, func(w http.ResponseWriter, r *http.Request) { got = r })
-	d.APIKey = ""
+	d.APIKey = Secret{}
 	if _, err := d.Do(context.Background(), http.MethodGet, "/x", nil); err != nil {
 		t.Fatalf("Do() error = %v", err)
 	}
@@ -312,5 +312,27 @@ func TestDoCallerDeadlineIsNotARequestTimeout(t *testing.T) {
 	_, err := d.Do(ctx, http.MethodGet, "/x", nil)
 	if !errors.Is(err, context.DeadlineExceeded) || IsRequestTimeout(err) {
 		t.Fatalf("error = %v, want the caller's deadline and not a request timeout", err)
+	}
+}
+
+func TestDoMeasuresElapsedWithTheInjectedClock(t *testing.T) {
+	fake := clock.NewFake(epoch)
+	d := newDoer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fake.Advance(250 * time.Millisecond) // the "request" takes 250 ms on the fake clock
+		_, _ = io.WriteString(w, `{}`)
+	})
+	d.Clock = fake
+	var logs bytes.Buffer
+	d.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	resp, err := d.Do(context.Background(), http.MethodGet, "/x", nil)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	if want := epoch.Add(250 * time.Millisecond); !resp.Received.Equal(want) {
+		t.Errorf("Received = %v, want %v", resp.Received, want)
+	}
+	if !strings.Contains(logs.String(), "elapsed=250ms") {
+		t.Errorf("log = %s, want elapsed=250ms measured on the injected clock", logs.String())
 	}
 }

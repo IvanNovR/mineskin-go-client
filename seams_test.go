@@ -73,7 +73,6 @@ func TestSeamServerDelayAgreesWithRateLimitDecoding(t *testing.T) {
 		`{"rateLimit":{"next":{"relative":5000}}}`, `{"rateLimit":{"next":{"relative":-1}}}`,
 		`{"rateLimit":{"next":{"relative":"5"}}}`, `{"rateLimit":{"next":{"relative":1.5}}}`,
 		`{"rateLimit":{"next":null}}`, `{"rateLimit":"x"}`, `{}`, `<html>`, "\xef\xbb\xbf" + `{"rateLimit":{"next":{"relative":7}}}`,
-		`{"rateLimit":{"next":{"relative":9223372036854775807}}}`,
 	}
 	for _, body := range bodies {
 		r := transport.Response{Status: 200, Header: http.Header{}, Body: []byte(body)}
@@ -87,6 +86,21 @@ func TestSeamServerDelayAgreesWithRateLimitDecoding(t *testing.T) {
 		if got := ratelimit.ServerDelay(r); got != want {
 			t.Errorf("ServerDelay(%q) = %v, public decoding = %v", body, got, want)
 		}
+	}
+}
+
+// A relative delay too large for a Duration is not decoded publicly
+// (RateLimit.NextIn stays 0), but it still delays the group by the one-hour cap.
+func TestSeamServerDelayClampsWhatPublicDecodingDrops(t *testing.T) {
+	r := transport.Response{Status: 200, Header: http.Header{}, Body: []byte(`{"rateLimit":{"next":{"relative":9223372036854775807}}}`)}
+	var wire struct {
+		RateLimit RateLimit `json:"rateLimit"`
+	}
+	if err := json.Unmarshal(r.Body, &wire); err != nil || wire.RateLimit.NextIn != 0 {
+		t.Fatalf("public decoding = %v, %v; want NextIn 0", wire.RateLimit.NextIn, err)
+	}
+	if got := ratelimit.ServerDelay(r); got != time.Hour {
+		t.Errorf("ServerDelay() = %v, want exactly 1h", got)
 	}
 }
 

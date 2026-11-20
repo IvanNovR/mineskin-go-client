@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 
@@ -37,9 +38,14 @@ const (
 // poller to exit (see Close). The client creates its own HTTP transport
 // unless WithTransport is used.
 //
-// Go's HTTP client already strips the Authorization header when a redirect
-// leads to a different host, and this client refuses redirects from https to
-// http and stops after 10 redirects.
+// The API key is held in a redacted type: formatting a Client with %v, %+v or
+// %#v and logging it with log/slog never shows the key.
+//
+// The API does not redirect. This client drops the Authorization header when a
+// redirect leads to a different host (a different port or a sibling subdomain
+// counts), refuses redirects from https to http and stops after 10 redirects.
+// NewClient refuses an API key with an http:// base URL to a non-loopback
+// host unless WithInsecureHTTP is given.
 type Client struct {
 	// doer holds the base URL, User-Agent, API key and HTTP client.
 	doer     *transport.Doer
@@ -147,22 +153,39 @@ func normalizeBaseURL(raw string) (string, error) {
 
 // logConfig emits the construction warnings and the debug key id. It never
 // logs the key or its secret part.
-func logConfig(l *slog.Logger, baseURL, userAgent, apiKey string) {
+func logConfig(l *slog.Logger, baseURL, userAgent string, key transport.Secret) {
+	apiKey := key.Reveal()
 	if userAgent == DefaultUserAgent {
 		l.Warn("Using the default User-Agent, please set a custom one (e.g. AppName/Version)")
 	}
-	if apiKey == "" {
+	if key.IsEmpty() {
 		l.Warn("Creating MineSkin client without API key, get one at https://account.mineskin.org/keys")
 		return
 	}
-	if sendsKeyOverPlainHTTP(baseURL) {
+	if sendsKeyOverPlainHTTP(baseURL) { // only reachable with WithInsecureHTTP
 		l.Warn("Sending the API key over plain HTTP to a non-loopback host; use https")
 	}
-	if strings.HasPrefix(apiKey, apiKeyPrefix) {
-		if parts := strings.SplitN(apiKey, "_", 3); len(parts) == 3 {
-			l.Debug("Using MineSkin API key", "key_id", parts[1])
-		}
+	if id, ok := keyID(apiKey); ok {
+		l.Debug("Using MineSkin API key", "key_id", id)
 	}
+}
+
+// keyIDPattern is the shape of the id part of a key, msk_<id>_<secret>. Only
+// an id of this shape is logged, so a malformed key never leaks its secret.
+var keyIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{1,32}$`)
+
+// keyID returns the id of a key of the form msk_<id>_<secret>, or false when
+// the key does not have that form or the id does not look like an id.
+func keyID(apiKey string) (string, bool) {
+	rest, ok := strings.CutPrefix(apiKey, apiKeyPrefix)
+	if !ok {
+		return "", false
+	}
+	id, secret, ok := strings.Cut(rest, "_")
+	if !ok || secret == "" || !keyIDPattern.MatchString(id) {
+		return "", false
+	}
+	return id, true
 }
 
 // validateHeaderValues rejects a User-Agent or API key with control

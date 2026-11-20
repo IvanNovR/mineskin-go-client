@@ -3,8 +3,12 @@ COVERAGE_MIN ?= 80
 # (Dependabot does not bump this one).
 GOLANGCI_LINT_VERSION ?= v2.15.0
 GOLANGCI_LINT = go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+# Keep in sync with the svu version in .github/workflows/release.yml and
+# release-preview.yml (Dependabot does not bump these).
+SVU_VERSION ?= v3.4.4
+SVU = go run github.com/caarlos0/svu/v3@$(SVU_VERSION)
 
-.PHONY: test race vet tidy lint cover check test-live
+.PHONY: test race vet tidy lint cover check test-live next-version
 
 test:
 	@go test ./...
@@ -41,3 +45,8 @@ check: vet tidy lint cover
 # .env file that they parse themselves; .env is never run as shell code.
 test-live:
 	@go test -tags live -race -count=1 -run '^TestLive' ./...
+
+# next-version prints the version that a merge into main would release now
+# (svu with .svu.yml; it equals the current tag when nothing is releasable).
+next-version:
+	@$(SVU) next

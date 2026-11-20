@@ -19,8 +19,8 @@ func (r *endlessReader) Read(p []byte) (int, error) {
 
 func assertUploadTooLarge(t *testing.T, err error) {
 	t.Helper()
-	if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-		t.Fatalf("error = %v, want ErrInvalidInput and ErrClient", err)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("error = %v, want ErrInvalidInput", err)
 	}
 	if !strings.Contains(err.Error(), "1 MiB") {
 		t.Errorf("error %q does not mention the 1 MiB limit", err)

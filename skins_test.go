@@ -186,9 +186,7 @@ func TestGetSkinWrongTypedFieldsAreParseErrors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv := newTestServer(t, writeJSON(200, body))
 			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
-			if !errors.Is(err, ErrClient) {
-				t.Errorf("err = %v, want ErrClient", err)
-			}
+			assertParseError(t, err)
 		})
 	}
 }

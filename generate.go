@@ -91,7 +91,7 @@ func (c *Client) Generate(ctx context.Context, src Source, opts *GenerateOptions
 // submit encodes src, posts it to path and decodes the response with decode.
 func (c *Client) submit(ctx context.Context, path string, src Source, opts *GenerateOptions, decode func(map[string]json.RawMessage) error) (ResponseMeta, error) {
 	if src == nil {
-		return ResponseMeta{}, newInvalidInputError("source is nil")
+		return ResponseMeta{}, invalidInput("source is nil")
 	}
 	body, err := src.requestBody(opts)
 	if err != nil {

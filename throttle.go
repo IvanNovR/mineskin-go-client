@@ -38,10 +38,10 @@ type Throttle struct {
 // the error message.
 func (t Throttle) withDefaults(def Throttle, group string) (Throttle, error) {
 	if t.Interval < 0 {
-		return Throttle{}, newInvalidInputError(group + " throttle interval must not be negative")
+		return Throttle{}, invalidInput("%s throttle interval must not be negative", group)
 	}
 	if t.Concurrency < 0 {
-		return Throttle{}, newInvalidInputError(group + " throttle concurrency must not be negative")
+		return Throttle{}, invalidInput("%s throttle concurrency must not be negative", group)
 	}
 	if t.Interval == 0 {
 		t.Interval = def.Interval

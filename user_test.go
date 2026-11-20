@@ -110,10 +110,7 @@ func TestGetUserWrongTypedFieldsAreParseErrors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv := newTestServer(t, writeJSON(200, body))
 			_, err := newTestClient(t, srv.URL).GetUser(context.Background())
-			var apiErr *APIError
-			if !errors.Is(err, ErrClient) || errors.As(err, &apiErr) {
-				t.Errorf("err = %v, want parse error", err)
-			}
+			assertParseError(t, err)
 		})
 	}
 }
@@ -125,5 +122,14 @@ func TestGetUserAbsentOrNullUserIsZeroUUID(t *testing.T) {
 		if err != nil || got.User.UUID != (UUID{}) {
 			t.Errorf("body %s: uuid=%v err=%v", body, got, err)
 		}
+	}
+}
+
+func TestGetUserMalformedUUIDIsPlainParseError(t *testing.T) {
+	srv := newTestServer(t, writeJSON(200, `{"user":"not-a-uuid"}`))
+	_, err := newTestClient(t, srv.URL).GetUser(context.Background())
+	assertParseError(t, err)
+	if want := "mineskin: failed to parse response: invalid UUID: unrecognised format (length 10)"; err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err, want)
 	}
 }

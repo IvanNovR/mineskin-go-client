@@ -294,8 +294,8 @@ func TestQueuedCallReturnsCtxErr(t *testing.T) {
 
 	cancel()
 	err := mustDone(t, "cancelled call", cancelled)
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrClient) {
-		t.Fatalf("error = %v, want context.Canceled and ErrClient", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
 	}
 	waitWaiting(t, c.getGroup, 1)
 	srv.open(keySkin)

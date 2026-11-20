@@ -2,6 +2,7 @@ package mineskin
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/poll"
 )
@@ -15,8 +16,7 @@ import (
 // A nil ctx, or a job id that is empty, "." or "..", fails with
 // ErrInvalidInput without a request. A failed job gives a *JobFailedError, and
 // a job still unfinished after PollOptions.MaxAttempts checks gives
-// ErrMaxAttempts. When ctx ends, the error matches both ctx.Err() and
-// ErrClient; the job stops being polled unless another waiter still needs it.
+// ErrMaxAttempts. When ctx ends, the error matches ctx.Err(); the job stops being polled unless another waiter still needs it.
 // Errors of the status requests are returned as they are. A wait that Close
 // interrupts, and any wait started after Close, fails with ErrClientClosed.
 //
@@ -30,7 +30,7 @@ import (
 // JobSkin on it may return ErrJobNotCompleted.
 func (c *Client) WaitForJob(ctx context.Context, job Job) (*JobResponse, error) {
 	if ctx == nil {
-		return nil, newInvalidInputError("context is nil")
+		return nil, invalidInput("context is nil")
 	}
 	if err := c.checkOpen(); err != nil {
 		return nil, err
@@ -39,7 +39,7 @@ func (c *Client) WaitForJob(ctx context.Context, job Job) (*JobResponse, error) 
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, wrapClientError("wait for job", err)
+		return nil, fmt.Errorf("mineskin: wait for job: %w", err)
 	}
 	pj := c.poller.Register(job.ID, job.ETA)
 	select {
@@ -52,7 +52,7 @@ func (c *Client) WaitForJob(ctx context.Context, job Job) (*JobResponse, error) 
 		default:
 		}
 		c.poller.Leave(pj)
-		return nil, wrapClientError("wait for job", ctx.Err())
+		return nil, fmt.Errorf("mineskin: wait for job: %w", ctx.Err())
 	}
 }
 

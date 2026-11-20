@@ -52,8 +52,8 @@ func TestCallsAfterCloseFailImmediately(t *testing.T) {
 	}
 	for name, call := range calls {
 		err := call()
-		if !errors.Is(err, ErrClientClosed) || !errors.Is(err, ErrClient) {
-			t.Errorf("%s error = %v, want ErrClientClosed and ErrClient", name, err)
+		if !errors.Is(err, ErrClientClosed) {
+			t.Errorf("%s error = %v, want ErrClientClosed", name, err)
 		}
 	}
 	for _, key := range []string{keySkin, keyUser, keyJob, keyList, keyQueue, keyGenerate} {
@@ -102,7 +102,7 @@ func TestCloseCancelsInFlightRequest(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if err := mustDone(t, "GetUser", res); !errors.Is(err, ErrClientClosed) || !errors.Is(err, ErrClient) {
+	if err := mustDone(t, "GetUser", res); !errors.Is(err, ErrClientClosed) {
 		t.Errorf("GetUser error = %v, want ErrClientClosed", err)
 	}
 	select {
@@ -124,7 +124,7 @@ func TestCloseFailsWaitForJob(t *testing.T) {
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if err := mustDone(t, "WaitForJob", res); !errors.Is(err, ErrClientClosed) || !errors.Is(err, ErrClient) {
+	if err := mustDone(t, "WaitForJob", res); !errors.Is(err, ErrClientClosed) {
 		t.Errorf("WaitForJob error = %v, want ErrClientClosed", err)
 	}
 	if c.poller.Running() {

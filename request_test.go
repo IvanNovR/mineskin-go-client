@@ -92,8 +92,9 @@ func TestDoNilContextIsInvalidInput(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	var nilCtx context.Context
 	_, err := c.do(nilCtx, http.MethodGet, "/v2/x", nil)
-	if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want ErrInvalidInput and ErrClient", err)
+	var build *transport.BuildError
+	if !errors.As(err, &build) {
+		t.Fatalf("err = %v, want *transport.BuildError", err)
 	}
 	if hits.Load() != 0 {
 		t.Error("a request was sent for a nil context")
@@ -103,8 +104,13 @@ func TestDoNilContextIsInvalidInput(t *testing.T) {
 func TestDoInvalidPathIsInvalidInput(t *testing.T) {
 	c := newTestClient(t, "http://example.invalid")
 	_, err := c.do(context.Background(), http.MethodGet, "/v2/\x7f", nil)
+	var build *transport.BuildError
+	if !errors.As(err, &build) {
+		t.Fatalf("err = %v, want *transport.BuildError", err)
+	}
+	_, err = c.get(context.Background(), "/v2/\x7f", noopDecoder)
 	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("err = %v, want ErrInvalidInput", err)
+		t.Fatalf("get err = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -129,9 +135,6 @@ func TestTimeoutWhileBodyStalls(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Errorf("took %v, timeout not enforced on the body read", time.Since(start))
-	}
-	if !errors.Is(err, ErrClient) {
-		t.Errorf("err does not match ErrClient: %v", err)
 	}
 	var ne net.Error
 	isNetTimeout := errors.As(err, &ne) && ne.Timeout()
@@ -159,8 +162,8 @@ func TestContextCancelReturnsCanceled(t *testing.T) {
 		cancel()
 	}()
 	_, err := c.do(ctx, http.MethodGet, "/v2/x", nil)
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want Canceled and ErrClient", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want Canceled", err)
 	}
 }
 
@@ -176,10 +179,8 @@ func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
 	t.Cleanup(tlsSrv.Close)
 
 	c := newTestClient(t, tlsSrv.URL, WithTransport(tlsSrv.Client().Transport), WithAPIKey(testAPIKey))
-	_, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
-	if !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want ErrClient", err)
-	}
+	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
+	assertGoStyleMessage(t, err)
 	if plainHits.Load() != 0 {
 		t.Error("plain http server was contacted after an https->http redirect")
 	}
@@ -253,10 +254,8 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := append([]Option{WithAPIKey(testAPIKey), WithLogger(captureLogger(&logs))}, tt.opts...)
 			c := newTestClient(t, closedURL, opts...)
-			_, err := c.do(context.Background(), http.MethodGet, "/v2/skins/abc", nil)
-			if !errors.Is(err, ErrClient) {
-				t.Fatalf("err = %v, want ErrClient", err)
-			}
+			_, err := c.get(context.Background(), "/v2/skins/abc", noopDecoder)
+			assertGoStyleMessage(t, err)
 			if strings.Contains(err.Error(), testAPIKey) || strings.Contains(err.Error(), "Bearer") {
 				t.Errorf("error leaks credentials: %v", err)
 			}
@@ -288,9 +287,11 @@ func TestDoBodySizeLimit(t *testing.T) {
 			c := newTestClient(t, srv.URL, WithTimeout(30*time.Second))
 			raw, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
 			if tt.wantErr {
-				if !errors.Is(err, ErrClient) {
-					t.Fatalf("err = %v, want ErrClient", err)
+				if err == nil {
+					t.Fatal("do() error = nil, want an error")
 				}
+				_, getErr := c.get(context.Background(), "/v2/x", noopDecoder)
+				assertGoStyleMessage(t, getErr)
 				return
 			}
 			if err != nil || len(raw.Body) != tt.size {
@@ -356,12 +357,17 @@ func TestGetAPIError(t *testing.T) {
 }
 
 func TestGetPropagatesTransportError(t *testing.T) {
+	boom := errors.New("boom")
 	c := newTestClient(t, "http://example.invalid", WithTransport(roundTripFunc(
-		func(*http.Request) (*http.Response, error) { return nil, errors.New("boom") })))
+		func(*http.Request) (*http.Response, error) { return nil, boom })))
 	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
-	if !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want ErrClient", err)
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap boom", err)
 	}
+	if !strings.HasPrefix(err.Error(), "mineskin: GET /v2/x:") {
+		t.Errorf("err = %q, want the method and path label", err)
+	}
+	assertGoStyleMessage(t, err)
 }
 
 func TestDoConcurrent(t *testing.T) {

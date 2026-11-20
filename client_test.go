@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 func captureLogger(buf *bytes.Buffer) *slog.Logger {
@@ -54,8 +56,8 @@ func TestNewClientBaseURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c, err := NewClient(WithBaseURL(tt.in))
 			if tt.wantErr {
-				if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-					t.Fatalf("err = %v, want ErrInvalidInput and ErrClient", err)
+				if !errors.Is(err, ErrInvalidInput) {
+					t.Fatalf("err = %v, want ErrInvalidInput", err)
 				}
 				return
 			}
@@ -243,16 +245,16 @@ func TestCheckRedirect(t *testing.T) {
 			for i, v := range tt.via {
 				via[i] = redirectReq(t, v)
 			}
-			err := checkRedirect(redirectReq(t, tt.next), via)
+			err := transport.CheckRedirect(redirectReq(t, tt.next), via)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
-			if err != nil && (!errors.Is(err, ErrClient) || errors.Is(err, ErrInvalidInput)) {
-				t.Errorf("err should match ErrClient only: %v", err)
+			if err != nil && errors.Is(err, ErrInvalidInput) {
+				t.Errorf("a redirect refusal must not be invalid input: %v", err)
 			}
 		})
 	}
-	if err := checkRedirect(redirectReq(t, "https://a/"), nil); err != nil {
+	if err := transport.CheckRedirect(redirectReq(t, "https://a/"), nil); err != nil {
 		t.Errorf("empty via: %v", err)
 	}
 }
@@ -326,7 +328,7 @@ func TestNewClientRejectsControlCharacters(t *testing.T) {
 	for name, opts := range tests {
 		t.Run(name, func(t *testing.T) {
 			_, err := NewClient(opts...)
-			if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
+			if !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("err = %v, want ErrInvalidInput", err)
 			}
 			if strings.Contains(err.Error(), "secretpart") {

@@ -13,7 +13,7 @@ import (
 var (
 	// ErrSkipped is returned by Group.Do when the start gate declined the
 	// request; nothing was sent.
-	ErrSkipped = errors.New("mineskin: request skipped by its start gate")
+	ErrSkipped = errors.New("request skipped by its start gate")
 	// ErrClosed is returned when the tuner was shut down before its first
 	// grants load finished.
 	ErrClosed = errors.New("ratelimit: closed")

@@ -22,7 +22,7 @@ func TestJobFailedError(t *testing.T) {
 		wantMessage string
 	}{
 		{"first error", withErrs, "invalid_image", "bad image"},
-		{"fallback", &JobResponse{Job: job}, "job_failed", "Job failed"},
+		{"fallback", &JobResponse{Job: job}, "job_failed", "job failed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -38,9 +38,6 @@ func TestJobFailedError(t *testing.T) {
 			if err.Job != job {
 				t.Errorf("Job = %+v, want %+v", err.Job, job)
 			}
-			if !errors.Is(err, ErrClient) {
-				t.Error("errors.Is(err, ErrClient) = false")
-			}
 			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidInput) {
 				t.Error("matches unrelated sentinel")
 			}
@@ -52,15 +49,12 @@ func TestJobFailedError(t *testing.T) {
 	}
 }
 
-func TestNewSentinelsMatchErrClient(t *testing.T) {
+func TestNewSentinelsAreDistinct(t *testing.T) {
 	for name, s := range map[string]error{"ErrMaxAttempts": ErrMaxAttempts, "ErrJobNotCompleted": ErrJobNotCompleted} {
 		t.Run(name, func(t *testing.T) {
-			if !errors.Is(s, ErrClient) {
-				t.Error("direct: errors.Is(s, ErrClient) = false")
-			}
-			wrapped := wrapClientError("ctx", s)
-			if !errors.Is(wrapped, s) || !errors.Is(wrapped, ErrClient) {
-				t.Errorf("wrapped: Is(s)=%v Is(ErrClient)=%v", errors.Is(wrapped, s), errors.Is(wrapped, ErrClient))
+			wrapped := fmt.Errorf("mineskin: ctx: %w", s)
+			if !errors.Is(wrapped, s) {
+				t.Errorf("wrapped %v does not match %v", wrapped, s)
 			}
 			if errors.Is(s, ErrInvalidInput) || errors.Is(s, ErrNotFound) {
 				t.Error("matches unrelated sentinel")
@@ -109,7 +103,7 @@ func TestJobSkin(t *testing.T) {
 			handler:  writeJSON(200, `{"success":true,"skin":{"uuid":"`+jobResultID+`","name":"fetched"}}`),
 			wantHits: 1, wantName: "fetched"},
 		{name: "no result", resp: &JobResponse{Job: Job{ID: "j", Status: JobStatusProcessing}}, check: func(t *testing.T, err error) {
-			if !errors.Is(err, ErrJobNotCompleted) || !errors.Is(err, ErrClient) {
+			if !errors.Is(err, ErrJobNotCompleted) {
 				t.Errorf("err = %v, want ErrJobNotCompleted", err)
 			}
 		}},

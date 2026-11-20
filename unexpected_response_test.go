@@ -2,6 +2,7 @@ package mineskin
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -82,7 +83,7 @@ func TestUnexpectedResponseErrorClassification(t *testing.T) {
 			header: hdr("server", "cloudflare", "cf-ray", "8f3a1b2c3d4e5f60-FRA", "content-type", "text/plain"),
 			body:   "error code: 1033", source: SourceCloudflare, cfCode: 1033,
 			cfRay: "8f3a1b2c3d4e5f60-FRA", contentType: "text/plain", snippet: "error code: 1033",
-			message:   "HTTP 530 from Cloudflare (error 1033, ray 8f3a1b2c3d4e5f60-FRA): error code: 1033",
+			message:   "mineskin: HTTP 530 from Cloudflare (error 1033, ray 8f3a1b2c3d4e5f60-FRA): error code: 1033",
 			retryable: true,
 		},
 		{
@@ -90,19 +91,19 @@ func TestUnexpectedResponseErrorClassification(t *testing.T) {
 			header: hdr("server", "cloudflare", "cf-ray", "a4da9b2dbeae3a73-FRA", "content-type", "text/plain; charset=UTF-8"),
 			body:   "error code: 1001", source: SourceCloudflare, cfCode: 1001,
 			cfRay: "a4da9b2dbeae3a73-FRA", contentType: "text/plain; charset=UTF-8", snippet: "error code: 1001",
-			message: "HTTP 409 from Cloudflare (error 1001, ray a4da9b2dbeae3a73-FRA): error code: 1001",
+			message: "mineskin: HTTP 409 from Cloudflare (error 1001, ray a4da9b2dbeae3a73-FRA): error code: 1001",
 		},
 		{
 			name: "cloudflare 521 code comes from status", status: 521, header: http.Header{}, body: "",
 			source: SourceCloudflare, cfCode: 521,
-			message: "HTTP 521 from Cloudflare (error 521): empty response body", retryable: true,
+			message: "mineskin: HTTP 521 from Cloudflare (error 521): empty response body", retryable: true,
 		},
 		{
 			name: "cloudflare generated 502 page uses title", status: 502,
 			header: hdr("server", "cloudflare", "cf-ray", "0123456789abcdef-FRA", "content-type", "text/html; charset=UTF-8"),
 			body:   cloudflare502Page, source: SourceCloudflare, cfCode: 502, cfRay: "0123456789abcdef-FRA",
 			contentType: "text/html; charset=UTF-8", snippet: "example.com | 502: Bad gateway",
-			message:   "HTTP 502 from Cloudflare (error 502, ray 0123456789abcdef-FRA): example.com | 502: Bad gateway",
+			message:   "mineskin: HTTP 502 from Cloudflare (error 502, ray 0123456789abcdef-FRA): example.com | 502: Bad gateway",
 			retryable: true,
 		},
 		{
@@ -110,77 +111,77 @@ func TestUnexpectedResponseErrorClassification(t *testing.T) {
 			body:   "<html><body><span>Error code</span> <span>1033</span></body></html>",
 			source: SourceCloudflare, cfCode: 1033, cfRay: "a4da9b2dbeae3a73-FRA", contentType: "text/html",
 			snippet:   "<html><body><span>Error code</span> <span>1033</span></body></html>",
-			message:   "HTTP 530 from Cloudflare (error 1033, ray a4da9b2dbeae3a73-FRA): <html><body><span>Error code</span> <span>1033</span></body></html>",
+			message:   "mineskin: HTTP 530 from Cloudflare (error 1033, ray a4da9b2dbeae3a73-FRA): <html><body><span>Error code</span> <span>1033</span></body></html>",
 			retryable: true,
 		},
 		{
 			name: "cloudflare 528 without code", status: 528, header: http.Header{}, body: "oops",
-			source: SourceCloudflare, snippet: "oops", message: "HTTP 528 from Cloudflare: oops", retryable: true,
+			source: SourceCloudflare, snippet: "oops", message: "mineskin: HTTP 528 from Cloudflare: oops", retryable: true,
 		},
 		{
 			name: "nginx page behind cloudflare", status: 502, header: viaCloudflare(), body: nginx502Page,
 			source: SourceNginx, software: "nginx/1.28.0", cfRay: "a4da9b2dbeae3a73-FRA", contentType: "text/html",
 			snippet:   "502 Bad Gateway",
-			message:   "HTTP 502 from nginx/1.28.0 (ray a4da9b2dbeae3a73-FRA): 502 Bad Gateway",
+			message:   "mineskin: HTTP 502 from nginx/1.28.0 (ray a4da9b2dbeae3a73-FRA): 502 Bad Gateway",
 			retryable: true,
 		},
 		{
 			name: "nginx footer wins over 52x status", status: 521, header: http.Header{}, body: nginx502Page,
 			source: SourceNginx, software: "nginx/1.28.0", snippet: "502 Bad Gateway",
-			message: "HTTP 521 from nginx/1.28.0: 502 Bad Gateway", retryable: true,
+			message: "mineskin: HTTP 521 from nginx/1.28.0: 502 Bad Gateway", retryable: true,
 		},
 		{
 			name: "nginx from server header", status: 504, header: hdr("server", "nginx/1.28.0"), body: "",
 			source: SourceNginx, software: "nginx/1.28.0",
-			message: "HTTP 504 from nginx/1.28.0: empty response body", retryable: true,
+			message: "mineskin: HTTP 504 from nginx/1.28.0: empty response body", retryable: true,
 		},
 		{
 			name: "nginx server header is case-insensitive prefix", status: 502, header: hdr("Server", "NGINX"), body: "x",
-			source: SourceNginx, software: "NGINX", snippet: "x", message: "HTTP 502 from NGINX: x", retryable: true,
+			source: SourceNginx, software: "NGINX", snippet: "x", message: "mineskin: HTTP 502 from NGINX: x", retryable: true,
 		},
 		{
 			name: "origin error through cloudflare is unknown", status: 502, header: viaCloudflare(), body: "Bad Gateway",
 			source: SourceUnknown, cfRay: "a4da9b2dbeae3a73-FRA", contentType: "text/html", snippet: "Bad Gateway",
-			message: "HTTP 502 (ray a4da9b2dbeae3a73-FRA): Bad Gateway", retryable: true,
+			message: "mineskin: HTTP 502 (ray a4da9b2dbeae3a73-FRA): Bad Gateway", retryable: true,
 		},
 		{
 			name: "empty body", status: 502, header: http.Header{}, body: "",
-			source: SourceUnknown, message: "HTTP 502: empty response body", retryable: true,
+			source: SourceUnknown, message: "mineskin: HTTP 502: empty response body", retryable: true,
 		},
 		{
 			name: "cf-ray alone with error code is cloudflare", status: 400, header: hdr("cf-ray", "abc-FRA"),
 			body: "error code: 1020", source: SourceCloudflare, cfCode: 1020, cfRay: "abc-FRA", snippet: "error code: 1020",
-			message: "HTTP 400 from Cloudflare (error 1020, ray abc-FRA): error code: 1020",
+			message: "mineskin: HTTP 400 from Cloudflare (error 1020, ray abc-FRA): error code: 1020",
 		},
 		{
 			name: "error code text without cloudflare headers is unknown", status: 400, header: http.Header{},
 			body: "error code: 1020", source: SourceUnknown, snippet: "error code: 1020",
-			message: "HTTP 400: error code: 1020",
+			message: "mineskin: HTTP 400: error code: 1020",
 		},
 		{
 			name: "html title is case-insensitive and multi-line", status: 500, header: http.Header{},
 			body:   "<HTML><TITLE lang=en>\n  Server \n\t Error </TITLE><body>ignored</body>",
-			source: SourceUnknown, snippet: "Server Error", message: "HTTP 500: Server Error", retryable: true,
+			source: SourceUnknown, snippet: "Server Error", message: "mineskin: HTTP 500: Server Error", retryable: true,
 		},
 		{
 			name: "whitespace only body is empty", status: 500, header: http.Header{}, body: " \n\t ",
-			source: SourceUnknown, message: "HTTP 500: empty response body", retryable: true,
+			source: SourceUnknown, message: "mineskin: HTTP 500: empty response body", retryable: true,
 		},
 		{
 			name: "long body is truncated to 200 plus ellipsis", status: 500, header: http.Header{},
 			body: strings.Repeat("x", 1000), source: SourceUnknown,
-			snippet: strings.Repeat("x", 200) + "...", message: "HTTP 500: " + strings.Repeat("x", 200) + "...",
+			snippet: strings.Repeat("x", 200) + "...", message: "mineskin: HTTP 500: " + strings.Repeat("x", 200) + "...",
 			retryable: true,
 		},
 		{
 			name: "exactly 200 characters is not truncated", status: 500, header: http.Header{},
 			body: strings.Repeat("y", 200), source: SourceUnknown,
-			snippet: strings.Repeat("y", 200), message: "HTTP 500: " + strings.Repeat("y", 200), retryable: true,
+			snippet: strings.Repeat("y", 200), message: "mineskin: HTTP 500: " + strings.Repeat("y", 200), retryable: true,
 		},
 		{
 			name: "truncation counts runes not bytes", status: 500, header: http.Header{},
 			body: strings.Repeat("é", 201), source: SourceUnknown,
-			snippet: strings.Repeat("é", 200) + "...", message: "HTTP 500: " + strings.Repeat("é", 200) + "...",
+			snippet: strings.Repeat("é", 200) + "...", message: "mineskin: HTTP 500: " + strings.Repeat("é", 200) + "...",
 			retryable: true,
 		},
 	}
@@ -211,11 +212,8 @@ func TestUnexpectedResponseErrorClassification(t *testing.T) {
 			if got := e.Error(); got != tc.message {
 				t.Errorf("Error() = %q, want %q", got, tc.message)
 			}
-			if e.IsCloudflare() != (tc.source == SourceCloudflare) {
-				t.Errorf("IsCloudflare() = %v for source %q", e.IsCloudflare(), tc.source)
-			}
-			if e.IsRetryable() != tc.retryable {
-				t.Errorf("IsRetryable() = %v, want %v", e.IsRetryable(), tc.retryable)
+			if got := IsRetryable(e); got != tc.retryable {
+				t.Errorf("IsRetryable() = %v, want %v", got, tc.retryable)
 			}
 		})
 	}
@@ -233,51 +231,50 @@ func TestUnexpectedResponseErrorRetryAfterHTTPDate(t *testing.T) {
 	h := http.Header{}
 	h.Set("Retry-After", testNow.Add(45*time.Second).Format(http.TimeFormat))
 	e := newUnexpectedResponseError(503, h, nil, nil, testNow)
-	if !e.HasRetryAfter || e.RetryAfter != 45*time.Second {
-		t.Errorf("got (%v, %v), want (45s, true)", e.RetryAfter, e.HasRetryAfter)
+	if e.RetryAfter != 45*time.Second {
+		t.Errorf("RetryAfter = %v, want 45s", e.RetryAfter)
 	}
 }
 
 func TestUnexpectedResponseErrorNilBody(t *testing.T) {
 	e := newUnexpectedResponseError(502, nil, nil, nil, testNow)
-	if got, want := e.Error(), "HTTP 502: empty response body"; got != want {
+	if got, want := e.Error(), "mineskin: HTTP 502: empty response body"; got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
 
 func TestUnexpectedResponseErrorRetryAfter(t *testing.T) {
 	tests := []struct {
-		name    string
-		value   string
-		want    time.Duration
-		present bool
+		name  string
+		value string
+		want  time.Duration
 	}{
-		{"seconds", "30", 30 * time.Second, true},
-		{"two minutes", "120", 120 * time.Second, true},
-		{"zero", "0", 0, true},
-		{"surrounding whitespace", " 5 ", 5 * time.Second, true},
+		{"seconds", "30", 30 * time.Second},
+		{"two minutes", "120", 120 * time.Second},
+		{"zero", "0", 0},
+		{"surrounding whitespace", " 5 ", 5 * time.Second},
 		// JB-18 deviation, D13: the HTTP-date form is supported, and a past
-		// date or a negative value is present with a zero delay.
-		{"http date in the past", "Wed, 21 Oct 2026 07:28:00 GMT", 0, true},
-		{"negative", "-1", 0, true},
-		{"fractional", "1.5", 0, false},
-		{"empty", "", 0, false},
-		{"overflow", "99999999999999999999", 0, false},
-		{"too large for duration", "9223372036854775807", 0, false},
+		// date or a negative value gives a zero delay, like an absent header.
+		{"http date in the past", "Wed, 21 Oct 2026 07:28:00 GMT", 0},
+		{"negative", "-1", 0},
+		{"fractional", "1.5", 0},
+		{"empty", "", 0},
+		{"overflow", "99999999999999999999", 0},
+		{"too large for duration", "9223372036854775807", 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h := http.Header{}
 			h.Set("Retry-After", tc.value)
 			e := newUnexpectedResponseError(503, h, []byte("Service Unavailable"), nil, testNow)
-			if e.HasRetryAfter != tc.present || e.RetryAfter != tc.want {
-				t.Errorf("got (%v, %v), want (%v, %v)", e.RetryAfter, e.HasRetryAfter, tc.want, tc.present)
+			if e.RetryAfter != tc.want {
+				t.Errorf("RetryAfter = %v, want %v", e.RetryAfter, tc.want)
 			}
 		})
 	}
 	absent := newUnexpectedResponseError(503, http.Header{}, nil, nil, testNow)
-	if absent.HasRetryAfter || absent.RetryAfter != 0 {
-		t.Errorf("missing header: got (%v, %v)", absent.RetryAfter, absent.HasRetryAfter)
+	if absent.RetryAfter != 0 {
+		t.Errorf("missing header: RetryAfter = %v, want 0", absent.RetryAfter)
 	}
 }
 
@@ -288,7 +285,7 @@ func TestUnexpectedResponseErrorIsRetryable(t *testing.T) {
 	}
 	for status, want := range tests {
 		e := newUnexpectedResponseError(status, http.Header{}, nil, nil, testNow)
-		if got := e.IsRetryable(); got != want {
+		if got := IsRetryable(e); got != want {
 			t.Errorf("status %d: IsRetryable() = %v, want %v", status, got, want)
 		}
 	}
@@ -296,18 +293,15 @@ func TestUnexpectedResponseErrorIsRetryable(t *testing.T) {
 
 func TestUnexpectedResponseErrorIs(t *testing.T) {
 	notFound := newUnexpectedResponseError(404, http.Header{}, []byte("nope"), nil, testNow)
-	if !errors.Is(notFound, ErrClient) || !errors.Is(notFound, ErrNotFound) {
-		t.Error("404 must match ErrClient and ErrNotFound")
+	if !errors.Is(notFound, ErrNotFound) {
+		t.Error("404 must match ErrNotFound")
 	}
 	if errors.Is(notFound, ErrInvalidInput) {
 		t.Error("must not match ErrInvalidInput")
 	}
 	bad := newUnexpectedResponseError(502, http.Header{}, nil, nil, testNow)
-	if !errors.Is(bad, ErrClient) {
-		t.Error("502 must match ErrClient")
-	}
-	if errors.Is(bad, ErrNotFound) {
-		t.Error("502 must not match ErrNotFound")
+	if errors.Is(bad, ErrNotFound) || errors.Is(bad, ErrRateLimited) {
+		t.Error("502 must match neither ErrNotFound nor ErrRateLimited")
 	}
 }
 
@@ -317,11 +311,11 @@ func TestUnexpectedResponseErrorUnwrapAndAs(t *testing.T) {
 	if !errors.Is(e, cause) || !errors.Is(e.Unwrap(), cause) {
 		t.Error("cause must be reachable through Unwrap")
 	}
-	if e.IsRetryable() {
+	if IsRetryable(e) {
 		t.Error("200 must not be retryable")
 	}
 	var target *UnexpectedResponseError
-	wrapped := wrapClientError("outer", e)
+	wrapped := fmt.Errorf("mineskin: outer: %w", e)
 	if !errors.As(wrapped, &target) || target != e {
 		t.Error("errors.As must find the UnexpectedResponseError through a wrapper")
 	}

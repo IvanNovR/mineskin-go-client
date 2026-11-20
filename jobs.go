@@ -12,7 +12,7 @@ const (
 	fieldJobs = "jobs"
 
 	defaultJobFailedCode    = "job_failed"
-	defaultJobFailedMessage = "Job failed"
+	defaultJobFailedMessage = "job failed"
 )
 
 // JobStatus is the state of a queued generation job.
@@ -205,7 +205,7 @@ func (c *Client) ListJobs(ctx context.Context) (*JobListResponse, error) {
 // validateJobID rejects ids that are empty or would collapse the path.
 func validateJobID(id string) error {
 	if id == "" || id == "." || id == ".." {
-		return newInvalidInputError("job id is empty or a dot segment")
+		return invalidInput("job id is empty or a dot segment")
 	}
 	return nil
 }
@@ -220,7 +220,7 @@ func (c *Client) JobSkin(ctx context.Context, r *JobResponse) (*SkinInfo, error)
 		return nil, err
 	}
 	if r == nil {
-		return nil, newInvalidInputError("job response is nil")
+		return nil, invalidInput("job response is nil")
 	}
 	if r.Job.Status == JobStatusFailed {
 		return nil, newJobFailedError(r)

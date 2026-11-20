@@ -60,8 +60,8 @@ func TestSeamClassifiersAgreeWithHandleResponse(t *testing.T) {
 			if got, want := transport.IsRetryableStatus(tt.status), tt.status == 408 || tt.status == 429 || tt.status >= 500 && tt.status != 501 && tt.status != 505; got != want {
 				t.Errorf("IsRetryableStatus = %v, want %v", got, want)
 			}
-			if ue != nil && ue.IsRetryable() != transport.IsRetryableStatus(tt.status) {
-				t.Errorf("UnexpectedResponseError.IsRetryable = %v disagrees with transport", ue.IsRetryable())
+			if ue != nil && IsRetryable(ue) != transport.IsRetryableStatus(tt.status) {
+				t.Errorf("UnexpectedResponseError.IsRetryable = %v disagrees with transport", IsRetryable(ue))
 			}
 		})
 	}
@@ -91,7 +91,7 @@ func TestSeamServerDelayAgreesWithRateLimitDecoding(t *testing.T) {
 func TestSeamMapGroupErr(t *testing.T) {
 	const label = "GET /v2/x"
 	boom := errors.New("boom")
-	sent := &clientError{msg: label, err: boom}
+	build := &transport.BuildError{Err: errors.New("bad url")}
 	last := transport.Response{Status: 429, Header: http.Header{}, Body: []byte(`{"success":false}`)}
 
 	tests := []struct {
@@ -99,12 +99,19 @@ func TestSeamMapGroupErr(t *testing.T) {
 		err   error
 		check func(t *testing.T, got error)
 	}{
-		{"throttle closed", throttle.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed, ErrClient) }},
-		{"tuner closed", ratelimit.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed, ErrClient) }},
-		{"ctx error is wrapped", context.Canceled, func(t *testing.T, got error) { mustIs(t, got, context.Canceled, ErrClient) }},
-		{"send error passes through", sent, func(t *testing.T, got error) {
-			if got != error(sent) { //nolint:errorlint // identity: no double wrapping
-				t.Errorf("error = %v, want the same *clientError", got)
+		{"throttle closed", throttle.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed) }},
+		{"tuner closed", ratelimit.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed) }},
+		{"ctx error is wrapped", context.Canceled, func(t *testing.T, got error) { mustIs(t, got, context.Canceled) }},
+		{"send error is wrapped once with the label", boom, func(t *testing.T, got error) {
+			mustIs(t, got, boom)
+			if want := "mineskin: GET /v2/x: boom"; got.Error() != want {
+				t.Errorf("error = %q, want %q", got, want)
+			}
+		}},
+		{"unbuildable request is invalid input", build, func(t *testing.T, got error) {
+			mustIs(t, got, ErrInvalidInput, build.Err)
+			if strings.Count(got.Error(), "mineskin:") != 1 {
+				t.Errorf("error = %q, want one prefix", got)
 			}
 		}},
 		{"gate skip passes through", ratelimit.ErrSkipped, func(t *testing.T, got error) {
@@ -113,7 +120,7 @@ func TestSeamMapGroupErr(t *testing.T) {
 			}
 		}},
 		{"retry cancelled keeps ctx error and the 429", &ratelimit.RetryCancelledError{Err: context.Canceled, Last: last}, func(t *testing.T, got error) {
-			mustIs(t, got, context.Canceled, ErrClient)
+			mustIs(t, got, context.Canceled)
 			var apiErr *APIError
 			if !errors.As(got, &apiErr) {
 				t.Errorf("error = %v, want *APIError in the chain", got)
@@ -124,7 +131,7 @@ func TestSeamMapGroupErr(t *testing.T) {
 			if errors.As(got, &rc) {
 				t.Errorf("error = %v, want no retryCancelledError", got)
 			}
-			mustIs(t, got, context.Canceled, ErrClient)
+			mustIs(t, got, context.Canceled)
 		}},
 	}
 	for _, tt := range tests {
@@ -247,10 +254,10 @@ func TestSeamMapPollErr(t *testing.T) {
 		is   []error
 		text string
 	}{
-		{"exhausted", &poll.ExhaustedError{ID: "j1", Attempts: 3}, []error{ErrMaxAttempts, ErrClient}, "job j1 after 3 attempts"},
-		{"zero interval", &poll.IntervalError{Value: 0}, []error{ErrInvalidInput, ErrClient}, "poll interval must be greater than zero"},
+		{"exhausted", &poll.ExhaustedError{ID: "j1", Attempts: 3}, []error{ErrMaxAttempts}, "job j1 after 3 attempts"},
+		{"zero interval", &poll.IntervalError{Value: 0}, []error{ErrInvalidInput}, "poll interval must be greater than zero"},
 		{"negative interval", &poll.IntervalError{Value: -time.Second}, []error{ErrInvalidInput}, ""},
-		{"panicking interval", &poll.IntervalError{Panic: "boom"}, []error{ErrClient}, "poll interval panicked: boom"},
+		{"panicking interval", &poll.IntervalError{Panic: "boom"}, []error{}, "poll interval panicked: boom"},
 		{"closed passes through", ErrClientClosed, []error{ErrClientClosed}, ""},
 		{"other passes through", plain, []error{plain}, "plain"},
 	}

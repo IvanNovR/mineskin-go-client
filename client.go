@@ -73,7 +73,7 @@ type Client struct {
 var _ io.Closer = (*Client)(nil)
 
 // NewClient creates a Client from the given options. Invalid configuration
-// yields an error matching ErrInvalidInput and ErrClient; the error never
+// yields an error matching ErrInvalidInput; the error never
 // contains the API key.
 func NewClient(opts ...Option) (*Client, error) {
 	cfg := &config{
@@ -102,7 +102,7 @@ func NewClient(opts ...Option) (*Client, error) {
 			HTTP: &http.Client{
 				Transport:     r.transport,
 				Timeout:       r.timeout,
-				CheckRedirect: checkRedirect,
+				CheckRedirect: transport.CheckRedirect,
 			},
 			Clock:  r.clock,
 			Logger: r.logger,
@@ -159,10 +159,10 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 		return nil, err
 	}
 	if cfg.rateLimitRetries < 0 {
-		return nil, newInvalidInputError("rate limit retries must not be negative")
+		return nil, invalidInput("rate limit retries must not be negative")
 	}
 	if cfg.timeout <= 0 {
-		return nil, newInvalidInputError("timeout must be greater than zero")
+		return nil, invalidInput("timeout must be greater than zero")
 	}
 	polling, err := cfg.polling.withDefaults()
 	if err != nil {
@@ -205,7 +205,7 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 // combined with an explicit generate throttle.
 func (cfg *config) resolveThrottles() (gen, get Throttle, err error) {
 	if cfg.autoTuning && cfg.generateThrottleSet {
-		return gen, get, newInvalidInputError("auto-tuning and a generate throttle are mutually exclusive")
+		return gen, get, invalidInput("auto-tuning and a generate throttle are mutually exclusive")
 	}
 	gen, err = cfg.generateThrottle.withDefaults(
 		Throttle{Interval: DefaultGenerateInterval, Concurrency: DefaultGenerateConcurrency}, "generate")
@@ -221,19 +221,19 @@ func (cfg *config) resolveThrottles() (gen, get Throttle, err error) {
 func normalizeBaseURL(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", newInvalidInputError("base URL is not a valid URL")
+		return "", invalidInput("base URL is not a valid URL")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", newInvalidInputError("base URL scheme must be http or https")
+		return "", invalidInput("base URL scheme must be http or https")
 	}
 	if u.User != nil {
-		return "", newInvalidInputError("base URL must not contain credentials")
+		return "", invalidInput("base URL must not contain credentials")
 	}
 	if u.Host == "" {
-		return "", newInvalidInputError("base URL must include a host")
+		return "", invalidInput("base URL must include a host")
 	}
 	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
-		return "", newInvalidInputError("base URL must not contain a query or fragment")
+		return "", invalidInput("base URL must not contain a query or fragment")
 	}
 	return strings.TrimRight(raw, "/"), nil
 }
@@ -262,10 +262,10 @@ func logConfig(l *slog.Logger, baseURL, userAgent, apiKey string) {
 // characters, which could inject headers. The messages never echo the values.
 func validateHeaderValues(userAgent, apiKey string) error {
 	if transport.HasControlChar(userAgent) {
-		return newInvalidInputError("User-Agent must not contain control characters")
+		return invalidInput("User-Agent must not contain control characters")
 	}
 	if transport.HasControlChar(apiKey) {
-		return newInvalidInputError("API key must not contain control characters")
+		return invalidInput("API key must not contain control characters")
 	}
 	return nil
 }
@@ -283,13 +283,4 @@ func sendsKeyOverPlainHTTP(baseURL string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip == nil || !ip.IsLoopback()
-}
-
-// checkRedirect applies the transport's redirect policy and marks its refusals
-// as client errors.
-func checkRedirect(req *http.Request, via []*http.Request) error {
-	if err := transport.CheckRedirect(req, via); err != nil {
-		return wrapClientError("redirect", err)
-	}
-	return nil
 }

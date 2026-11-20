@@ -2,7 +2,6 @@ package mineskin
 
 import (
 	"encoding/hex"
-	"fmt"
 )
 
 const (
@@ -15,20 +14,25 @@ const (
 // uuidDashPositions are the indexes of the dashes in the canonical form.
 var uuidDashPositions = [...]int{8, 13, 18, 23}
 
-// UUID is a 128-bit MineSkin skin identifier (not a player UUID).
+// UUID is a 128-bit UUID. MineSkin uses it both as the identifier of a skin
+// and as the UUID of a Minecraft player (see FromUser).
 type UUID [16]byte
+
+// IsZero reports whether u is the zero UUID, which is also what ParseUUID
+// returns together with an error.
+func (u UUID) IsZero() bool { return u == UUID{} }
 
 // ParseUUID parses a UUID in dashed (8-4-4-4-12) or undashed (32 hex digits)
 // form. Hex digits may be upper or lower case. A failure matches
-// ErrInvalidInput and ErrClient; the error never contains the input.
+// ErrInvalidInput; the error never contains the input.
 func ParseUUID(s string) (UUID, error) {
 	var u UUID
 	hexDigits, ok := uuidHexDigits(s)
 	if !ok {
-		return u, newInvalidInputError(fmt.Sprintf("invalid UUID: unrecognised format (length %d)", len(s)))
+		return u, invalidInput("invalid UUID: unrecognised format (length %d)", len(s))
 	}
 	if _, err := hex.Decode(u[:], []byte(hexDigits)); err != nil {
-		return UUID{}, newInvalidInputError("invalid UUID: contains a non-hexadecimal character")
+		return UUID{}, invalidInput("invalid UUID: contains a non-hexadecimal character")
 	}
 	return u, nil
 }

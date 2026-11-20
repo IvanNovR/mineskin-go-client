@@ -23,8 +23,6 @@ func TestAPIErrorIs(t *testing.T) {
 		target error
 		want   bool
 	}{
-		{"client 500", 500, ErrClient, true},
-		{"client 404", 404, ErrClient, true},
 		{"not found 404", 404, ErrNotFound, true},
 		{"not found 400", 400, ErrNotFound, false},
 		{"not found 500", 500, ErrNotFound, false},
@@ -48,57 +46,26 @@ func TestAPIErrorAsThroughWrapper(t *testing.T) {
 	if !errors.As(wrapped, &got) || got != orig {
 		t.Fatalf("errors.As did not recover the APIError")
 	}
-	if !errors.Is(wrapped, ErrClient) {
-		t.Fatalf("wrapped APIError should match ErrClient")
-	}
 }
 
-func TestClientErrorValidation(t *testing.T) {
-	err := newInvalidInputError("id must not be empty")
-	if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-		t.Fatalf("validation error must match ErrInvalidInput and ErrClient")
+func TestInvalidInputError(t *testing.T) {
+	err := invalidInput("id %q must not be empty", "x")
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("validation error must match ErrInvalidInput")
 	}
 	if errors.Is(err, ErrNotFound) {
 		t.Fatalf("validation error must not match ErrNotFound")
 	}
-	if got := err.Error(); got != "mineskin: id must not be empty" {
-		t.Fatalf("Error() = %q", got)
-	}
-	var ce *clientError
-	if !errors.As(err, &ce) || ce.Unwrap() != nil {
-		t.Fatalf("expected *clientError without cause")
-	}
-}
-
-func TestClientErrorWrapsCause(t *testing.T) {
-	err := wrapClientError("request failed", context.DeadlineExceeded)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("must match context.DeadlineExceeded")
-	}
-	if !errors.Is(err, ErrClient) {
-		t.Fatalf("must match ErrClient")
-	}
-	if errors.Is(err, ErrInvalidInput) || errors.Is(err, ErrNotFound) {
-		t.Fatalf("transport error must not match ErrInvalidInput or ErrNotFound")
-	}
-	want := "mineskin: request failed: context deadline exceeded"
-	if got := err.Error(); got != want {
+	if got, want := err.Error(), `mineskin: invalid input: id "x" must not be empty`; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
-}
-
-func TestWrapClientErrorNilCause(t *testing.T) {
-	err := wrapClientError("boom", nil)
-	if got := err.Error(); got != "mineskin: boom" {
-		t.Fatalf("Error() = %q", got)
-	}
-	if !errors.Is(err, ErrClient) {
-		t.Fatalf("must match ErrClient")
+	if errors.Unwrap(err) != ErrInvalidInput { //nolint:errorlint // identity: a plain %w wrap
+		t.Fatalf("Unwrap() = %v, want ErrInvalidInput", errors.Unwrap(err))
 	}
 }
 
 func TestSentinelMessagesDoNotLeak(t *testing.T) {
-	for _, e := range []error{ErrClient, ErrInvalidInput, ErrNotFound} {
+	for _, e := range []error{ErrInvalidInput, ErrNotFound} {
 		if !strings.HasPrefix(e.Error(), "mineskin: ") {
 			t.Fatalf("sentinel %q lacks package prefix", e)
 		}
@@ -111,4 +78,23 @@ func TestResponseMetaZeroValue(t *testing.T) {
 		t.Fatalf("zero ResponseMeta should be empty: %+v", m)
 	}
 	_ = CodeAndMessage{Code: "c", Message: "m"}
+}
+
+// TestSentinelsArePlainErrors pins that the sentinels are plain errors.New
+// values with no umbrella matching: no custom Is method, no shared target.
+func TestSentinelsArePlainErrors(t *testing.T) {
+	for name, s := range map[string]error{
+		"ErrMaxAttempts": ErrMaxAttempts, "ErrJobNotCompleted": ErrJobNotCompleted, "ErrClientClosed": ErrClientClosed,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, ok := s.(interface{ Is(error) bool }); ok {
+				t.Errorf("%T has an Is method, want a plain errors.New value", s)
+			}
+		})
+	}
+	for _, e := range []error{&APIError{ResponseMeta: ResponseMeta{Status: 500}}, &JobFailedError{}} {
+		if errors.Is(e, ErrInvalidInput) || errors.Is(e, ErrNotFound) {
+			t.Errorf("%T matches an unrelated sentinel", e)
+		}
+	}
 }

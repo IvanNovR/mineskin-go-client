@@ -27,8 +27,8 @@ func TestThrottleWithDefaults(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := tt.in.withDefaults(def, "generate")
 			if tt.wantErr {
-				if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-					t.Fatalf("err = %v, want ErrInvalidInput and ErrClient", err)
+				if !errors.Is(err, ErrInvalidInput) {
+					t.Fatalf("err = %v, want ErrInvalidInput", err)
 				}
 				return
 			}
@@ -116,8 +116,8 @@ func TestNewClientRejectsNegativeThrottle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := NewClient(WithUserAgent("test/1.0"), tt.opt)
-			if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-				t.Fatalf("NewClient() err = %v, want ErrInvalidInput and ErrClient", err)
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("NewClient() err = %v, want ErrInvalidInput", err)
 			}
 		})
 	}
@@ -136,8 +136,8 @@ func TestNewClientRejectsAutoTuningWithGenerateThrottle(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := NewClient(append([]Option{WithUserAgent("test/1.0")}, tt.opts...)...)
-			if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-				t.Fatalf("NewClient() err = %v, want ErrInvalidInput and ErrClient", err)
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("NewClient() err = %v, want ErrInvalidInput", err)
 			}
 		})
 	}

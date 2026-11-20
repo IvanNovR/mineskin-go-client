@@ -41,6 +41,8 @@ type contractCase struct {
 	is []error
 	// isNot lists the targets errors.Is must not match.
 	isNot []error
+	// retryable is the expected IsRetryable(err) result.
+	retryable bool
 	// check runs extra errors.As assertions.
 	check func(t *testing.T, err error)
 }
@@ -62,6 +64,9 @@ func TestContractPublicErrors(t *testing.T) {
 					t.Errorf("errors.Is(%v, %v) = true, want false", err, target)
 				}
 			}
+			if got := IsRetryable(err); got != tt.retryable {
+				t.Errorf("IsRetryable(%v) = %v, want %v", err, got, tt.retryable)
+			}
 			if tt.check != nil {
 				tt.check(t, err)
 			}
@@ -71,7 +76,7 @@ func TestContractPublicErrors(t *testing.T) {
 
 func contractCases() []contractCase {
 	cases := []contractCase{
-		apiNotFoundCase(), htmlBadGatewayCase(), transportErrorCase(),
+		apiNotFoundCase(), apiRateLimitedCase(), htmlRateLimitedCase(), htmlBadGatewayCase(), transportErrorCase(),
 		ctxCancelledQueuedCase(), ctxCancelledDuring429RetryCase(),
 		closeQueuedCase(), closeInFlightCase(), closeWaitingCase(),
 		maxAttemptsCase(), jobFailedCase(),
@@ -88,18 +93,45 @@ func apiNotFoundCase() contractCase {
 			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
 			return err
 		},
-		is:    []error{ErrNotFound, ErrClient},
+		is:    []error{ErrNotFound},
 		isNot: []error{ErrInvalidInput, ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			var apiErr *APIError
 			if !errors.As(err, &apiErr) {
 				t.Fatalf("errors.As(%v, *APIError) = false", err)
 			}
-			if apiErr.Status != http.StatusNotFound || apiErr.Code != "not_found" || apiErr.IsRetryable() {
-				t.Errorf("APIError = %+v, retryable %v", apiErr, apiErr.IsRetryable())
+			if apiErr.Status != http.StatusNotFound || apiErr.Code != "not_found" || IsRetryable(err) {
+				t.Errorf("APIError = %+v, retryable %v", apiErr, IsRetryable(err))
 			}
 		},
 	}
+}
+
+func rateLimitedCase(name, contentType, body string) contractCase {
+	return contractCase{
+		name: name,
+		run: func(t *testing.T) error {
+			srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", contentType)
+				w.WriteHeader(http.StatusTooManyRequests)
+				_, _ = io.WriteString(w, body)
+			})
+			c := newTestClient(t, srv.URL, WithRateLimitRetries(0))
+			_, err := c.GetUser(context.Background())
+			return err
+		},
+		is:        []error{ErrRateLimited},
+		isNot:     []error{ErrNotFound, ErrInvalidInput, ErrClientClosed},
+		retryable: true,
+	}
+}
+
+func apiRateLimitedCase() contractCase {
+	return rateLimitedCase("API 429", "application/json", `{"success":false,"errors":[{"code":"rate_limit","message":"slow down"}]}`)
+}
+
+func htmlRateLimitedCase() contractCase {
+	return rateLimitedCase("HTML 429", "text/html", "<html><body>Too Many Requests</body></html>")
 }
 
 func htmlBadGatewayCase() contractCase {
@@ -114,14 +146,15 @@ func htmlBadGatewayCase() contractCase {
 			_, err := newTestClient(t, srv.URL).GetUser(context.Background())
 			return err
 		},
-		is:    []error{ErrClient},
-		isNot: []error{ErrNotFound, ErrInvalidInput},
+		is:        []error{},
+		isNot:     []error{ErrNotFound, ErrRateLimited, ErrInvalidInput},
+		retryable: true,
 		check: func(t *testing.T, err error) {
 			var ue *UnexpectedResponseError
 			if !errors.As(err, &ue) {
 				t.Fatalf("errors.As(%v, *UnexpectedResponseError) = false", err)
 			}
-			if ue.Status != http.StatusBadGateway || !ue.IsRetryable() || ue.Source != SourceNginx {
+			if ue.Status != http.StatusBadGateway || !IsRetryable(err) || ue.Source != SourceNginx {
 				t.Errorf("UnexpectedResponseError = %+v", ue)
 			}
 			var apiErr *APIError
@@ -140,12 +173,16 @@ func transportErrorCase() contractCase {
 			_, err := newTestClient(t, "http://127.0.0.1:1", WithTransport(rt)).GetUser(context.Background())
 			return err
 		},
-		is:    []error{ErrClient},
-		isNot: []error{ErrNotFound, ErrInvalidInput, ErrClientClosed},
+		is:        []error{},
+		isNot:     []error{ErrNotFound, ErrInvalidInput, ErrClientClosed},
+		retryable: true,
 		check: func(t *testing.T, err error) {
 			var ne net.Error
 			if !errors.As(err, &ne) || !ne.Timeout() {
 				t.Errorf("errors.As(%v, net.Error) timeout = false, want a timeout", err)
+			}
+			if !IsRetryable(err) {
+				t.Errorf("IsRetryable(%v) = false, want true for a network timeout", err)
 			}
 			if strings.Contains(err.Error(), "test/1.0") {
 				t.Errorf("error text %q leaks request data", err)
@@ -172,7 +209,7 @@ func ctxCancelledQueuedCase() contractCase {
 			}
 			return err
 		},
-		is:    []error{context.Canceled, ErrClient},
+		is:    []error{context.Canceled},
 		isNot: []error{ErrClientClosed, context.DeadlineExceeded},
 	}
 }
@@ -204,7 +241,7 @@ func ctxCancelledDuring429RetryCase() contractCase {
 			}
 			return err
 		},
-		is:    []error{context.Canceled, ErrClient},
+		is:    []error{context.Canceled},
 		isNot: []error{ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			var apiErr *APIError
@@ -229,7 +266,7 @@ func closeQueuedCase() contractCase {
 			_ = mustDone(t, "held", held)
 			return mustDone(t, "queued", queued)
 		},
-		is:    []error{ErrClientClosed, ErrClient},
+		is:    []error{ErrClientClosed},
 		isNot: []error{context.Canceled},
 	}
 }
@@ -249,7 +286,7 @@ func closeInFlightCase() contractCase {
 			_ = c.Close()
 			return mustDone(t, "GetUser", res)
 		},
-		is:    []error{ErrClientClosed, ErrClient},
+		is:    []error{ErrClientClosed},
 		isNot: []error{context.Canceled},
 	}
 }
@@ -268,7 +305,7 @@ func closeWaitingCase() contractCase {
 			_ = c.Close()
 			return mustDone(t, "WaitForJob", res)
 		},
-		is:    []error{ErrClientClosed, ErrClient},
+		is:    []error{ErrClientClosed},
 		isNot: []error{context.Canceled},
 	}
 }
@@ -292,7 +329,7 @@ func maxAttemptsCase() contractCase {
 		run: func(t *testing.T) error {
 			return waitFor(t, jobJSON("j1", "waiting"), pollOnce(2, func(int) time.Duration { return time.Millisecond }))
 		},
-		is:    []error{ErrMaxAttempts, ErrClient},
+		is:    []error{ErrMaxAttempts},
 		isNot: []error{ErrInvalidInput, ErrClientClosed},
 	}
 }
@@ -304,7 +341,7 @@ func jobFailedCase() contractCase {
 			body := `{"success":true,"job":{"id":"j1","status":"failed"},"errors":[{"code":"bad_image","message":"nope"}]}`
 			return waitFor(t, body, pollOnce(5, func(int) time.Duration { return time.Millisecond }))
 		},
-		is:    []error{ErrClient},
+		is:    []error{},
 		isNot: []error{ErrMaxAttempts, ErrInvalidInput},
 		check: func(t *testing.T, err error) {
 			var jf *JobFailedError
@@ -324,7 +361,7 @@ func pollIntervalZeroCase() contractCase {
 		run: func(t *testing.T) error {
 			return waitFor(t, jobJSON("j1", "waiting"), pollOnce(5, func(int) time.Duration { return 0 }))
 		},
-		is:    []error{ErrInvalidInput, ErrClient},
+		is:    []error{ErrInvalidInput},
 		isNot: []error{ErrMaxAttempts, ErrClientClosed},
 	}
 }
@@ -335,7 +372,7 @@ func pollIntervalPanicCase() contractCase {
 		run: func(t *testing.T) error {
 			return waitFor(t, jobJSON("j1", "waiting"), pollOnce(5, func(int) time.Duration { panic("boom") }))
 		},
-		is:    []error{ErrClient},
+		is:    []error{},
 		isNot: []error{ErrInvalidInput, ErrMaxAttempts, ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			if !strings.Contains(err.Error(), "panicked") || !strings.Contains(err.Error(), "boom") {
@@ -355,7 +392,7 @@ func newClientValidationCase() contractCase {
 			}
 			return err
 		},
-		is:    []error{ErrInvalidInput, ErrClient},
+		is:    []error{ErrInvalidInput},
 		isNot: []error{ErrNotFound, ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			if strings.Contains(err.Error(), "msk_secret_value") {

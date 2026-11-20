@@ -36,8 +36,8 @@ const (
 // UnexpectedResponseError is returned when the API answers with something
 // that is not a MineSkin JSON object, such as a Cloudflare error page, an
 // nginx 502 page, an empty proxy error or truncated JSON. It matches
-// ErrClient with errors.Is, and ErrNotFound when the HTTP status is 404. Use
-// errors.As to obtain it.
+// ErrNotFound with errors.Is when the HTTP status is 404. Use errors.As to
+// obtain it.
 type UnexpectedResponseError struct {
 	// Status is the HTTP status code.
 	Status int
@@ -58,14 +58,11 @@ type UnexpectedResponseError struct {
 	// for a 530 wrapping it. Zero means unknown.
 	CloudflareCode int
 	// RetryAfter is the Retry-After delay, from either the delta-seconds or the
-	// HTTP-date form (RFC 9110). A past date or a negative value gives 0. It is
-	// meaningful only when HasRetryAfter is true.
+	// HTTP-date form (RFC 9110). Zero means none: the header was absent or
+	// invalid, or it asked for no wait (a past date or a negative value).
 	RetryAfter time.Duration
-	// HasRetryAfter reports whether a valid Retry-After was present, including
-	// one that resolved to a zero delay.
-	HasRetryAfter bool
-	// Err is the underlying cause, for example a JSON parse error, or nil.
-	Err error
+	// cause is the underlying error, for example a JSON parse error, or nil.
+	cause error
 }
 
 // newUnexpectedResponseError builds the error from the response status,
@@ -82,7 +79,7 @@ func newUnexpectedResponseError(status int, h http.Header, body []byte, cause er
 	// response passed through Cloudflare, not that Cloudflare generated it.
 	viaCloudflare := cfRay != "" || strings.EqualFold(server, serverCloudflare)
 	o := transport.DetectOrigin(status, server, viaCloudflare, text)
-	retryAfter, hasRetryAfter := transport.ParseRetryAfter(h.Get(transport.HeaderRetryAfter), now)
+	retryAfter, _ := transport.ParseRetryAfter(h.Get(transport.HeaderRetryAfter), now)
 	return &UnexpectedResponseError{
 		Status:         status,
 		ContentType:    h.Get(headerContentType),
@@ -92,16 +89,15 @@ func newUnexpectedResponseError(status int, h http.Header, body []byte, cause er
 		CFRay:          cfRay,
 		CloudflareCode: o.CloudflareCode,
 		RetryAfter:     retryAfter,
-		HasRetryAfter:  hasRetryAfter,
-		Err:            cause,
+		cause:          cause,
 	}
 }
 
 // Error implements the error interface. The format is
-// "HTTP <status>[ from Cloudflare| from <server>][ (error <code>, ray <ray>)]: <snippet>".
+// "mineskin: HTTP <status>[ from Cloudflare| from <server>][ (error <code>, ray <ray>)]: <snippet>".
 func (e *UnexpectedResponseError) Error() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "HTTP %d", e.Status)
+	fmt.Fprintf(&b, "mineskin: HTTP %d", e.Status)
 	switch e.Source {
 	case SourceCloudflare:
 		b.WriteString(" from Cloudflare")
@@ -127,24 +123,8 @@ func (e *UnexpectedResponseError) Error() string {
 }
 
 // Unwrap returns the underlying cause, if any.
-func (e *UnexpectedResponseError) Unwrap() error { return e.Err }
+func (e *UnexpectedResponseError) Unwrap() error { return e.cause }
 
-// Is reports whether target is ErrClient, or ErrNotFound for an HTTP 404.
-func (e *UnexpectedResponseError) Is(target error) bool {
-	switch target {
-	case ErrClient:
-		return true
-	case ErrNotFound:
-		return e.Status == http.StatusNotFound
-	default:
-		return false
-	}
-}
-
-// IsRetryable reports whether the error is likely temporary: status 408, 429,
-// or 500 and above except 501 and 505.
-func (e *UnexpectedResponseError) IsRetryable() bool { return transport.IsRetryableStatus(e.Status) }
-
-// IsCloudflare reports whether Cloudflare itself generated the error. An
-// origin error that merely passed through Cloudflare returns false; see CFRay.
-func (e *UnexpectedResponseError) IsCloudflare() bool { return e.Source == SourceCloudflare }
+// Is reports whether target is the sentinel of the HTTP status: ErrNotFound
+// for 404 and ErrRateLimited for 429.
+func (e *UnexpectedResponseError) Is(target error) bool { return matchesStatus(e.Status, target) }

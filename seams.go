@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
@@ -81,7 +82,7 @@ func (c *Client) loadGrants(ctx context.Context) (ratelimit.Grants, error) {
 // errCheckSkipped is returned.
 func (c *Client) exchange(ctx context.Context, g *ratelimit.Group, method, path string, body *transport.Body, proceed func() bool) (transport.Response, error) {
 	if ctx == nil {
-		return transport.Response{}, newInvalidInputError("context is nil")
+		return transport.Response{}, invalidInput("context is nil")
 	}
 	label := method + " " + path
 	merged, cancel := c.requestContext(ctx)
@@ -95,28 +96,30 @@ func (c *Client) exchange(ctx context.Context, g *ratelimit.Group, method, path 
 }
 
 // mapGroupErr turns a raw error of ratelimit.Group.Do into a public one: a
-// closed throttle or tuner is ErrClientClosed, errors already built by c.do
-// pass through, and anything else (a ctx error of the queue or of the grants
-// load) is wrapped as a client error that keeps the cause in its chain.
+// closed throttle or tuner is ErrClientClosed, an unbuildable request is
+// ErrInvalidInput, and anything else (a ctx error of the queue, a transport or
+// read failure) is wrapped with the label and keeps the cause in its chain.
 func mapGroupErr(label string, err error) error {
 	var retry *ratelimit.RetryCancelledError
 	if errors.As(err, &retry) {
 		return newRetryCancelledError(mapGroupErr(label, retry.Err), retry.Last)
 	}
-	var ce *clientError
+	var build *transport.BuildError
 	switch {
-	case errors.Is(err, errCheckSkipped), errors.As(err, &ce):
+	case errors.Is(err, errCheckSkipped):
 		return err
 	case errors.Is(err, throttle.ErrClosed), errors.Is(err, ratelimit.ErrClosed):
-		return wrapClientError(label, ErrClientClosed)
+		return closedError(label)
+	case errors.As(err, &build):
+		return fmt.Errorf("%w: %s: %w", ErrInvalidInput, label, build.Err)
 	default:
-		return wrapClientError(label, err)
+		return fmt.Errorf("mineskin: %s: %w", label, err)
 	}
 }
 
 // retryCancelledError is returned when the caller's ctx ends while a retry of
-// a 429 is waiting or in flight. It matches both the ctx error (and so
-// ErrClient, through its wrapping) and the 429 error.
+// a 429 is waiting or in flight. It matches both the ctx error and the 429
+// error.
 type retryCancelledError struct {
 	// ctxErr is the wrapped ctx error of the failed retry attempt.
 	ctxErr error
@@ -137,7 +140,7 @@ func newRetryCancelledError(ctxErr error, last transport.Response) error {
 
 // Error implements the error interface and names both causes.
 func (e *retryCancelledError) Error() string {
-	return e.ctxErr.Error() + " (while retrying after " + e.rateLimited.Error() + ")"
+	return e.ctxErr.Error() + " (while retrying after " + strings.TrimPrefix(e.rateLimited.Error(), errorPrefix) + ")"
 }
 
 // Unwrap lets errors.Is and errors.As reach both causes.
@@ -186,7 +189,7 @@ func toPollOptions(o PollOptions) poll.Options {
 
 // mapPollErr turns the errors of internal/poll into the public contract: an
 // exhausted job is ErrMaxAttempts, a bad interval is ErrInvalidInput and a
-// panicking one an ErrClient error. Other errors (a Fetcher error, the error
+// panicking one a wrapped error. Other errors (a Fetcher error, the error
 // passed to Close) pass through.
 func mapPollErr(err error) error {
 	var exhausted *poll.ExhaustedError
@@ -195,36 +198,29 @@ func mapPollErr(err error) error {
 	case errors.As(err, &exhausted):
 		return fmt.Errorf("%w: job %s after %d attempts", ErrMaxAttempts, exhausted.ID, exhausted.Attempts)
 	case errors.As(err, &interval) && interval.Panic != nil:
-		return wrapClientError("poll interval panicked", fmt.Errorf("%v", interval.Panic))
+		return panickedIntervalError(interval.Panic)
 	case errors.As(err, &interval):
-		return newInvalidInputError("poll interval must be greater than zero")
+		return invalidInput("poll interval must be greater than zero")
 	default:
 		return err
 	}
 }
 
-// do sends a request through the transport and wraps its raw errors. ctx must
-// not be nil; a nil context or an unbuildable request yields an error matching
-// ErrInvalidInput. Transport and read failures match ErrClient and keep the
-// underlying error in the chain, so errors.Is(err, context.Canceled),
-// context.DeadlineExceeded and net.Error timeouts keep working. The error text
-// holds the method and path only, never headers or the API key.
-func (c *Client) do(ctx context.Context, method, path string, body *transport.Body) (transport.Response, error) {
-	resp, err := c.doer.Do(ctx, method, path, body)
-	if err != nil {
-		return transport.Response{}, wrapTransportError(method+" "+path, err)
+// panickedIntervalError reports a recovered poll-interval panic. When the
+// panic value is an error it stays in the chain.
+func panickedIntervalError(r any) error {
+	if err, ok := r.(error); ok {
+		return fmt.Errorf("mineskin: poll interval panicked: %w", err)
 	}
-	return resp, nil
+	return fmt.Errorf("mineskin: poll interval panicked: %v", r)
 }
 
-// wrapTransportError maps a raw transport error to a client error: a request
-// that could not be built is invalid input, anything else a client failure.
-func wrapTransportError(label string, err error) error {
-	var build *transport.BuildError
-	if errors.As(err, &build) {
-		return &clientError{msg: label, err: build.Err, invalidInput: true}
-	}
-	return wrapClientError(label, err)
+// do sends a request through the transport and returns its raw errors: a
+// *transport.BuildError for a nil context or an unbuildable request, otherwise
+// the HTTP client or body read error. mapGroupErr adds the method and path and
+// the public classification. ctx must not be nil.
+func (c *Client) do(ctx context.Context, method, path string, body *transport.Body) (transport.Response, error) {
+	return c.doer.Do(ctx, method, path, body)
 }
 
 // get sends a GET request through the get group (GetSkin, GetUser, GetJob,

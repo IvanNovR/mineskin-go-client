@@ -251,8 +251,8 @@ func TestAutoFirstLoadCallerCancel(t *testing.T) {
 	waitCount(t, srv, keyUser, 1)
 	cancel()
 	err := mustDone(t, "cancelled Queue", first)
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrClient) {
-		t.Errorf("error = %v, want context.Canceled and ErrClient", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %v, want context.Canceled", err)
 	}
 	srv.open(keyUser)
 	if err := queueCall(c)(); err != nil {

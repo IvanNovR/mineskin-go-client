@@ -135,9 +135,8 @@ func TestListJobsDecodes(t *testing.T) {
 	} {
 		t.Run("non-array "+name, func(t *testing.T) {
 			s := newTestServer(t, writeJSON(200, body))
-			if _, err := newTestClient(t, s.URL).ListJobs(context.Background()); !errors.Is(err, ErrClient) {
-				t.Errorf("err = %v, want parse error (ErrClient)", err)
-			}
+			_, err := newTestClient(t, s.URL).ListJobs(context.Background())
+			assertParseError(t, err)
 		})
 	}
 }
@@ -145,7 +144,8 @@ func TestListJobsDecodes(t *testing.T) {
 func TestGetJobMalformedResultIsParseError(t *testing.T) {
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"job":{"id":"j","status":"completed","result":"not-a-uuid"}}`))
 	got, err := newTestClient(t, srv.URL).GetJob(context.Background(), "j")
-	if !errors.Is(err, ErrClient) || got != nil {
-		t.Fatalf("got = %+v, err = %v, want ErrClient parse error", got, err)
+	assertParseError(t, err)
+	if got != nil {
+		t.Fatalf("got = %+v, want nil", got)
 	}
 }

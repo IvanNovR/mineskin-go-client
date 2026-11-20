@@ -48,8 +48,10 @@ type contractCase struct {
 }
 
 func TestContractPublicErrors(t *testing.T) {
+	t.Parallel()
 	for _, tt := range contractCases() {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.run(t)
 			if err == nil {
 				t.Fatal("error = nil, want an error")
@@ -308,11 +310,6 @@ func closeWaitingCase() contractCase {
 		is:    []error{ErrClientClosed},
 		isNot: []error{context.Canceled},
 	}
-}
-
-// pollOnce is a fast polling configuration with the given interval function.
-func pollOnce(attempts int, interval func(int) time.Duration) Option {
-	return WithJobPolling(PollOptions{InitialDelay: time.Millisecond, MaxAttempts: attempts, Interval: PollIntervalFunc(interval)})
 }
 
 func waitFor(t *testing.T, srvBody string, opt Option) error {

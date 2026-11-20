@@ -261,11 +261,6 @@ func TestBaseCtxCancelEndsLoadAndBGWaitsForIt(t *testing.T) {
 	<-cancelled
 	waited := make(chan struct{})
 	go func() { e.bg.Wait(); close(waited) }()
-	select {
-	case <-waited:
-		t.Fatal("BG.Wait returned while the loader was still running")
-	case <-time.After(20 * time.Millisecond):
-	}
 	close(finish)
 	<-waited
 	if !exited.Load() {

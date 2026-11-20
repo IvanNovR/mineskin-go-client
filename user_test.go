@@ -1,13 +1,16 @@
-package mineskin
+package mineskin_test
 
 import (
 	"context"
 	"errors"
 	"net/http"
 	"testing"
+
+	"github.com/IvanNovR/mineskin-go-client"
 )
 
 func TestGetUserWithoutSuccessField(t *testing.T) {
+	t.Parallel()
 	var uri string
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		uri = r.RequestURI
@@ -27,6 +30,7 @@ func TestGetUserWithoutSuccessField(t *testing.T) {
 }
 
 func TestGetUserFullEnvelope(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"user":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","grants":{},
 "warnings":[{"code":"w","message":"warn"}],"messages":[{"code":"m","message":"msg"}]}`))
 	got, err := newTestClient(t, srv.URL).GetUser(context.Background())
@@ -39,8 +43,10 @@ func TestGetUserFullEnvelope(t *testing.T) {
 }
 
 func TestGetUserPerMinuteInvalidIsZero(t *testing.T) {
+	t.Parallel()
 	for name, v := range map[string]string{"zero": "0", "negative": "-5", "string": `"60"`, "float": "1.5", "null": "null", "bool": "true"} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			srv := newTestServer(t, writeJSON(200, `{"user":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","grants":{"per_minute":`+v+`}}`))
 			got, err := newTestClient(t, srv.URL).GetUser(context.Background())
 			if err != nil {
@@ -54,10 +60,12 @@ func TestGetUserPerMinuteInvalidIsZero(t *testing.T) {
 }
 
 func TestGetUserConcurrency(t *testing.T) {
+	t.Parallel()
 	tests := map[string]string{"absent": `{}`, "null": `{"concurrency":null}`, "string": `{"concurrency":"3"}`, "float": `{"concurrency":2.5}`,
 		"zero": `{"concurrency":0}`, "negative": `{"concurrency":-2}`}
 	for name, grants := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			srv := newTestServer(t, writeJSON(200, `{"user":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","grants":`+grants+`}`))
 			got, err := newTestClient(t, srv.URL).GetUser(context.Background())
 			if err != nil || got.User.Grants.Concurrency != 0 {
@@ -68,6 +76,7 @@ func TestGetUserConcurrency(t *testing.T) {
 }
 
 func TestGetUserMissingGrantsIsZero(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{`{"user":"744c993e0e8a4f0b9b6a2f3c7a1b5d11"}`, `{"user":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","grants":null}`} {
 		srv := newTestServer(t, writeJSON(200, body))
 		got, err := newTestClient(t, srv.URL).GetUser(context.Background())
@@ -82,24 +91,27 @@ func TestGetUserMissingGrantsIsZero(t *testing.T) {
 }
 
 func TestGetUserUnauthorizedWithoutUserIsAPIError(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(401, `{"success":false,"errors":[{"code":"invalid_api_key","message":"Invalid API key"}]}`))
 	got, err := newTestClient(t, srv.URL).GetUser(context.Background())
-	var apiErr *APIError
+	var apiErr *mineskin.APIError
 	if got != nil || !errors.As(err, &apiErr) || apiErr.Meta.Status != 401 || apiErr.Code != "invalid_api_key" {
 		t.Fatalf("got=%v err=%T %v", got, err, err)
 	}
 }
 
 func TestGetUser403WithoutSuccessHasEmptyCode(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(403, `{}`))
 	_, err := newTestClient(t, srv.URL).GetUser(context.Background())
-	var apiErr *APIError
+	var apiErr *mineskin.APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != "" || apiErr.Message != "" || apiErr.Meta.Status != 403 {
 		t.Fatalf("err = %T %v", err, err)
 	}
 }
 
 func TestGetUserWrongTypedFieldsAreParseErrors(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"grants string": `{"user":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","grants":"x"}`,
 		"grants array":  `{"user":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","grants":[1]}`,
@@ -107,6 +119,7 @@ func TestGetUserWrongTypedFieldsAreParseErrors(t *testing.T) {
 		"user not uuid": `{"user":"not-a-uuid"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			srv := newTestServer(t, writeJSON(200, body))
 			_, err := newTestClient(t, srv.URL).GetUser(context.Background())
 			assertParseError(t, err)
@@ -115,16 +128,18 @@ func TestGetUserWrongTypedFieldsAreParseErrors(t *testing.T) {
 }
 
 func TestGetUserAbsentOrNullUserIsZeroUUID(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{`{"grants":{}}`, `{"user":null,"grants":{}}`} {
 		srv := newTestServer(t, writeJSON(200, body))
 		got, err := newTestClient(t, srv.URL).GetUser(context.Background())
-		if err != nil || got.User.UUID != (UUID{}) {
+		if err != nil || got.User.UUID != (mineskin.UUID{}) {
 			t.Errorf("body %s: uuid=%v err=%v", body, got, err)
 		}
 	}
 }
 
 func TestGetUserMalformedUUIDIsPlainParseError(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, `{"user":"not-a-uuid"}`))
 	_, err := newTestClient(t, srv.URL).GetUser(context.Background())
 	assertParseError(t, err)
@@ -134,8 +149,10 @@ func TestGetUserMalformedUUIDIsPlainParseError(t *testing.T) {
 }
 
 func TestGetUserPerHourInvalidIsZero(t *testing.T) {
+	t.Parallel()
 	for name, v := range map[string]string{"zero": "0", "negative": "-5", "string": `"60"`, "float": "1.5", "null": "null", "absent": ""} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			grants := `{}`
 			if v != "" {
 				grants = `{"per_hour":` + v + `}`

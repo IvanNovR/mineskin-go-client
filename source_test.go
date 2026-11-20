@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"io"
 	"io/fs"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -25,6 +26,7 @@ func fullOptions() GenerateOptions {
 }
 
 func TestSourceJSONBodies(t *testing.T) {
+	t.Parallel()
 	user := UUID{0xde, 0xad, 0xbe, 0xef, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6}
 	tests := []struct {
 		name string
@@ -42,6 +44,7 @@ func TestSourceJSONBodies(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			body, err := tt.src.requestBody(tt.opts)
 			if err != nil {
 				t.Fatalf("requestBody() error = %v", err)
@@ -69,17 +72,8 @@ func writeTempSkin(t *testing.T, content []byte) string {
 	return path
 }
 
-func testImage() *image.NRGBA {
-	img := image.NewNRGBA(image.Rect(0, 0, 4, 3))
-	for x := 0; x < 4; x++ {
-		for y := 0; y < 3; y++ {
-			img.Set(x, y, color.NRGBA{R: uint8(x * 40), G: uint8(y * 60), B: 7, A: 255})
-		}
-	}
-	return img
-}
-
 func TestSourceMultipart(t *testing.T) {
+	t.Parallel()
 	content := []byte("\x89PNG fake bytes \x00\x01\xff")
 	img := testImage()
 	var imgBuf bytes.Buffer
@@ -145,6 +139,7 @@ type closeSpy struct {
 func (c *closeSpy) Close() error { c.closed = true; return nil }
 
 func TestFromReaderNotClosedReadOnce(t *testing.T) {
+	t.Parallel()
 	spy := &closeSpy{Reader: strings.NewReader("skin-data")}
 	src := FromReader(spy)
 	body, err := src.requestBody(GenerateOptions{})
@@ -168,6 +163,7 @@ func TestFromReaderNotClosedReadOnce(t *testing.T) {
 }
 
 func TestFromFileReadsOnEverySend(t *testing.T) {
+	t.Parallel()
 	content := []byte("file-content")
 	src := FromFile(writeTempSkin(t, content))
 	for i := 0; i < 2; i++ {
@@ -183,6 +179,7 @@ func TestFromFileReadsOnEverySend(t *testing.T) {
 }
 
 func TestFromFileMissing(t *testing.T) {
+	t.Parallel()
 	_, err := FromFile(filepath.Join(t.TempDir(), "missing.png")).requestBody(GenerateOptions{})
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("error = %v, want fs.ErrNotExist", err)
@@ -194,6 +191,7 @@ func TestFromFileMissing(t *testing.T) {
 }
 
 func TestFromImageEncodesPNG(t *testing.T) {
+	t.Parallel()
 	img := testImage()
 	body, err := FromImage(img).requestBody(GenerateOptions{})
 	if err != nil {
@@ -221,6 +219,7 @@ type errReader struct{ err error }
 func (e errReader) Read([]byte) (int, error) { return 0, e.err }
 
 func TestFromReaderError(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("disk on fire")
 	_, err := FromReader(errReader{cause}).requestBody(GenerateOptions{})
 	if !errors.Is(err, cause) {
@@ -233,6 +232,7 @@ func TestFromReaderError(t *testing.T) {
 }
 
 func TestSourceInvalid(t *testing.T) {
+	t.Parallel()
 	invalid := map[string]Source{
 		"nil reader":    FromReader(nil),
 		"nil image":     FromImage(nil),
@@ -245,6 +245,7 @@ func TestSourceInvalid(t *testing.T) {
 	}
 	for name, src := range invalid {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if _, err := src.requestBody(GenerateOptions{}); !errors.Is(err, ErrInvalidInput) {
 				t.Errorf("error = %v, want ErrInvalidInput", err)
 			}
@@ -253,4 +254,77 @@ func TestSourceInvalid(t *testing.T) {
 	if _, err := FromURL("https://example.com/a.png").requestBody(GenerateOptions{}); err != nil {
 		t.Errorf("valid URL error = %v", err)
 	}
+}
+
+// endlessReader never returns EOF.
+type endlessReader struct{ read int64 }
+
+func (r *endlessReader) Read(p []byte) (int, error) {
+	r.read += int64(len(p))
+	return len(p), nil
+}
+
+func assertUploadTooLarge(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("error = %v, want ErrInvalidInput", err)
+	}
+	if !strings.Contains(err.Error(), "1 MiB") {
+		t.Errorf("error %q does not mention the 1 MiB limit", err)
+	}
+}
+
+func TestFromReaderUploadLimit(t *testing.T) {
+	t.Parallel()
+	t.Run("exactly the limit passes", func(t *testing.T) {
+		t.Parallel()
+		body, err := FromReader(bytes.NewReader(make([]byte, maxUploadBytes))).requestBody(GenerateOptions{})
+		if err != nil {
+			t.Fatalf("requestBody() error = %v", err)
+		}
+		if got := parseMultipart(t, body)[0].data; len(got) != maxUploadBytes {
+			t.Errorf("uploaded %d bytes, want %d", len(got), maxUploadBytes)
+		}
+	})
+	t.Run("one byte over fails", func(t *testing.T) {
+		t.Parallel()
+		_, err := FromReader(bytes.NewReader(make([]byte, maxUploadBytes+1))).requestBody(GenerateOptions{})
+		assertUploadTooLarge(t, err)
+	})
+	t.Run("endless reader fails after bounded read", func(t *testing.T) {
+		t.Parallel()
+		r := &endlessReader{}
+		_, err := FromReader(r).requestBody(GenerateOptions{})
+		assertUploadTooLarge(t, err)
+		if r.read > 2*maxUploadBytes {
+			t.Errorf("read %d bytes from the reader, want a bounded read", r.read)
+		}
+	})
+}
+
+func TestFromFileUploadLimit(t *testing.T) {
+	t.Parallel()
+	t.Run("exactly the limit passes", func(t *testing.T) {
+		t.Parallel()
+		body, err := FromFile(writeTempSkin(t, make([]byte, maxUploadBytes))).requestBody(GenerateOptions{})
+		if err != nil {
+			t.Fatalf("requestBody() error = %v", err)
+		}
+		if got := parseMultipart(t, body)[0].data; len(got) != maxUploadBytes {
+			t.Errorf("uploaded %d bytes, want %d", len(got), maxUploadBytes)
+		}
+	})
+	t.Run("one byte over fails", func(t *testing.T) {
+		t.Parallel()
+		_, err := FromFile(writeTempSkin(t, make([]byte, maxUploadBytes+1))).requestBody(GenerateOptions{})
+		assertUploadTooLarge(t, err)
+	})
+}
+
+func TestFromImageUploadLimit(t *testing.T) {
+	t.Parallel()
+	img := image.NewNRGBA(image.Rect(0, 0, 600, 600))
+	rand.New(rand.NewSource(1)).Read(img.Pix) //nolint:gosec // test noise
+	_, err := FromImage(img).requestBody(GenerateOptions{})
+	assertUploadTooLarge(t, err)
 }

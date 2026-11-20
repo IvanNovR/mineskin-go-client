@@ -36,7 +36,8 @@ cover:
 
 check: vet tidy lint cover
 
-# test-live sources .env as shell code (. ./.env): only use a trusted file and
-# quote values that contain spaces.
+# test-live runs the live tests (they consume API credits). The tests read
+# MINESKIN_API_KEY etc. from the environment and, if unset, from a KEY=VALUE
+# .env file that they parse themselves; .env is never run as shell code.
 test-live:
-	@test -f .env || { echo ".env missing (copy .env.example)"; exit 1; }; set -a; . ./.env; set +a; go test -tags live -race -count=1 -run '^TestLive' ./...
+	@go test -tags live -race -count=1 -run '^TestLive' ./...

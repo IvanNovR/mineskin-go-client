@@ -9,6 +9,7 @@ import (
 )
 
 func TestThrottleOrDefault(t *testing.T) {
+	t.Parallel()
 	def := Throttle{Interval: 200 * time.Millisecond, Concurrency: 1}
 	tests := []struct {
 		name string
@@ -24,6 +25,7 @@ func TestThrottleOrDefault(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tt.in.orDefault(def); got != tt.want {
 				t.Errorf("orDefault() = %+v, want %+v", got, tt.want)
 			}
@@ -32,6 +34,7 @@ func TestThrottleOrDefault(t *testing.T) {
 }
 
 func TestThrottleValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		in      Throttle
@@ -43,6 +46,7 @@ func TestThrottleValidate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.in.validate("generate")
 			if tt.wantErr == "" {
 				if err != nil {
@@ -69,6 +73,7 @@ func configWith(opts ...Option) (*config, error) {
 }
 
 func TestNewClientDefaultThrottles(t *testing.T) {
+	t.Parallel()
 	cfg, err := configWith()
 	if err != nil {
 		t.Fatalf("validate() error = %v", err)
@@ -82,6 +87,7 @@ func TestNewClientDefaultThrottles(t *testing.T) {
 }
 
 func TestDefaultConfigValues(t *testing.T) {
+	t.Parallel()
 	cfg := defaultConfig()
 	if cfg.baseURL != DefaultBaseURL || cfg.userAgent != DefaultUserAgent ||
 		cfg.timeout != 10*time.Second || cfg.rateLimitRetries != 2 ||
@@ -95,6 +101,7 @@ func TestDefaultConfigValues(t *testing.T) {
 }
 
 func TestNewClientThrottleOptions(t *testing.T) {
+	t.Parallel()
 	gen := Throttle{Interval: time.Second, Concurrency: 2}
 	get := Throttle{Interval: 10 * time.Millisecond, Concurrency: 9}
 
@@ -124,6 +131,7 @@ func TestNewClientThrottleOptions(t *testing.T) {
 }
 
 func TestNewClientRejectsNegativeThrottle(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		opt  Option
@@ -135,6 +143,7 @@ func TestNewClientRejectsNegativeThrottle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := NewClient(WithUserAgent("test/1.0"), tt.opt)
 			if !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("NewClient() err = %v, want ErrInvalidInput", err)
@@ -144,6 +153,7 @@ func TestNewClientRejectsNegativeThrottle(t *testing.T) {
 }
 
 func TestGeneratePacingLastOptionWins(t *testing.T) {
+	t.Parallel()
 	gen := Throttle{Interval: time.Second, Concurrency: 3}
 	tests := []struct {
 		name string
@@ -157,6 +167,7 @@ func TestGeneratePacingLastOptionWins(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			cfg, err := configWith(tt.opts...)
 			if err != nil {
 				t.Fatalf("validate() error = %v, want no conflict", err)
@@ -177,6 +188,7 @@ func TestGeneratePacingLastOptionWins(t *testing.T) {
 }
 
 func TestNewClientDoesNoIOWithAutoTuning(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		hits.Add(1)

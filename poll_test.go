@@ -8,6 +8,7 @@ import (
 )
 
 func TestConstantInterval(t *testing.T) {
+	t.Parallel()
 	iv := ConstantInterval(300 * time.Millisecond)
 	for _, attempt := range []int{0, 1, 2, 100, 1 << 30} {
 		if got := iv.Wait(attempt); got != 300*time.Millisecond {
@@ -17,6 +18,7 @@ func TestConstantInterval(t *testing.T) {
 }
 
 func TestConstantIntervalRejectedByNewClient(t *testing.T) {
+	t.Parallel()
 	for _, d := range []time.Duration{0, -time.Second} {
 		c, err := NewClient(WithJobPolling(PollOptions{Interval: ConstantInterval(d)}))
 		if c != nil || !errors.Is(err, ErrInvalidInput) ||
@@ -32,6 +34,7 @@ func TestConstantIntervalRejectedByNewClient(t *testing.T) {
 }
 
 func TestPollIntervalFunc(t *testing.T) {
+	t.Parallel()
 	var iv PollInterval = PollIntervalFunc(func(attempt int) time.Duration { return time.Duration(attempt) * time.Second })
 	if got := iv.Wait(3); got != 3*time.Second {
 		t.Errorf("Wait(3) = %v, want 3s", got)
@@ -39,6 +42,7 @@ func TestPollIntervalFunc(t *testing.T) {
 }
 
 func TestBackoff(t *testing.T) {
+	t.Parallel()
 	var iv PollInterval = Backoff{Initial: 200 * time.Millisecond, Max: 2 * time.Second, Multiplier: 2.0, FreeAttempts: 3}
 	tests := []struct {
 		attempt int
@@ -62,6 +66,7 @@ func TestBackoff(t *testing.T) {
 }
 
 func TestBackoffPointerIsAPollInterval(t *testing.T) {
+	t.Parallel()
 	var iv PollInterval = &Backoff{Initial: time.Second, Max: time.Second, Multiplier: 1}
 	if got := iv.Wait(9); got != time.Second {
 		t.Errorf("Wait(9) = %v, want 1s", got)
@@ -69,6 +74,7 @@ func TestBackoffPointerIsAPollInterval(t *testing.T) {
 }
 
 func TestBackoffValidation(t *testing.T) {
+	t.Parallel()
 	const ms = time.Millisecond
 	tests := []struct {
 		name    string
@@ -87,6 +93,7 @@ func TestBackoffValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			c, err := NewClient(WithJobPolling(PollOptions{Interval: tt.b}))
 			want := "mineskin: invalid input: " + tt.wantErr
 			if c != nil || !errors.Is(err, ErrInvalidInput) || err.Error() != want {
@@ -103,6 +110,7 @@ func TestBackoffValidation(t *testing.T) {
 }
 
 func TestWithJobPollingDefaults(t *testing.T) {
+	t.Parallel()
 	custom := PollIntervalFunc(func(int) time.Duration { return 5 * time.Millisecond })
 	tests := []struct {
 		name         string
@@ -118,6 +126,7 @@ func TestWithJobPollingDefaults(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := tt.in.withDefaults()
 			if got.InitialDelay != tt.wantDelay || got.MaxAttempts != tt.wantMax || got.UseETA != tt.wantETA {
 				t.Errorf("got %+v", got)
@@ -133,6 +142,7 @@ func TestWithJobPollingDefaults(t *testing.T) {
 }
 
 func TestWithJobPollingValidation(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		in   PollOptions
@@ -142,6 +152,7 @@ func TestWithJobPollingValidation(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			c, err := NewClient(WithJobPolling(tt.in))
 			if c != nil || !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("got (%v, %v), want nil and ErrInvalidInput", c, err)
@@ -151,6 +162,7 @@ func TestWithJobPollingValidation(t *testing.T) {
 }
 
 func TestPollOptionsValidate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		in      PollOptions
@@ -162,6 +174,7 @@ func TestPollOptionsValidate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.in.validate()
 			if tt.wantErr == "" {
 				if err != nil {
@@ -177,6 +190,7 @@ func TestPollOptionsValidate(t *testing.T) {
 }
 
 func TestNewClientDefaultPolling(t *testing.T) {
+	t.Parallel()
 	c, err := NewClient()
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
@@ -191,6 +205,7 @@ func TestNewClientDefaultPolling(t *testing.T) {
 }
 
 func TestNewClientCustomPolling(t *testing.T) {
+	t.Parallel()
 	c, err := NewClient(WithJobPolling(PollOptions{MaxAttempts: 4, UseETA: true}))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
@@ -201,6 +216,7 @@ func TestNewClientCustomPolling(t *testing.T) {
 }
 
 func TestNilIntervalImplementationsAreInvalidInput(t *testing.T) {
+	t.Parallel()
 	var nilBackoff *Backoff
 	tests := []struct {
 		name string

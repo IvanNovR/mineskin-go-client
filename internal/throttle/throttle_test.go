@@ -63,7 +63,7 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 		if time.Now().After(deadline) {
 			t.Fatalf("timed out waiting for %s", what)
 		}
-		time.Sleep(50 * time.Microsecond)
+		pause()
 	}
 }
 
@@ -632,3 +632,7 @@ func TestEarliestStartIsLaterOfIntervalAndDeadline(t *testing.T) {
 		t.Fatalf("EarliestStart() = %v, want %v after the interval grew", got, want)
 	}
 }
+
+// pause waits one poll tick between two checks of shared state; no assertion
+// depends on its length.
+func pause() { time.Sleep(50 * time.Microsecond) }

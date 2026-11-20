@@ -1,22 +1,13 @@
 package transport
 
 import (
+	"math"
 	"net/http"
-	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
-
-var testNow = time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
-
-func mhdr(kv ...string) http.Header {
-	h := http.Header{}
-	for i := 0; i+1 < len(kv); i += 2 {
-		h.Add(kv[i], kv[i+1])
-	}
-	return h
-}
 
 func TestParseRetryAfter(t *testing.T) {
 	at := testNow.Add(30 * time.Second)
@@ -57,56 +48,6 @@ func TestIsRetryableStatus(t *testing.T) {
 	} {
 		if got := IsRetryableStatus(status); got != want {
 			t.Errorf("IsRetryableStatus(%d) = %v, want %v", status, got, want)
-		}
-	}
-}
-
-func TestFilterHeaders(t *testing.T) {
-	tests := []struct {
-		name string
-		in   http.Header
-		want http.Header
-	}{
-		{"nil", nil, http.Header{}},
-		{"empty", http.Header{}, http.Header{}},
-		{"unrelated dropped", mhdr("Content-Type", "x", "Server", "nginx", "Set-Cookie", "a=b"), http.Header{}},
-		{"canonical name", mhdr("Mineskin-Server", "a"), http.Header{"Mineskin-Server": {"a"}}},
-		{"x prefix", mhdr("X-MineSkin-Id", "1"), http.Header{"X-Mineskin-Id": {"1"}}},
-		{"repeated values kept (JB-08)", http.Header{"Mineskin-Tag": {"a", "b", "c"}}, http.Header{"Mineskin-Tag": {"a", "b", "c"}}},
-		{"non-canonical map keys merged", http.Header{"mineskin-x": {"1"}, "Mineskin-X": {"2"}}, http.Header{"Mineskin-X": {"2", "1"}}},
-		{"prefix must be followed by dash", mhdr("Mineskinfoo", "a", "X-Mineskinfoo", "b"), http.Header{}},
-		{"empty value kept", http.Header{"Mineskin-Empty": {""}}, http.Header{"Mineskin-Empty": {""}}},
-		{"no values", http.Header{"Mineskin-None": nil}, http.Header{"Mineskin-None": nil}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := FilterHeaders(tt.in); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("got %#v, want %#v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestFilterHeadersIsAClone(t *testing.T) {
-	in := http.Header{"Mineskin-Tag": {"a"}}
-	out := FilterHeaders(in)
-	out["Mineskin-Tag"][0] = "changed"
-	out.Add("Mineskin-Tag", "more")
-	if !reflect.DeepEqual(in, http.Header{"Mineskin-Tag": {"a"}}) {
-		t.Errorf("input modified: %v", in)
-	}
-}
-
-func TestTrimBOMAndIsJSONObject(t *testing.T) {
-	if got := string(TrimBOM([]byte("\xef\xbb\xbf{}"))); got != "{}" {
-		t.Errorf("TrimBOM = %q, want {}", got)
-	}
-	if got := string(TrimBOM([]byte("{}"))); got != "{}" {
-		t.Errorf("TrimBOM without BOM = %q", got)
-	}
-	for body, want := range map[string]bool{"{}": true, " \r\n\t\f\v{": true, "": false, "  ": false, "[": false, "x{": false} {
-		if got := IsJSONObject([]byte(body)); got != want {
-			t.Errorf("IsJSONObject(%q) = %v, want %v", body, got, want)
 		}
 	}
 }
@@ -174,4 +115,32 @@ func TestOriginSourceValues(t *testing.T) {
 	if SourceCloudflare != "cloudflare" || SourceNginx != "nginx" || SourceUnknown != "unknown" {
 		t.Error("source values are part of the public ResponseSource contract")
 	}
+}
+
+func FuzzParseRetryAfter(f *testing.F) {
+	for _, seed := range []string{
+		"120", "0", "-3", " 5 ", "", "soon", "1.5", "+5", "99999999999999999999",
+		"9223372036854775807", "9223372036", "9223372037",
+		testNow.Add(30 * time.Second).Format(http.TimeFormat),
+		testNow.Add(-time.Hour).Format(time.RFC850),
+		"Mon, 01 Jan 0001 00:00:00 GMT", "Fri, 31 Dec 9999 23:59:59 GMT",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		d, ok := ParseRetryAfter(value, testNow)
+		if d < 0 {
+			t.Fatalf("ParseRetryAfter(%q) = %v, want never negative", value, d)
+		}
+		if !ok && d != 0 {
+			t.Fatalf("ParseRetryAfter(%q) = (%v, false), want a zero delay when absent", value, d)
+		}
+		// A delta-seconds value must not wrap around the int64 nanosecond range:
+		// the seconds go back out unchanged, or the value is rejected.
+		if sec, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && sec >= 0 && ok {
+			if sec > math.MaxInt64/int64(time.Second) || int64(d/time.Second) != sec {
+				t.Fatalf("ParseRetryAfter(%q) = %v, seconds do not survive (overflow)", value, d)
+			}
+		}
+	})
 }

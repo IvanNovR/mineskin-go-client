@@ -1,12 +1,50 @@
 package poll
 
 import (
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
+
+func TestPoller_SkippedCheckKeepsJobPending(t *testing.T) {
+	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) { return nil, ErrSkipped }}
+	p := newTestPoller(t, f, Options{})
+	w := p.add("a", time.Time{})
+
+	p.tick(pollerT0.Add(time.Second))
+
+	if isFinished(w) {
+		t.Errorf("job finished with %v, want a skipped check to be ignored", w.err)
+	}
+	if pendingCount(p) != 1 {
+		t.Error("job left the pending set")
+	}
+}
+
+func TestPoller_StartGateDeclinesJobThatLeft(t *testing.T) {
+	queued := make(chan struct{})
+	f := &fakeFetcher{slot: &sync.Mutex{}, queued: func() { close(queued) }}
+	f.getFn = func(id string) (*fakeResp, error) { return waiting(id), nil }
+	f.slot.Lock() // the check queues behind this slot
+	p := newTestPoller(t, f, Options{})
+	w := p.add("a", time.Time{})
+	ticked := make(chan struct{})
+	go func() {
+		defer close(ticked)
+		p.tick(pollerT0.Add(time.Second))
+	}()
+	<-queued
+	p.Leave(w) // the only waiter leaves while the check is queued
+	f.slot.Unlock()
+	<-ticked
+
+	if gets, _ := f.counts(); len(gets) != 0 {
+		t.Errorf("Get calls = %v, want none: the gate must see the job gone", gets)
+	}
+}
 
 // barrierGet returns a getFn that blocks until parties calls are inside it at
 // once, then completes each job. completed counts the calls that returned.
@@ -21,7 +59,7 @@ func barrierGet(t *testing.T, parties int32) (fn func(string) (*fakeResp, error)
 		}
 		select {
 		case <-all:
-		case <-time.After(waitTimeout):
+		case <-time.After(waitTimeout(t)):
 			t.Errorf("only %d of %d checks ran at once", arrived.Load(), parties)
 		}
 		done.Add(1)
@@ -30,7 +68,7 @@ func barrierGet(t *testing.T, parties int32) (fn func(string) (*fakeResp, error)
 	return fn, &done
 }
 
-func TestPollerChecksRunInParallel(t *testing.T) {
+func TestPoller_ChecksRunInParallel(t *testing.T) {
 	f := &fakeFetcher{}
 	var nDone *atomic.Int32
 	f.getFn, nDone = barrierGet(t, 4)
@@ -49,7 +87,7 @@ func TestPollerChecksRunInParallel(t *testing.T) {
 	}
 }
 
-func TestPollerListForcedGetsRunInParallel(t *testing.T) {
+func TestPoller_ListForcedGetsRunInParallel(t *testing.T) {
 	f := &fakeFetcher{}
 	var nDone *atomic.Int32
 	f.getFn, nDone = barrierGet(t, 3)
@@ -69,7 +107,7 @@ func TestPollerListForcedGetsRunInParallel(t *testing.T) {
 	}
 }
 
-func TestPollerReschedulesFromCompletion(t *testing.T) {
+func TestPoller_ReschedulesFromCompletion(t *testing.T) {
 	f := &fakeFetcher{}
 	p := newTestPoller(t, f, Options{Interval: func(int) time.Duration { return time.Second }})
 	fake := p.clock.(*clock.Fake)
@@ -95,7 +133,7 @@ func hookCounter(p *Poller[*fakeResp]) *atomic.Int32 {
 	return &n
 }
 
-func TestPollerJobFailureHookOncePerJob(t *testing.T) {
+func TestPoller_JobFailureHookOncePerJob(t *testing.T) {
 	failed := func(id string) (*fakeResp, error) { return failedResp(id), nil }
 	tests := []struct {
 		name string
@@ -131,7 +169,7 @@ func TestPollerJobFailureHookOncePerJob(t *testing.T) {
 	}
 }
 
-func TestPollerJobFailureHookRunsWithoutLock(t *testing.T) {
+func TestPoller_JobFailureHookRunsWithoutLock(t *testing.T) {
 	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) { return failedResp(id), nil }}
 	p := newTestPoller(t, f, Options{})
 	p.onJobFailure = func() {

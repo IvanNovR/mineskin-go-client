@@ -250,9 +250,13 @@ func TestDoPenaltyIsPerResponse(t *testing.T) {
 				r.Header, r.Received = http.Header{}, fake.Now()
 				rs[i] = r
 			}
-			done := make(chan error, 1)
-			go func() { _, err := g.Do(context.Background(), sequence(&sent, rs...), nil); done <- err }()
-			advanceUntil(t, fake, done)
+			err := driveClock(t, fake, 250*time.Millisecond, func() error {
+				_, err := g.Do(context.Background(), sequence(&sent, rs...), nil)
+				return err
+			})
+			if err != nil {
+				t.Fatalf("call error = %v", err)
+			}
 			// the grants load itself kicks once
 			if got := int(kicks.Load()) - 1; got != tt.penalties {
 				t.Errorf("penalties = %d, want %d", got, tt.penalties)

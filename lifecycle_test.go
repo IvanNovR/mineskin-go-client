@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 // closeSpyTransport counts CloseIdleConnections calls.
@@ -22,6 +24,7 @@ func (s *closeSpyTransport) RoundTrip(*http.Request) (*http.Response, error) {
 func (s *closeSpyTransport) CloseIdleConnections() { s.closed.Add(1) }
 
 func TestCloseIsIdempotent(t *testing.T) {
+	t.Parallel()
 	c := newTestClient(t, "http://127.0.0.1:1")
 	for i := range 2 {
 		if err := c.Close(); err != nil {
@@ -31,6 +34,7 @@ func TestCloseIsIdempotent(t *testing.T) {
 }
 
 func TestCallsAfterCloseFailImmediately(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t)
 	c := newTestClient(t, srv.URL)
 	if err := c.Close(); err != nil {
@@ -61,6 +65,7 @@ func TestCallsAfterCloseFailImmediately(t *testing.T) {
 }
 
 func TestCloseFailsQueuedWaiters(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t, keySkin)
 	c := newTestClient(t, srv.URL, WithGetThrottle(oneSlot()))
 	held := goCall(getCalls(c)[keySkin])
@@ -85,6 +90,7 @@ func TestCloseFailsQueuedWaiters(t *testing.T) {
 }
 
 func TestCloseCancelsInFlightRequest(t *testing.T) {
+	t.Parallel()
 	started := make(chan struct{})
 	handlerDone := make(chan struct{})
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -104,12 +110,13 @@ func TestCloseCancelsInFlightRequest(t *testing.T) {
 	}
 	select {
 	case <-handlerDone:
-	case <-time.After(waitTimeout):
+	case <-time.After(waitTimeout(t)):
 		t.Fatal("handler did not see its context cancelled")
 	}
 }
 
 func TestCloseFailsWaitForJob(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t)
 	c := newTestClient(t, srv.URL, WithJobPolling(PollOptions{InitialDelay: time.Hour}))
 	res := goCall(func() error {
@@ -130,18 +137,28 @@ func TestCloseFailsWaitForJob(t *testing.T) {
 }
 
 func TestCloseWaitsForPollerExit(t *testing.T) {
-	before := runtimeGoroutines()
+	t.Parallel()
 	started := make(chan struct{}, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started <- struct{}{}
 		<-r.Context().Done()
 	}))
-	c := newTestClient(t, srv.URL, fastPolling())
+	fake := clock.NewFake(pollerT0)
+	c := newTestClient(t, srv.URL, fastPolling(), withClock(fake))
 	res := goCall(func() error {
 		_, err := c.WaitForJob(context.Background(), Job{ID: "job-1"})
 		return err
 	})
-	<-started // a poll request is in flight
+	// The first poll waits on the fake clock; step it until the request is in flight.
+	eventually(t, "a poll request in flight", func() bool {
+		fake.Advance(time.Millisecond)
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	})
 
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -152,11 +169,15 @@ func TestCloseWaitsForPollerExit(t *testing.T) {
 	if err := mustDone(t, "WaitForJob", res); !errors.Is(err, ErrClientClosed) {
 		t.Errorf("WaitForJob error = %v, want ErrClientClosed", err)
 	}
+	if got := fake.Timers(); got != 0 {
+		t.Errorf("pending fake timers after Close = %d, want 0", got)
+	}
+	// Close blocks until the cancelled in-flight request's handler has returned.
 	srv.Close()
-	waitGoroutinesSettle(t, before)
 }
 
 func TestCloseDoesNotTouchCallerTransport(t *testing.T) {
+	t.Parallel()
 	spy := &closeSpyTransport{}
 	c := newTestClient(t, "http://127.0.0.1:1", WithTransport(spy))
 	if err := c.Close(); err != nil {
@@ -168,6 +189,7 @@ func TestCloseDoesNotTouchCallerTransport(t *testing.T) {
 }
 
 func TestCloseClosesOwnedTransport(t *testing.T) {
+	t.Parallel()
 	c := newTestClient(t, "http://127.0.0.1:1")
 	var calls atomic.Int32
 	c.idleCloser = func() { calls.Add(1) }
@@ -179,6 +201,7 @@ func TestCloseClosesOwnedTransport(t *testing.T) {
 }
 
 func TestOwnedTransportIsNotTheDefault(t *testing.T) {
+	t.Parallel()
 	c := newTestClient(t, "http://127.0.0.1:1")
 	if c.doer.HTTP.Transport == http.DefaultTransport {
 		t.Error("client uses http.DefaultTransport directly, want an owned clone")
@@ -189,6 +212,7 @@ func TestOwnedTransportIsNotTheDefault(t *testing.T) {
 }
 
 func TestCallerCancelVsCloseDistinguished(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t, keyUser)
 	c := newTestClient(t, srv.URL)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -212,6 +236,7 @@ func TestCallerCancelVsCloseDistinguished(t *testing.T) {
 // TestCheckOpenFollowsBaseContext pins that the closed state is derived from
 // the base context: cancelling it is enough, no separate flag exists.
 func TestCheckOpenFollowsBaseContext(t *testing.T) {
+	t.Parallel()
 	c, err := NewClient(WithUserAgent("test/1.0"))
 	if err != nil {
 		t.Fatal(err)
@@ -240,6 +265,7 @@ func mustPanic(t *testing.T, name string, f func()) {
 // TestNilContextPanics pins the documented contract (M4-34): a nil ctx panics,
 // as in the standard library, instead of returning an error.
 func TestNilContextPanics(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t)
 	c := newTestClient(t, srv.URL, fastPolling())
 	var nilCtx context.Context
@@ -252,6 +278,7 @@ func TestNilContextPanics(t *testing.T) {
 // in-flight call fails with ErrClientClosed and no call made afterwards sends
 // a request.
 func TestConcurrentCloseWithCallsInFlight(t *testing.T) {
+	t.Parallel()
 	const inFlight, closers = 4, 8
 	srv := newHitServer(t, keySkin) // the gate is never opened
 	c := newTestClient(t, srv.URL)
@@ -273,7 +300,7 @@ func TestConcurrentCloseWithCallsInFlight(t *testing.T) {
 			if err != nil {
 				t.Errorf("Close() error = %v, want nil", err)
 			}
-		case <-time.After(waitTimeout):
+		case <-time.After(waitTimeout(t)):
 			t.Fatal("a concurrent Close did not return")
 		}
 	}

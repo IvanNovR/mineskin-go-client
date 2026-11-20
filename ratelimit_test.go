@@ -8,6 +8,7 @@ import (
 )
 
 func TestRateLimitUnmarshalJSON(t *testing.T) {
+	t.Parallel()
 	const bigInt = "9223372036854775807"
 	tests := []struct {
 		name string
@@ -51,6 +52,7 @@ func TestRateLimitUnmarshalJSON(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			got := rateLimitField(t, tc.raw)
 			assertRateLimit(t, got, tc.want)
 		})
@@ -75,6 +77,7 @@ func assertWindow(t *testing.T, name string, got, want WindowLimit) {
 }
 
 func TestUsageUnmarshalJSON(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		raw  string
@@ -93,6 +96,7 @@ func TestUsageUnmarshalJSON(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			if got := usageField(t, tc.raw); got != tc.want {
 				t.Errorf("Usage = %+v, want %+v", got, tc.want)
 			}
@@ -134,6 +138,7 @@ func fieldBody(name, raw string) string {
 }
 
 func TestRateLimitLenientDroppedPaths(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		raw  string
@@ -156,6 +161,7 @@ func TestRateLimitLenientDroppedPaths(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, got := parseRateLimit([]byte(tc.raw))
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("dropped = %q, want %q", got, tc.want)
@@ -165,6 +171,7 @@ func TestRateLimitLenientDroppedPaths(t *testing.T) {
 }
 
 func TestUsageLenientDroppedPaths(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		raw  string
@@ -180,6 +187,7 @@ func TestUsageLenientDroppedPaths(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			_, got := parseUsage([]byte(tc.raw))
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Errorf("dropped = %q, want %q", got, tc.want)

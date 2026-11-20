@@ -25,6 +25,7 @@ func okHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 func TestDoSendsHeaders(t *testing.T) {
+	t.Parallel()
 	var got http.Header
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Clone()
@@ -64,6 +65,7 @@ func TestDoSendsHeaders(t *testing.T) {
 }
 
 func TestDoURLIsBasePlusPath(t *testing.T) {
+	t.Parallel()
 	var uri, method string
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		uri, method = r.RequestURI, r.Method
@@ -83,6 +85,7 @@ func TestDoURLIsBasePlusPath(t *testing.T) {
 }
 
 func TestDoInvalidPathIsInvalidInput(t *testing.T) {
+	t.Parallel()
 	c := newTestClient(t, "http://example.invalid")
 	_, err := c.do(context.Background(), http.MethodGet, "/v2/\x7f", nil)
 	var build *transport.BuildError
@@ -96,6 +99,7 @@ func TestDoInvalidPathIsInvalidInput(t *testing.T) {
 }
 
 func TestTimeoutWhileBodyStalls(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1000")
@@ -125,6 +129,7 @@ func TestTimeoutWhileBodyStalls(t *testing.T) {
 }
 
 func TestContextCancelReturnsCanceled(t *testing.T) {
+	t.Parallel()
 	started := make(chan struct{})
 	release := make(chan struct{})
 	srv := newTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
@@ -149,6 +154,7 @@ func TestContextCancelReturnsCanceled(t *testing.T) {
 }
 
 func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
+	t.Parallel()
 	var plainHits atomic.Int32
 	plain := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		plainHits.Add(1)
@@ -171,6 +177,7 @@ func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
 }
 
 func TestRedirectHTTPSToHTTPSIsFollowed(t *testing.T) {
+	t.Parallel()
 	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v2/start" {
 			http.Redirect(w, r, "/v2/final", http.StatusFound)
@@ -191,6 +198,7 @@ func TestRedirectHTTPSToHTTPSIsFollowed(t *testing.T) {
 }
 
 func TestWithTransportInterception(t *testing.T) {
+	t.Parallel()
 	var seenHeader string
 	var seenStatus int
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -216,6 +224,7 @@ func TestWithTransportInterception(t *testing.T) {
 }
 
 func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
+	t.Parallel()
 	var logs bytes.Buffer
 	closed := httptest.NewServer(http.HandlerFunc(okHandler))
 	closedURL := closed.URL
@@ -251,6 +260,7 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 }
 
 func TestDoBodySizeLimit(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		size    int
@@ -261,6 +271,7 @@ func TestDoBodySizeLimit(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			payload := bytes.Repeat([]byte("a"), tt.size)
 			srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write(payload)
@@ -283,6 +294,7 @@ func TestDoBodySizeLimit(t *testing.T) {
 }
 
 func TestDoLogsDebugWithoutSecrets(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Mineskin-Breadcrumb", "crumb123")
 		okHandler(w, r)
@@ -304,6 +316,7 @@ func TestDoLogsDebugWithoutSecrets(t *testing.T) {
 }
 
 func TestGetHappyPath(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Mineskin-Breadcrumb", "bc")
 		_, _ = w.Write([]byte(`{"success":true,"user":"jeb"}`))
@@ -319,6 +332,7 @@ func TestGetHappyPath(t *testing.T) {
 }
 
 func TestGetAPIError(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":"skin_not_found","message":"Skin not found"}]}`))
@@ -335,6 +349,7 @@ func TestGetAPIError(t *testing.T) {
 }
 
 func TestGetPropagatesTransportError(t *testing.T) {
+	t.Parallel()
 	boom := errors.New("boom")
 	c := newTestClient(t, "http://example.invalid", WithTransport(roundTripFunc(
 		func(*http.Request) (*http.Response, error) { return nil, boom })))
@@ -349,6 +364,7 @@ func TestGetPropagatesTransportError(t *testing.T) {
 }
 
 func TestDoConcurrent(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, okHandler)
 	c := newTestClient(t, srv.URL, WithAPIKey(testAPIKey))
 	var wg sync.WaitGroup
@@ -371,6 +387,7 @@ func TestDoConcurrent(t *testing.T) {
 }
 
 func TestDoSendsBody(t *testing.T) {
+	t.Parallel()
 	payload := []byte(`{"url":"https://example.com/a.png"}`)
 	var gotMethod, gotType string
 	var gotLen int64
@@ -397,6 +414,7 @@ func TestDoSendsBody(t *testing.T) {
 }
 
 func TestDoGetHasNoBody(t *testing.T) {
+	t.Parallel()
 	var gotType string
 	var gotBody []byte
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -417,6 +435,7 @@ func TestDoGetHasNoBody(t *testing.T) {
 }
 
 func TestPostHappyPath(t *testing.T) {
+	t.Parallel()
 	var gotBody []byte
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotBody, _ = io.ReadAll(r.Body)
@@ -438,6 +457,7 @@ func TestPostHappyPath(t *testing.T) {
 }
 
 func TestPostAPIError(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":"skin_not_found","message":"Skin not found"}]}`))
@@ -454,6 +474,7 @@ func TestPostAPIError(t *testing.T) {
 }
 
 func TestDoPostRedirect307ReplaysBody(t *testing.T) {
+	t.Parallel()
 	payload := []byte(`{"user":"abc"}`)
 	var finalBody []byte
 	var finalMethod string
@@ -478,6 +499,7 @@ func TestDoPostRedirect307ReplaysBody(t *testing.T) {
 }
 
 func TestDoRecordsReceivedTime(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) })
 	fake := clock.NewFake(testNow)
 	c := newTestClient(t, srv.URL, withClock(fake))

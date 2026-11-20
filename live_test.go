@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"image"
 	"net/http"
 	"os"
 	"strings"
@@ -16,6 +15,13 @@ import (
 	"testing"
 	"time"
 )
+
+// liveEnvFile is the optional KEY=VALUE file next to go.mod (the tests run in
+// the module root). It is parsed here, never executed as shell code; a real
+// environment variable always wins.
+const liveEnvFile = ".env"
+
+func liveEnv(key string) string { return envOrFile(key, liveEnvFile) }
 
 const (
 	// defaultLiveSkinID is the first fixed skin id of the Java client's GetTest
@@ -36,7 +42,7 @@ const (
 // MINESKIN_API_KEY is not set. The key is never logged.
 func liveClient(t *testing.T) *Client {
 	t.Helper()
-	key := os.Getenv("MINESKIN_API_KEY")
+	key := liveEnv("MINESKIN_API_KEY")
 	if strings.TrimSpace(key) == "" {
 		t.Skip("MINESKIN_API_KEY not set")
 	}
@@ -54,7 +60,9 @@ var (
 	genClientErr  error
 )
 
-// TestMain closes the shared generate client after all live tests ran.
+// TestMain closes the shared generate client after all live tests ran. It is
+// live-only: this file carries the live build tag, so plain `go test` never
+// sees it.
 func TestMain(m *testing.M) {
 	code := m.Run()
 	if genClient != nil {
@@ -69,7 +77,7 @@ func TestMain(m *testing.M) {
 // when MINESKIN_API_KEY is not set. The key is never logged.
 func sharedGenClient(t *testing.T) *Client {
 	t.Helper()
-	key := os.Getenv("MINESKIN_API_KEY")
+	key := liveEnv("MINESKIN_API_KEY")
 	if strings.TrimSpace(key) == "" {
 		t.Skip("MINESKIN_API_KEY not set")
 	}
@@ -84,6 +92,15 @@ func sharedGenClient(t *testing.T) *Client {
 	return genClient
 }
 
+// skipIfShort skips the long live tests (real generation, minutes of throttle
+// waits) under -short.
+func skipIfShort(t *testing.T) {
+	t.Helper()
+	if testing.Short() {
+		t.Skip("long live test skipped in -short mode")
+	}
+}
+
 func liveContext(t *testing.T) context.Context {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), liveTimeout)
@@ -93,7 +110,7 @@ func liveContext(t *testing.T) context.Context {
 
 func TestLiveGetSkin(t *testing.T) {
 	c := liveClient(t)
-	id := os.Getenv("MINESKIN_TEST_SKIN_UUID")
+	id := liveEnv("MINESKIN_TEST_SKIN_UUID")
 	isDefault := id == ""
 	if isDefault {
 		id = defaultLiveSkinID
@@ -169,7 +186,7 @@ func TestLiveGetUser(t *testing.T) {
 }
 
 func TestLiveGetUserPaidGrants(t *testing.T) {
-	if os.Getenv("MINESKIN_LIVE_PAID") != "1" {
+	if liveEnv("MINESKIN_LIVE_PAID") != "1" {
 		t.Skip("MINESKIN_LIVE_PAID=1 not set")
 	}
 	c := liveClient(t)
@@ -188,7 +205,6 @@ func TestLiveGetUserPaidGrants(t *testing.T) {
 }
 
 const (
-	liveSkinSize     = 64
 	liveNameBytes    = 4
 	liveGenHTTPLimit = 60 * time.Second
 
@@ -201,15 +217,6 @@ const (
 	liveInvalidSkinAttempts = 3
 	codeInvalidSkinData     = "invalid_skin_data"
 )
-
-// randomSkinImage returns a 64x64 image of random pixels.
-func randomSkinImage() image.Image {
-	img := image.NewNRGBA(image.Rect(0, 0, liveSkinSize, liveSkinSize))
-	if _, err := rand.Read(img.Pix); err != nil {
-		panic(fmt.Sprintf("rand.Read: %v", err))
-	}
-	return img
-}
 
 // randomSkinName returns a short random skin name.
 func randomSkinName(t *testing.T) string {
@@ -240,8 +247,9 @@ func isInvalidSkinData(err error) bool {
 }
 
 // withFreshImage runs try, which must build a fresh random image or URL on
-// every call. When MineSkin answers invalid_skin_data (common with random
-// images) it tries again, up to liveInvalidSkinAttempts times in total, and
+// every call. When MineSkin answers invalid_skin_data (an anomaly for the
+// base-layer images, logged as such; the random-image URLs may still hit it)
+// it tries again, up to liveInvalidSkinAttempts times in total, and
 // then skips the test. Any other error, including a 429 after the client's own
 // retries, fails the test.
 func withFreshImage[T any](t *testing.T, what string, try func() (T, error)) T {
@@ -256,12 +264,13 @@ func withFreshImage[T any](t *testing.T, what string, try func() (T, error)) T {
 		case attempt == liveInvalidSkinAttempts:
 			t.Skipf("%s: MineSkin rejected %d random images as %s: %v", what, attempt, codeInvalidSkinData, err)
 		default:
-			t.Logf("%s: attempt %d rejected as %s, trying a fresh image", what, attempt, codeInvalidSkinData)
+			t.Logf("ANOMALY: %s: attempt %d rejected as %s although the image is opaque on the base layer only; trying a fresh image", what, attempt, codeInvalidSkinData)
 		}
 	}
 }
 
 func TestLiveQueueURLAndWait(t *testing.T) {
+	skipIfShort(t)
 	c := sharedGenClient(t)
 	ctx := liveGenContext(t)
 	name := randomSkinName(t)
@@ -322,6 +331,7 @@ func TestLiveQueueURLAndWait(t *testing.T) {
 }
 
 func TestLiveGenerateUpload(t *testing.T) {
+	skipIfShort(t)
 	c := sharedGenClient(t)
 	name := randomSkinName(t)
 
@@ -330,7 +340,7 @@ func TestLiveGenerateUpload(t *testing.T) {
 	// here; only an image MineSkin cannot process is tried again.
 	res := withFreshImage(t, "Generate()", func() (*GenerateResponse, error) {
 		return c.Generate(ctx, FromImage(randomSkinImage()),
-			GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
+			GenerateOptions{Visibility: VisibilityUnlisted, Variant: VariantClassic, Name: name})
 	})
 	if res.Skin.Texture.Data.Value == "" || res.Skin.Texture.Data.Signature == "" {
 		t.Error("texture value or signature is empty")
@@ -341,6 +351,7 @@ func TestLiveGenerateUpload(t *testing.T) {
 }
 
 func TestLiveThrottleSmoke(t *testing.T) {
+	skipIfShort(t)
 	c := sharedGenClient(t)
 	ctx, cancel := context.WithTimeout(context.Background(), liveSmokeTimeout)
 	t.Cleanup(cancel)
@@ -350,7 +361,7 @@ func TestLiveThrottleSmoke(t *testing.T) {
 		start := time.Now()
 		res := withFreshImage(t, fmt.Sprintf("Generate() #%d", i), func() (*GenerateResponse, error) {
 			return c.Generate(ctx, FromImage(randomSkinImage()),
-				GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
+				GenerateOptions{Visibility: VisibilityUnlisted, Variant: VariantClassic, Name: randomSkinName(t)})
 		})
 		gap := time.Duration(0)
 		if !last.IsZero() {
@@ -366,10 +377,11 @@ func TestLiveThrottleSmoke(t *testing.T) {
 }
 
 func TestLiveAutoTuning(t *testing.T) {
-	if os.Getenv("MINESKIN_LIVE_PAID") != "1" {
+	skipIfShort(t)
+	if liveEnv("MINESKIN_LIVE_PAID") != "1" {
 		t.Skip("MINESKIN_LIVE_PAID=1 not set")
 	}
-	key := os.Getenv("MINESKIN_API_KEY")
+	key := liveEnv("MINESKIN_API_KEY")
 	if strings.TrimSpace(key) == "" {
 		t.Skip("MINESKIN_API_KEY not set")
 	}

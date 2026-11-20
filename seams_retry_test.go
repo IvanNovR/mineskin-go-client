@@ -499,10 +499,15 @@ func TestRetryCancelledWaitCountsPenaltyOnce(t *testing.T) {
 // the timeout together, and the call still succeeds.
 func TestTimeoutIsPerAttempt(t *testing.T) {
 	t.Parallel()
-	const timeout = 150 * time.Millisecond
+	// Each attempt (handler delay) fits the budget with generous slack for a loaded
+	// -race run; the two together do not.
+	const (
+		timeout      = 600 * time.Millisecond
+		handlerDelay = 400 * time.Millisecond
+	)
 	var calls atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond) // real clock: the budget is a context deadline
+		time.Sleep(handlerDelay) // real clock: the budget is a context deadline
 		if calls.Add(1) == 1 {
 			writeJSON(429, tooSoonJSON)(w, r)
 			return

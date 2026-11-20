@@ -27,12 +27,13 @@
 // # Generating skins
 //
 // A skin is generated from a Source: FromURL, FromUser, FromReader, FromFile
-// or FromImage. GenerateOptions (nil for none) sets the name, variant,
+// or FromImage. GenerateOptions (the zero value for none) sets the name,
+// variant,
 // visibility and cape.
 //
 // The queue flow submits a job, waits for it and then reads the skin:
 //
-//	q, err := c.Queue(ctx, mineskin.FromURL("https://example.com/skin.png"), nil)
+//	q, err := c.Queue(ctx, mineskin.FromURL("https://example.com/skin.png"), mineskin.GenerateOptions{})
 //	if err != nil {
 //		// handle error
 //	}

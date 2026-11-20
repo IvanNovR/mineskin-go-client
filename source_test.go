@@ -20,8 +20,8 @@ var testCape = UUID{0x01, 0x23, 0xab, 0xcd, 0x45, 0x67, 0x89, 0xef, 0x01, 0x23, 
 
 const testCapeDashed = "0123abcd-4567-89ef-0123-456789abcdef"
 
-func fullOptions() *GenerateOptions {
-	return &GenerateOptions{Name: "my skin", Variant: VariantSlim, Visibility: VisibilityUnlisted, Cape: testCape}
+func fullOptions() GenerateOptions {
+	return GenerateOptions{Name: "my skin", Variant: VariantSlim, Visibility: VisibilityUnlisted, Cape: testCape}
 }
 
 func TestSourceJSONBodies(t *testing.T) {
@@ -29,12 +29,12 @@ func TestSourceJSONBodies(t *testing.T) {
 	tests := []struct {
 		name string
 		src  Source
-		opts *GenerateOptions
+		opts GenerateOptions
 		want map[string]any
 	}{
-		{"url nil opts", FromURL("https://example.com/a.png"), nil, map[string]any{"url": "https://example.com/a.png"}},
-		{"url zero opts", FromURL("https://example.com/a.png"), &GenerateOptions{Variant: VariantAuto}, map[string]any{"url": "https://example.com/a.png"}},
-		{"user dashed", FromUser(user), nil, map[string]any{"user": user.String()}},
+		{"url zero value opts", FromURL("https://example.com/a.png"), GenerateOptions{}, map[string]any{"url": "https://example.com/a.png"}},
+		{"url zero opts", FromURL("https://example.com/a.png"), GenerateOptions{Variant: VariantAuto}, map[string]any{"url": "https://example.com/a.png"}},
+		{"user dashed", FromUser(user), GenerateOptions{}, map[string]any{"user": user.String()}},
 		{"all options", FromURL("https://example.com/a.png"), fullOptions(), map[string]any{
 			"url": "https://example.com/a.png", "name": "my skin", "variant": "slim",
 			"visibility": "unlisted", "cape": testCapeDashed,
@@ -125,7 +125,7 @@ func TestSourceMultipart(t *testing.T) {
 			if tt.name == "reader" {
 				src = FromReader(bytes.NewReader(content))
 			}
-			body, err := src.requestBody(nil)
+			body, err := src.requestBody(GenerateOptions{})
 			if err != nil {
 				t.Fatalf("requestBody() error = %v", err)
 			}
@@ -147,7 +147,7 @@ func (c *closeSpy) Close() error { c.closed = true; return nil }
 func TestFromReaderNotClosedReadOnce(t *testing.T) {
 	spy := &closeSpy{Reader: strings.NewReader("skin-data")}
 	src := FromReader(spy)
-	body, err := src.requestBody(nil)
+	body, err := src.requestBody(GenerateOptions{})
 	if err != nil {
 		t.Fatalf("requestBody() error = %v", err)
 	}
@@ -158,7 +158,7 @@ func TestFromReaderNotClosedReadOnce(t *testing.T) {
 	if len(parts) != 1 || string(parts[0].data) != "skin-data" {
 		t.Errorf("parts = %+v", parts)
 	}
-	second, err := src.requestBody(nil)
+	second, err := src.requestBody(GenerateOptions{})
 	if err != nil {
 		t.Fatalf("second requestBody() error = %v", err)
 	}
@@ -171,7 +171,7 @@ func TestFromFileReadsOnEverySend(t *testing.T) {
 	content := []byte("file-content")
 	src := FromFile(writeTempSkin(t, content))
 	for i := 0; i < 2; i++ {
-		body, err := src.requestBody(nil)
+		body, err := src.requestBody(GenerateOptions{})
 		if err != nil {
 			t.Fatalf("encode %d error = %v", i, err)
 		}
@@ -183,7 +183,7 @@ func TestFromFileReadsOnEverySend(t *testing.T) {
 }
 
 func TestFromFileMissing(t *testing.T) {
-	_, err := FromFile(filepath.Join(t.TempDir(), "missing.png")).requestBody(nil)
+	_, err := FromFile(filepath.Join(t.TempDir(), "missing.png")).requestBody(GenerateOptions{})
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("error = %v, want fs.ErrNotExist", err)
 	}
@@ -195,7 +195,7 @@ func TestFromFileMissing(t *testing.T) {
 
 func TestFromImageEncodesPNG(t *testing.T) {
 	img := testImage()
-	body, err := FromImage(img).requestBody(nil)
+	body, err := FromImage(img).requestBody(GenerateOptions{})
 	if err != nil {
 		t.Fatalf("requestBody() error = %v", err)
 	}
@@ -222,7 +222,7 @@ func (e errReader) Read([]byte) (int, error) { return 0, e.err }
 
 func TestFromReaderError(t *testing.T) {
 	cause := errors.New("disk on fire")
-	_, err := FromReader(errReader{cause}).requestBody(nil)
+	_, err := FromReader(errReader{cause}).requestBody(GenerateOptions{})
 	if !errors.Is(err, cause) {
 		t.Errorf("error = %v, want it to wrap the cause", err)
 	}
@@ -245,12 +245,12 @@ func TestSourceInvalid(t *testing.T) {
 	}
 	for name, src := range invalid {
 		t.Run(name, func(t *testing.T) {
-			if _, err := src.requestBody(nil); !errors.Is(err, ErrInvalidInput) {
+			if _, err := src.requestBody(GenerateOptions{}); !errors.Is(err, ErrInvalidInput) {
 				t.Errorf("error = %v, want ErrInvalidInput", err)
 			}
 		})
 	}
-	if _, err := FromURL("https://example.com/a.png").requestBody(nil); err != nil {
+	if _, err := FromURL("https://example.com/a.png").requestBody(GenerateOptions{}); err != nil {
 		t.Errorf("valid URL error = %v", err)
 	}
 }

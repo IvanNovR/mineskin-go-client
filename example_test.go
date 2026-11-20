@@ -42,7 +42,7 @@ func ExampleClient_WaitForJob() {
 	}
 	ctx := context.Background()
 
-	q, err := c.Queue(ctx, mineskin.FromURL("https://example.com/skin.png"), nil)
+	q, err := c.Queue(ctx, mineskin.FromURL("https://example.com/skin.png"), mineskin.GenerateOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func ExampleClient_Generate() {
 	}
 
 	res, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/skin.png"),
-		&mineskin.GenerateOptions{Visibility: mineskin.VisibilityUnlisted})
+		mineskin.GenerateOptions{Visibility: mineskin.VisibilityUnlisted})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func ExampleWithAutoTuning() {
 	}
 	defer func() { _ = c.Close() }()
 
-	res, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/skin.png"), nil)
+	res, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/skin.png"), mineskin.GenerateOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}

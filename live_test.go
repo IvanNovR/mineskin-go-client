@@ -272,7 +272,7 @@ func TestLiveQueueURLAndWait(t *testing.T) {
 	}
 	got := withFreshImage(t, "Queue and WaitForJob", func() (queued, error) {
 		q, err := c.Queue(ctx, FromURL(fmt.Sprintf("https://api.mineskin.org/random-image?t=%d", time.Now().UnixNano())),
-			&GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
+			GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
 		if err != nil {
 			return queued{}, err
 		}
@@ -330,7 +330,7 @@ func TestLiveGenerateUpload(t *testing.T) {
 	// here; only an image MineSkin cannot process is tried again.
 	res := withFreshImage(t, "Generate()", func() (*GenerateResponse, error) {
 		return c.Generate(ctx, FromImage(randomSkinImage()),
-			&GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
+			GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
 	})
 	if res.Skin.Texture.Data.Value == "" || res.Skin.Texture.Data.Signature == "" {
 		t.Error("texture value or signature is empty")
@@ -350,7 +350,7 @@ func TestLiveThrottleSmoke(t *testing.T) {
 		start := time.Now()
 		res := withFreshImage(t, fmt.Sprintf("Generate() #%d", i), func() (*GenerateResponse, error) {
 			return c.Generate(ctx, FromImage(randomSkinImage()),
-				&GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
+				GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
 		})
 		gap := time.Duration(0)
 		if !last.IsZero() {
@@ -380,7 +380,7 @@ func TestLiveAutoTuning(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 
 	_, err = c.Queue(liveGenContext(t), FromURL(fmt.Sprintf("https://api.mineskin.org/random-image?t=%d", time.Now().Unix())),
-		&GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
+		GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
 	if err != nil {
 		t.Fatalf("Queue() error = %v", err)
 	}

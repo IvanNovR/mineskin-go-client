@@ -245,7 +245,7 @@ func TestAutoFirstLoadCallerCancel(t *testing.T) {
 	c := newTestClient(t, srv.URL, WithAutoTuning())
 	ctx, cancel := context.WithCancel(context.Background())
 	first := goCall(func() error {
-		_, err := c.Queue(ctx, FromURL("https://example.com/s.png"), nil)
+		_, err := c.Queue(ctx, FromURL("https://example.com/s.png"), GenerateOptions{})
 		return err
 	})
 	waitCount(t, srv, keyUser, 1)

@@ -137,14 +137,14 @@ func mustReceive(t *testing.T, what string, ch <-chan struct{}) {
 
 func queueCall(c *Client) func() error {
 	return func() error {
-		_, err := c.Queue(context.Background(), FromURL("https://example.com/s.png"), nil)
+		_, err := c.Queue(context.Background(), FromURL("https://example.com/s.png"), GenerateOptions{})
 		return err
 	}
 }
 
 func generateCall(c *Client) func() error {
 	return func() error {
-		_, err := c.Generate(context.Background(), FromURL("https://example.com/s.png"), nil)
+		_, err := c.Generate(context.Background(), FromURL("https://example.com/s.png"), GenerateOptions{})
 		return err
 	}
 }

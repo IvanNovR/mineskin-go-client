@@ -52,7 +52,7 @@ func TestQueueMalformedUsageIsLoggedOnceWithoutValue(t *testing.T) {
 	srv := newTestServer(t, writeJSON(200, body))
 	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
 
-	got, err := c.Queue(context.Background(), FromURL("https://example.com/a.png"), nil)
+	got, err := c.Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
 
 	if err != nil {
 		t.Fatalf("Queue() error = %v", err)
@@ -69,7 +69,7 @@ func TestGenerateMalformedRateLimitIsLogged(t *testing.T) {
 	srv := newTestServer(t, writeJSON(200, body))
 	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
 
-	got, err := c.Generate(context.Background(), FromURL("https://example.com/a.png"), nil)
+	got, err := c.Generate(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
 
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
@@ -89,7 +89,7 @@ func TestMalformedAbsentFieldsAreNotLogged(t *testing.T) {
 	for _, body := range bodies {
 		srv := newTestServer(t, writeJSON(200, body))
 		c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
-		if _, err := c.Queue(context.Background(), FromURL("https://example.com/a.png"), nil); err != nil {
+		if _, err := c.Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{}); err != nil {
 			t.Fatalf("Queue(%s) error = %v", body, err)
 		}
 	}

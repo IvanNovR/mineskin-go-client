@@ -43,8 +43,8 @@ func TestCallsAfterCloseFailImmediately(t *testing.T) {
 		"GetUser":    func() error { _, err := c.GetUser(ctx); return err },
 		"GetJob":     func() error { _, err := c.GetJob(ctx, "job-1"); return err },
 		"ListJobs":   func() error { _, err := c.ListJobs(ctx); return err },
-		"Queue":      func() error { _, err := c.Queue(ctx, src, nil); return err },
-		"Generate":   func() error { _, err := c.Generate(ctx, src, nil); return err },
+		"Queue":      func() error { _, err := c.Queue(ctx, src, GenerateOptions{}); return err },
+		"Generate":   func() error { _, err := c.Generate(ctx, src, GenerateOptions{}); return err },
 		"WaitForJob": func() error { _, err := c.WaitForJob(ctx, Job{ID: "job-1"}); return err },
 	}
 	for name, call := range calls {

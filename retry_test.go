@@ -165,7 +165,7 @@ func TestRetryReplaysRequestBodies(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON}, reply{status: 200, body: skinMinimal})
 			c := newTestClient(t, srv.URL)
-			if _, err := c.Generate(context.Background(), src, &GenerateOptions{Name: retryTestName}); err != nil {
+			if _, err := c.Generate(context.Background(), src, GenerateOptions{Name: retryTestName}); err != nil {
 				t.Fatalf("Generate() error = %v", err)
 			}
 			if srv.hits() != 2 {
@@ -451,7 +451,7 @@ func TestRetryCancelledWaitCountsPenaltyOnce(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		res := goCall(func() error {
-			_, err := c.Queue(ctx, FromURL("https://example.com/s.png"), nil)
+			_, err := c.Queue(ctx, FromURL("https://example.com/s.png"), GenerateOptions{})
 			return err
 		})
 		if cancelDuringWait {

@@ -42,13 +42,17 @@ func readUpload(r io.Reader) (data []byte, withinLimit bool, err error) {
 }
 
 // Source is where a skin is generated from. Create one with FromURL, FromUser,
-// FromReader, FromFile or FromImage. The interface is sealed.
+// FromReader, FromFile or FromImage.
+//
+// Source is sealed: it has an unexported method, so it cannot be implemented
+// outside this package.
 type Source interface {
-	requestBody(opts *GenerateOptions) (*transport.Body, error)
+	requestBody(opts GenerateOptions) (*transport.Body, error)
 }
 
 // GenerateOptions are the optional settings of a generate request. Zero values
-// (including VariantAuto) are not sent. A nil *GenerateOptions is valid.
+// (including VariantAuto) are not sent, so the zero GenerateOptions is valid
+// and sends no options.
 type GenerateOptions struct {
 	// Name is the name of the skin; empty is not sent.
 	Name string
@@ -94,12 +98,10 @@ type jsonBody struct {
 	Cape       string     `json:"cape,omitempty"`
 }
 
-func newJSONBody(b jsonBody, opts *GenerateOptions) (*transport.Body, error) {
-	if opts != nil {
-		b.Name, b.Variant, b.Visibility = opts.Name, opts.Variant, opts.Visibility
-		if opts.Cape != (UUID{}) {
-			b.Cape = opts.Cape.String()
-		}
+func newJSONBody(b jsonBody, opts GenerateOptions) (*transport.Body, error) {
+	b.Name, b.Variant, b.Visibility = opts.Name, opts.Variant, opts.Visibility
+	if opts.Cape != (UUID{}) {
+		b.Cape = opts.Cape.String()
 	}
 	data, err := json.Marshal(b)
 	if err != nil {
@@ -114,7 +116,7 @@ type urlSource struct{ url string }
 // scheme and a host; otherwise sending fails with ErrInvalidInput.
 func FromURL(u string) Source { return urlSource{url: u} }
 
-func (s urlSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
+func (s urlSource) requestBody(opts GenerateOptions) (*transport.Body, error) {
 	parsed, err := url.Parse(s.url)
 	if err != nil {
 		return nil, invalidInput("invalid skin URL: cannot be parsed")
@@ -130,7 +132,7 @@ type userSource struct{ id UUID }
 // FromUser generates a skin from the skin of a player with the given UUID.
 func FromUser(id UUID) Source { return userSource{id: id} }
 
-func (s userSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
+func (s userSource) requestBody(opts GenerateOptions) (*transport.Body, error) {
 	return newJSONBody(jsonBody{User: s.id.String()}, opts)
 }
 
@@ -144,7 +146,7 @@ type readerSource struct{ r io.Reader }
 // 1 MiB plus one byte is read from r.
 func FromReader(r io.Reader) Source { return readerSource{r: r} }
 
-func (s readerSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
+func (s readerSource) requestBody(opts GenerateOptions) (*transport.Body, error) {
 	if s.r == nil {
 		return nil, invalidInput("reader source is nil")
 	}
@@ -165,7 +167,7 @@ type fileSource struct{ path string }
 // ErrInvalidInput and no request is sent.
 func FromFile(path string) Source { return fileSource{path: path} }
 
-func (s fileSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
+func (s fileSource) requestBody(opts GenerateOptions) (*transport.Body, error) {
 	if s.path == "" {
 		return nil, invalidInput("file path is empty")
 	}
@@ -199,7 +201,7 @@ type imageSource struct{ img image.Image }
 // 1 MiB gives ErrInvalidInput and no request is sent.
 func FromImage(img image.Image) Source { return imageSource{img: img} }
 
-func (s imageSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
+func (s imageSource) requestBody(opts GenerateOptions) (*transport.Body, error) {
 	if s.img == nil {
 		return nil, invalidInput("image is nil")
 	}
@@ -215,7 +217,7 @@ func (s imageSource) requestBody(opts *GenerateOptions) (*transport.Body, error)
 
 // newMultipartBody builds an upload body: option text parts first, then the
 // file part.
-func newMultipartBody(data []byte, opts *GenerateOptions) (*transport.Body, error) {
+func newMultipartBody(data []byte, opts GenerateOptions) (*transport.Body, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	for _, f := range opts.formFields() {

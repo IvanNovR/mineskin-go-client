@@ -33,8 +33,9 @@ type GenerateResponse struct {
 
 // Queue submits a skin generation job and returns it without waiting for the
 // result; use WaitForJob or GetJob to follow it. A nil or invalid src fails
-// with ErrInvalidInput without sending a request. opts may be nil.
-func (c *Client) Queue(ctx context.Context, src Source, opts *GenerateOptions) (*QueueResponse, error) {
+// with ErrInvalidInput without sending a request. The zero GenerateOptions
+// sends no options.
+func (c *Client) Queue(ctx context.Context, src Source, opts GenerateOptions) (*QueueResponse, error) {
 	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
@@ -50,8 +51,8 @@ func (c *Client) Queue(ctx context.Context, src Source, opts *GenerateOptions) (
 // value that may be too short for slow generations: raise it with WithTimeout
 // or pass a context with a deadline. For long jobs prefer Queue followed by
 // WaitForJob. A nil or invalid src fails with ErrInvalidInput without sending
-// a request. opts may be nil.
-func (c *Client) Generate(ctx context.Context, src Source, opts *GenerateOptions) (*GenerateResponse, error) {
+// a request. The zero GenerateOptions sends no options.
+func (c *Client) Generate(ctx context.Context, src Source, opts GenerateOptions) (*GenerateResponse, error) {
 	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
@@ -87,7 +88,7 @@ func (w *generateWire) droppedFields() []string {
 }
 
 // submit encodes src, posts it to path and decodes the response into W.
-func submit[W any](ctx context.Context, c *Client, path string, src Source, opts *GenerateOptions) (W, ResponseMeta, error) {
+func submit[W any](ctx context.Context, c *Client, path string, src Source, opts GenerateOptions) (W, ResponseMeta, error) {
 	var zero W
 	if src == nil {
 		return zero, ResponseMeta{}, invalidInput("source is nil")

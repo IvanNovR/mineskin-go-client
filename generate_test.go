@@ -27,7 +27,7 @@ func TestQueueURLSendsJSON(t *testing.T) {
 		writeJSON(200, queueFixture)(w, r)
 	})
 	got, err := newTestClient(t, srv.URL).Queue(context.Background(),
-		FromURL("https://example.com/s.png"), &GenerateOptions{Name: "n", Variant: VariantSlim})
+		FromURL("https://example.com/s.png"), GenerateOptions{Name: "n", Variant: VariantSlim})
 	if err != nil {
 		t.Fatalf("Queue() error = %v", err)
 	}
@@ -73,7 +73,7 @@ func TestQueueUploadSendsMultipart(t *testing.T) {
 		writeJSON(200, queueFixture)(w, r)
 	})
 	_, err := newTestClient(t, srv.URL).Queue(context.Background(),
-		FromReader(strings.NewReader("PNGDATA")), &GenerateOptions{Name: "up", Variant: VariantClassic})
+		FromReader(strings.NewReader("PNGDATA")), GenerateOptions{Name: "up", Variant: VariantClassic})
 	if err != nil {
 		t.Fatalf("Queue() error = %v", err)
 	}
@@ -95,7 +95,7 @@ func TestGenerateDecodesSkin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := newTestClient(t, srv.URL).Generate(context.Background(), FromUser(id), nil)
+	got, err := newTestClient(t, srv.URL).Generate(context.Background(), FromUser(id), GenerateOptions{})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -116,7 +116,7 @@ func TestGenerateDecodesSkin(t *testing.T) {
 
 func TestQueueAbsentRateLimitIsZero(t *testing.T) {
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"job":{"id":"j","status":"waiting"}}`))
-	got, err := newTestClient(t, srv.URL).Queue(context.Background(), FromURL("https://example.com/a.png"), nil)
+	got, err := newTestClient(t, srv.URL).Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,8 +146,8 @@ func TestQueueRejectsInvalidSourceWithoutRequest(t *testing.T) {
 	for name, src := range sources {
 		t.Run(name, func(t *testing.T) {
 			for _, call := range []func() error{
-				func() error { _, err := c.Queue(context.Background(), src, nil); return err },
-				func() error { _, err := c.Generate(context.Background(), src, nil); return err },
+				func() error { _, err := c.Queue(context.Background(), src, GenerateOptions{}); return err },
+				func() error { _, err := c.Generate(context.Background(), src, GenerateOptions{}); return err },
 			} {
 				if err := call(); err == nil {
 					t.Error("error = nil, want error")
@@ -164,7 +164,7 @@ func TestQueueRejectsInvalidSourceWithoutRequest(t *testing.T) {
 
 func TestQueueAPIError(t *testing.T) {
 	srv := newTestServer(t, writeJSON(429, `{"success":false,"errors":[{"code":"too_many_requests","message":"slow down"}],"job":"garbage","rateLimit":5}`))
-	got, err := newTestClient(t, srv.URL).Queue(context.Background(), FromURL("https://example.com/a.png"), nil)
+	got, err := newTestClient(t, srv.URL).Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("error = %v, want *APIError", err)
@@ -185,7 +185,7 @@ func TestGenerateHonoursTimeout(t *testing.T) {
 	t.Cleanup(func() { close(release) })
 	c := newTestClient(t, srv.URL, WithTimeout(80*time.Millisecond))
 	start := time.Now()
-	_, err := c.Generate(context.Background(), FromURL("https://example.com/a.png"), nil)
+	_, err := c.Generate(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
 	if err == nil {
 		t.Fatal("error = nil, want timeout")
 	}

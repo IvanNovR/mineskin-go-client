@@ -16,6 +16,8 @@ import (
 
 const exampleSkinID = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
 
+const exampleTextureURL = "https://textures.minecraft.net/texture/abc123"
+
 var exampleSkinUUID, _ = mineskin.ParseUUID(exampleSkinID)
 
 // exampleServer fakes the MineSkin API so the examples run without a network.
@@ -27,7 +29,8 @@ func exampleServer() *httptest.Server {
 		case "/v2/queue/job1":
 			_, _ = fmt.Fprintf(w, `{"success":true,"job":{"id":"job1","status":"completed","result":%q}}`, exampleSkinID)
 		case "/v2/generate", "/v2/skins/" + exampleSkinID:
-			_, _ = fmt.Fprintf(w, `{"success":true,"skin":{"uuid":%q,"name":"Steve"}}`, exampleSkinID)
+			_, _ = fmt.Fprintf(w, `{"success":true,"skin":{"uuid":%q,"name":"Steve","texture":{"url":{"skin":%q}}}}`,
+				exampleSkinID, exampleTextureURL)
 		case "/v2/me":
 			_, _ = fmt.Fprintf(w, `{"success":true,"user":%q,"grants":{"per_minute":10,"concurrency":2}}`, exampleSkinID)
 		default:
@@ -39,6 +42,33 @@ func exampleServer() *httptest.Server {
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+// Example_quickStart is the quick start of the README. The README copy is the
+// body of this function without the lines that end in "example-only", which
+// only point the example at a fake server.
+func Example_quickStart() {
+	srv := exampleServer() // example-only
+	defer srv.Close()      // example-only
+	c, err := mineskin.NewClient(
+		mineskin.WithAPIKey(os.Getenv("MINESKIN_API_KEY")),
+		mineskin.WithUserAgent("my-app/1.0"),
+		mineskin.WithBaseURL(srv.URL), // example-only
+	)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer func() { _ = c.Close() }()
+
+	res, err := c.Generate(context.Background(),
+		mineskin.FromURL("https://example.com/skin.png"), mineskin.GenerateOptions{})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(res.Skin.Texture.URL.Skin)
+	// Output: https://textures.minecraft.net/texture/abc123
 }
 
 // Example shows the typical flow: create a client, close it when done and

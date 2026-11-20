@@ -4,9 +4,12 @@
 # anything other than a v0.x.y version. The `release-preview` job is meant to be
 # a required status check in the "Protect main" ruleset.
 #
-# The merge commit on main can carry the PR title, so the title is added as a
-# local, never-pushed empty commit on top of the PR merge ref before svu runs;
-# re-running on `edited` keeps the preview in step with title changes.
+# The merge commit on main carries the PR title (repository setting: merge
+# commit message = pull request title), so the title is added as a local,
+# never-pushed empty commit on top of the PR merge ref before svu runs;
+# re-running on `edited` keeps the preview in step with title changes. svu reads
+# .svu.yml from main, so a PR cannot change its own version rules; until main
+# has the file, the PR's own copy is used and the summary says so.
 #
 # Hardening: read-only token, no PR comments, actions pinned to full commit
 # SHAs, credentials not persisted, and the PR title reaches the script only
@@ -40,7 +43,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
-          go-version: stable
+          go-version: stable # svu v3.4.4 needs Go >= 1.27.3
           cache: false
       - name: Install svu
         # Keep in sync with SVU_VERSION in the Makefile.
@@ -53,12 +56,21 @@ jobs:
           fail() { echo "::error::$1"; exit 1; }
           tag_re='^v0\.[0-9]+\.[0-9]+$'
 
-          [ -n "$PR_TITLE" ] || fail "The pull request has no title."
+          # The title is taken verbatim (a leading '#' is not a comment) and may
+          # be blank; either way it only becomes a local commit message.
           git -c user.name=release-preview -c user.email=release-preview@invalid \
-            commit --quiet --allow-empty --no-verify -m "$PR_TITLE"
+            commit --quiet --allow-empty --allow-empty-message --cleanup=verbatim -m "$PR_TITLE"
 
-          cur=$(svu current)
-          next=$(svu next)
+          cfg="${RUNNER_TEMP}/svu.yml"
+          note=""
+          if ! git show origin/main:.svu.yml > "$cfg" 2>/dev/null; then
+            rm -f "$cfg"
+            cfg=.svu.yml
+            note="Note: main has no .svu.yml yet, so this preview uses the pull request's own .svu.yml."
+          fi
+
+          cur=$(svu current --config "$cfg")
+          next=$(svu next --config "$cfg")
           echo "svu current ${cur}, next ${next}."
           [[ $next =~ $tag_re ]] || fail "Merging would release ${next}, which is not a v0.x.y version."
 
@@ -69,4 +81,10 @@ jobs:
           else
             msg="No release (no feat/fix/breaking commits yet)."
           fi
-          echo "$msg" | tee -a "$GITHUB_STEP_SUMMARY"
+          {
+            echo "$msg"
+            if [ -n "$note" ]; then
+              echo ""
+              echo "$note"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"

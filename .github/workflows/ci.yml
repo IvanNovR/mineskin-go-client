@@ -6,8 +6,8 @@
 # lint lives in commitlint.yml so PR title edits never touch these checks.
 #
 # Also called by release.yml (workflow_call) on the exact commit being released.
-# Only pull_request runs cancel an older run in the same group, so a later push
-# to main never cancels the CI of a release that is still running.
+# Superseded runs are cancelled everywhere except on main, so a later push to
+# main never cancels the CI of a release that is still running.
 name: CI
 
 on:
@@ -30,7 +30,7 @@ env:
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:

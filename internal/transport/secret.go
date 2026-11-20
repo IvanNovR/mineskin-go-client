@@ -18,6 +18,10 @@ const redacted = "[REDACTED]"
 // pointer is printed as an address there, so the value stays hidden even when
 // a config or client struct is formatted with %v, %+v or %#v.
 //
+// This protects against accidental printing and logging only. A deep
+// reflection dumper (for example go-spew) follows the pointer and prints the
+// value, so never dump a Client or config with such a tool.
+//
 // A Secret is a handle: copies share the value, and comparing two Secrets
 // with == compares the handles, not the values.
 type Secret struct {

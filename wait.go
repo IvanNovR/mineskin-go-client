@@ -19,9 +19,10 @@ import (
 // WaitForJob panics when ctx is nil, as the standard library does. A job id
 // that is empty, "." or ".." fails with ErrInvalidInput without a request. The
 // total wait is bounded only by ctx and PollOptions.MaxAttempts; WithTimeout
-// bounds each status request, not the wait. A failed job gives a *JobFailedError, and
-// a job still unfinished after PollOptions.MaxAttempts checks gives
-// ErrMaxAttempts. When ctx ends, the error matches ctx.Err(); the job stops being polled unless another waiter still needs it.
+// bounds each status request, not the wait. A failed job gives a
+// *JobFailedError, and a job still unfinished after PollOptions.MaxAttempts
+// checks gives ErrMaxAttempts. When ctx ends, the error matches ctx.Err(); the
+// job stops being polled unless another waiter still needs it.
 // Errors of the status requests are returned as they are. A wait that Close
 // interrupts, and any wait started after Close, fails with ErrClientClosed.
 //

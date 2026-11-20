@@ -232,3 +232,16 @@ func TestServerDelayCapOnHugeNextRelative(t *testing.T) {
 		t.Errorf("delayed Queue error = %v", err)
 	}
 }
+
+func TestOverflowingRetryAfterClampsToOneHourAndAPIErrorKeepsZero(t *testing.T) {
+	srv := replyServer(t, map[string]reply{keyQueue: {429, "99999999999999999999", nextRelative(1000, false)}})
+	c, fake := delayClient(t, srv, WithRateLimitRetries(0))
+	var apiErr *APIError
+	if err := queueCall(c)(); !errors.As(err, &apiErr) || apiErr.RetryAfter != 0 {
+		t.Fatalf("error = %v, want *APIError with RetryAfter 0 (an overflowing header is not parsed)", err)
+	}
+	// The body asks for 1 s, but the overflowing header wins and is capped at 1 h.
+	if err := assertDelayed(t, fake, c.genGroup, queueCall(c), time.Hour); !errors.As(err, &apiErr) {
+		t.Errorf("second error = %v, want *APIError", err)
+	}
+}

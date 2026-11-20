@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -422,5 +424,77 @@ func TestCheckRedirectStripsAuthorizationOnHostChange(t *testing.T) {
 				t.Error("other headers must be kept")
 			}
 		})
+	}
+}
+
+func TestNewClientLogsKeyIDOnlyForWellFormedKeys(t *testing.T) {
+	tests := []struct {
+		name   string
+		key    string
+		wantID string
+	}{
+		{"well formed", "msk_abc123_secretpart", "abc123"},
+		{"secret with underscores", "msk_abc123_secret_part", "abc123"},
+		{"no id separator", "msk_SECRETVALUE", ""},
+		{"empty id", "msk__SECRETVALUE", ""},
+		{"empty secret", "msk_abc123_", ""},
+		{"id with symbols", "msk_ab-c$_SECRETVALUE", ""},
+		{"id too long", "msk_" + strings.Repeat("a", 33) + "_SECRETVALUE", ""},
+		{"id at the length limit", "msk_" + strings.Repeat("a", 32) + "_SECRETVALUE", strings.Repeat("a", 32)},
+		{"wrong prefix", "abc_def_SECRETVALUE", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if _, err := NewClient(WithAPIKey(tt.key), WithUserAgent("A/1"), WithLogger(captureLogger(&buf))); err != nil {
+				t.Fatal(err)
+			}
+			out := buf.String()
+			if tt.wantID == "" {
+				if strings.Contains(out, "key_id") {
+					t.Errorf("key id logged for a malformed key: %s", out)
+				}
+			} else if !strings.Contains(out, "key_id="+tt.wantID) {
+				t.Errorf("log = %s, want key_id=%s", out, tt.wantID)
+			}
+			if strings.Contains(out, "SECRETVALUE") || strings.Contains(out, "secretpart") || strings.Contains(out, "secret_part") {
+				t.Errorf("log leaks the secret part: %s", out)
+			}
+		})
+	}
+}
+
+func TestRedirectAwayAndBackRestoresAuthorizationOnTheOriginalHost(t *testing.T) {
+	var mu sync.Mutex
+	var trail []string // "host-label:authorization" per request
+	record := func(label string, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		trail = append(trail, label+":"+r.Header.Get("Authorization"))
+	}
+	var aURL, bURL string
+	b := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		record("B", r)
+		http.Redirect(w, r, aURL+"/v2/final", http.StatusFound)
+	})
+	bURL = b.URL
+	a := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		record("A", r)
+		if r.URL.Path == "/v2/start" {
+			http.Redirect(w, r, bURL+"/v2/mid", http.StatusFound)
+			return
+		}
+		okHandler(w, r)
+	})
+	aURL = a.URL
+	c := newTestClient(t, a.URL, WithAPIKey("msk_abc_secretpart"))
+	if _, err := c.do(context.Background(), http.MethodGet, "/v2/start", nil); err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	want := []string{"A:Bearer msk_abc_secretpart", "B:", "A:Bearer msk_abc_secretpart"}
+	mu.Lock()
+	defer mu.Unlock()
+	if !reflect.DeepEqual(trail, want) {
+		t.Errorf("requests = %q, want %q", trail, want)
 	}
 }

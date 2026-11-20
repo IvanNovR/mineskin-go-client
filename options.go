@@ -54,7 +54,9 @@ func WithAPIKey(key string) Option {
 }
 
 // WithInsecureHTTP allows NewClient to combine an API key with an http:// base
-// URL whose host is not loopback (localhost, 127.0.0.0/8 or ::1). Without it
+// URL whose host is not loopback (localhost, 127.0.0.0/8 or ::1). The name
+// localhost is trusted as loopback without DNS resolution, as is any IP in
+// those ranges; any other name counts as remote. Without it
 // such a configuration fails with ErrInvalidInput, because the key would cross
 // the network unencrypted. With it the key is sent and NewClient logs a
 // warning. Use it only for a trusted private network or a TLS-terminating

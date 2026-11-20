@@ -27,7 +27,7 @@ These settings are expected on the GitHub repository:
 
 - Branch ruleset "Protect main": pull requests only, required status checks including `branch-policy` and `release-preview`.
 - Merge commit message = pull request title (`merge_commit_title: PR_TITLE`), so the promotion title is the merge commit subject that svu reads and the release preview simulates.
-- Tag ruleset for `v*`: no deletion and no update of tags (creation only by GitHub Actions).
+- Tag ruleset "Protect release tags" for `v*`: nobody can delete or move a tag (there is no bypass). Tag creation is not restricted, because GitHub does not accept GitHub Actions as a bypass actor on a personal-account repository.
 - Immutable releases enabled, before the first release (the setting does not apply to earlier releases).
 - Dependabot alerts and security updates, and private vulnerability reporting enabled.
 - Actions workflow permissions: read-only by default, and Actions cannot approve pull requests.
@@ -62,7 +62,7 @@ To see the coming version locally, run `make next-version` on an up-to-date `dev
 - The real protections are the `v*` tag ruleset (tags cannot be deleted or moved) and immutable releases, so a published version can never be changed.
 - What this does not prevent: someone with write access can still create a new `v0.*` tag and Release through an edited dispatch. Because tags and releases are immutable and the Go module proxy caches every version permanently, such a version cannot be removed. It can only be retracted (see [Retracting a version](#retracting-a-version)).
 - Immutable releases protect only releases published after the setting is turned on, so check that it is enabled before the first release.
-- Upgrade path, once anyone besides the owner gets write access: create tags and Releases with a GitHub App token held in an environment secret, and change the tag ruleset so that only that App may create `v*` tags.
+- Upgrade path, once anyone besides the owner gets write access: create tags and Releases with a GitHub App token held in an environment secret, and, if GitHub accepts that App as a bypass actor, add a `creation` rule so that only it may create `v*` tags.
 
 ### Kill switch
 

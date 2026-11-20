@@ -65,25 +65,35 @@ func TestFilterHeaders(t *testing.T) {
 	tests := []struct {
 		name string
 		in   http.Header
-		want map[string]string
+		want http.Header
 	}{
-		{"nil", nil, map[string]string{}},
-		{"empty", http.Header{}, map[string]string{}},
-		{"unrelated dropped", mhdr("Content-Type", "x", "Server", "nginx"), map[string]string{}},
-		{"lowercased", mhdr("Mineskin-Server", "a"), map[string]string{"mineskin-server": "a"}},
-		{"x prefix", mhdr("X-MineSkin-Id", "1"), map[string]string{"x-mineskin-id": "1"}},
-		{"duplicates joined (JB-08)", mhdr("Mineskin-Tag", "a", "mineskin-tag", "b", "MINESKIN-TAG", "c"), map[string]string{"mineskin-tag": "a,b,c"}},
-		{"non-canonical map keys merged", http.Header{"mineskin-x": {"1"}, "Mineskin-X": {"2"}}, map[string]string{"mineskin-x": "2,1"}},
-		{"prefix must be followed by dash", mhdr("Mineskinfoo", "a", "X-Mineskinfoo", "b"), map[string]string{}},
-		{"empty value kept", http.Header{"Mineskin-Empty": {""}}, map[string]string{"mineskin-empty": ""}},
-		{"no values", http.Header{"Mineskin-None": nil}, map[string]string{"mineskin-none": ""}},
+		{"nil", nil, http.Header{}},
+		{"empty", http.Header{}, http.Header{}},
+		{"unrelated dropped", mhdr("Content-Type", "x", "Server", "nginx", "Set-Cookie", "a=b"), http.Header{}},
+		{"canonical name", mhdr("Mineskin-Server", "a"), http.Header{"Mineskin-Server": {"a"}}},
+		{"x prefix", mhdr("X-MineSkin-Id", "1"), http.Header{"X-Mineskin-Id": {"1"}}},
+		{"repeated values kept (JB-08)", http.Header{"Mineskin-Tag": {"a", "b", "c"}}, http.Header{"Mineskin-Tag": {"a", "b", "c"}}},
+		{"non-canonical map keys merged", http.Header{"mineskin-x": {"1"}, "Mineskin-X": {"2"}}, http.Header{"Mineskin-X": {"2", "1"}}},
+		{"prefix must be followed by dash", mhdr("Mineskinfoo", "a", "X-Mineskinfoo", "b"), http.Header{}},
+		{"empty value kept", http.Header{"Mineskin-Empty": {""}}, http.Header{"Mineskin-Empty": {""}}},
+		{"no values", http.Header{"Mineskin-None": nil}, http.Header{"Mineskin-None": nil}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := FilterHeaders(tt.in); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("got %v, want %v", got, tt.want)
+				t.Errorf("got %#v, want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFilterHeadersIsAClone(t *testing.T) {
+	in := http.Header{"Mineskin-Tag": {"a"}}
+	out := FilterHeaders(in)
+	out["Mineskin-Tag"][0] = "changed"
+	out.Add("Mineskin-Tag", "more")
+	if !reflect.DeepEqual(in, http.Header{"Mineskin-Tag": {"a"}}) {
+		t.Errorf("input modified: %v", in)
 	}
 }
 

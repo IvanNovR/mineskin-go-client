@@ -3,7 +3,6 @@ package mineskin
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net"
@@ -108,7 +107,7 @@ func TestDoInvalidPathIsInvalidInput(t *testing.T) {
 	if !errors.As(err, &build) {
 		t.Fatalf("err = %v, want *transport.BuildError", err)
 	}
-	_, err = c.get(context.Background(), "/v2/\x7f", noopDecoder)
+	_, _, err = getResponse[struct{}](context.Background(), c, "/v2/\x7f", nil)
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("get err = %v, want ErrInvalidInput", err)
 	}
@@ -179,7 +178,7 @@ func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
 	t.Cleanup(tlsSrv.Close)
 
 	c := newTestClient(t, tlsSrv.URL, WithTransport(tlsSrv.Client().Transport), WithAPIKey(testAPIKey))
-	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
+	_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
 	assertGoStyleMessage(t, err)
 	if plainHits.Load() != 0 {
 		t.Error("plain http server was contacted after an https->http redirect")
@@ -254,7 +253,7 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := append([]Option{WithAPIKey(testAPIKey), WithLogger(captureLogger(&logs))}, tt.opts...)
 			c := newTestClient(t, closedURL, opts...)
-			_, err := c.get(context.Background(), "/v2/skins/abc", noopDecoder)
+			_, _, err := getResponse[struct{}](context.Background(), c, "/v2/skins/abc", nil)
 			assertGoStyleMessage(t, err)
 			if strings.Contains(err.Error(), testAPIKey) || strings.Contains(err.Error(), "Bearer") {
 				t.Errorf("error leaks credentials: %v", err)
@@ -290,7 +289,7 @@ func TestDoBodySizeLimit(t *testing.T) {
 				if err == nil {
 					t.Fatal("do() error = nil, want an error")
 				}
-				_, getErr := c.get(context.Background(), "/v2/x", noopDecoder)
+				_, _, getErr := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
 				assertGoStyleMessage(t, getErr)
 				return
 			}
@@ -328,14 +327,11 @@ func TestGetHappyPath(t *testing.T) {
 		_, _ = w.Write([]byte(`{"success":true,"user":"jeb"}`))
 	})
 	c := newTestClient(t, srv.URL)
-	var user string
-	meta, err := c.get(context.Background(), "/v2/x", func(obj map[string]json.RawMessage, _ []byte) error {
-		return json.Unmarshal(obj["user"], &user)
-	})
+	wire, meta, err := getResponse[testWire](context.Background(), c, "/v2/x", nil)
 	if err != nil {
 		t.Fatalf("get() error = %v", err)
 	}
-	if user != "jeb" || !meta.Success || meta.Status != 200 || meta.Breadcrumb != "bc" {
+	if user := wire.User; user != "jeb" || meta.Status != 200 || meta.Breadcrumb != "bc" {
 		t.Errorf("user=%q meta=%+v", user, meta)
 	}
 }
@@ -346,9 +342,9 @@ func TestGetAPIError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":"skin_not_found","message":"Skin not found"}]}`))
 	})
 	c := newTestClient(t, srv.URL)
-	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
+	_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 404 || apiErr.Code != "skin_not_found" {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != 404 || apiErr.Code != "skin_not_found" {
 		t.Fatalf("err = %v, want 404 APIError", err)
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -360,7 +356,7 @@ func TestGetPropagatesTransportError(t *testing.T) {
 	boom := errors.New("boom")
 	c := newTestClient(t, "http://example.invalid", WithTransport(roundTripFunc(
 		func(*http.Request) (*http.Response, error) { return nil, boom })))
-	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
+	_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want it to wrap boom", err)
 	}
@@ -379,7 +375,7 @@ func TestDoConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := c.get(context.Background(), "/v2/x", noopDecoder)
+			_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
 			errs <- err
 		}()
 	}
@@ -446,16 +442,12 @@ func TestPostHappyPath(t *testing.T) {
 		_, _ = w.Write([]byte(`{"success":true,"user":"jeb"}`))
 	})
 	c := newTestClient(t, srv.URL)
-	var user string
-	meta, err := c.post(context.Background(), "/v2/x",
-		&transport.Body{ContentType: "application/json", Data: []byte(`{"a":1}`)},
-		func(obj map[string]json.RawMessage, _ []byte) error {
-			return json.Unmarshal(obj["user"], &user)
-		})
+	wire, meta, err := postResponse[testWire](context.Background(), c, "/v2/x",
+		&transport.Body{ContentType: "application/json", Data: []byte(`{"a":1}`)})
 	if err != nil {
 		t.Fatalf("post() error = %v", err)
 	}
-	if user != "jeb" || !meta.Success || meta.Status != 200 || meta.Breadcrumb != "bc" {
+	if user := wire.User; user != "jeb" || meta.Status != 200 || meta.Breadcrumb != "bc" {
 		t.Errorf("user=%q meta=%+v", user, meta)
 	}
 	if string(gotBody) != `{"a":1}` {
@@ -469,9 +461,9 @@ func TestPostAPIError(t *testing.T) {
 		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":"skin_not_found","message":"Skin not found"}]}`))
 	})
 	c := newTestClient(t, srv.URL)
-	_, err := c.post(context.Background(), "/v2/x", nil, noopDecoder)
+	_, _, err := postResponse[struct{}](context.Background(), c, "/v2/x", nil)
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 404 || apiErr.Code != "skin_not_found" {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != 404 || apiErr.Code != "skin_not_found" {
 		t.Fatalf("err = %v, want 404 APIError", err)
 	}
 	if !errors.Is(err, ErrNotFound) {

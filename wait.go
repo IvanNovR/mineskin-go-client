@@ -21,7 +21,7 @@ import (
 // interrupts, and any wait started after Close, fails with ErrClientClosed.
 //
 // Waiters on the same job share pointers inside the returned response (for
-// example Skin and the ResponseMeta lists): the copy is shallow, so treat the
+// example Skin and the Meta lists): the copy is shallow, so treat the
 // result as read-only.
 //
 // When more than a few jobs are pending, the poller checks them with one list

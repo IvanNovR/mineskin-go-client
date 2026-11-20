@@ -3,6 +3,7 @@ package mineskin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -16,10 +17,10 @@ import (
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
-// TestSeamClassifiersAgreeWithHandleResponse pins the neutral classifiers that
+// TestSeamClassifiersAgreeWithDecodeResponse pins the neutral classifiers that
 // internal/ratelimit uses (transport.IsFailure, transport.IsUnexpected) against
-// the root's handleResponse, which is the truth for the public errors.
-func TestSeamClassifiersAgreeWithHandleResponse(t *testing.T) {
+// the root's decodeResponse, which is the truth for the public errors.
+func TestSeamClassifiersAgreeWithDecodeResponse(t *testing.T) {
 	const bom = "\xef\xbb\xbf"
 	tests := []struct {
 		name   string
@@ -49,13 +50,13 @@ func TestSeamClassifiersAgreeWithHandleResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := transport.Response{Status: tt.status, Header: http.Header{}, Body: []byte(tt.body), Received: pollerT0}
-			_, err := handleResponse(r, acceptAnyBody)
+			_, err := decodeMeta[struct{}](r)
 			if got, want := transport.IsFailure(r), err != nil; got != want {
-				t.Errorf("IsFailure = %v, handleResponse error = %v", got, err)
+				t.Errorf("IsFailure = %v, decodeResponse error = %v", got, err)
 			}
 			var ue *UnexpectedResponseError
 			if got, want := transport.IsUnexpected(r), errors.As(err, &ue); got != want {
-				t.Errorf("IsUnexpected = %v, handleResponse yields *UnexpectedResponseError = %v", got, want)
+				t.Errorf("IsUnexpected = %v, decodeResponse yields *UnexpectedResponseError = %v", got, want)
 			}
 			if got, want := transport.IsRetryableStatus(tt.status), tt.status == 408 || tt.status == 429 || tt.status >= 500 && tt.status != 501 && tt.status != 505; got != want {
 				t.Errorf("IsRetryableStatus = %v, want %v", got, want)
@@ -77,10 +78,11 @@ func TestSeamServerDelayAgreesWithRateLimitDecoding(t *testing.T) {
 	for _, body := range bodies {
 		r := transport.Response{Status: 200, Header: http.Header{}, Body: []byte(body)}
 		var want time.Duration
-		if obj := jsonObject(transport.TrimBOM(r.Body)); obj != nil {
-			if rl := decodeRateLimit(obj[fieldRateLimit]); rl != nil && rl.Next != nil {
-				want = rl.Next.Relative
-			}
+		var wire struct {
+			RateLimit RateLimit `json:"rateLimit"`
+		}
+		if err := json.Unmarshal(transport.TrimBOM(r.Body), &wire); err == nil {
+			want = wire.RateLimit.NextIn
 		}
 		if got := ratelimit.ServerDelay(r); got != want {
 			t.Errorf("ServerDelay(%q) = %v, public decoding = %v", body, got, want)

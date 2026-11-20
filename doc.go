@@ -17,8 +17,8 @@
 //	}
 //	res, err := c.GetSkin(ctx, "c1a1982831874868a37f5be375d38d5b")
 //
-// Every response embeds ResponseMeta with the HTTP status, API messages and
-// the mineskin-* headers.
+// Every response has a Meta field (a ResponseMeta) with the HTTP status, API
+// warnings and messages, the breadcrumb and the mineskin-* headers.
 //
 // # Generating skins
 //
@@ -63,6 +63,11 @@
 // succeed.
 //
 // # Rate limiting
+//
+// Responses report the rate limit state as RateLimit (with the per-minute and
+// per-hour WindowLimit values) and Usage, and GetUser reports the Grants of the
+// key including PerHour. This data is informational: the client never enforces
+// a quota on its own, and an hourly quota that is used up comes back as a 429.
 //
 // Requests are throttled on the client side and the throttle is on by
 // default. Requests belong to one of two groups. The generate group holds
@@ -131,6 +136,8 @@
 //
 // A Client is safe for concurrent use by multiple goroutines. It is silent by
 // default; WithLogger enables log/slog output, including Debug messages about
-// auto-tuning. The API key is sent only in the Authorization header and is
+// auto-tuning and a Warn when a response carries rateLimit, usage or
+// Retry-After data that is present but malformed and therefore ignored (the
+// message lists the field paths, never the values). The API key is sent only in the Authorization header and is
 // never logged or included in errors.
 package mineskin

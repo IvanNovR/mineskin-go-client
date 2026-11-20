@@ -103,8 +103,8 @@ func TestLiveGetSkin(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSkin() error = %v", err)
 	}
-	if !res.Success || res.Status != http.StatusOK {
-		t.Fatalf("Success = %v, Status = %d; want true, 200", res.Success, res.Status)
+	if res.Meta.Status != http.StatusOK {
+		t.Fatalf("Status = %d; want 200", res.Meta.Status)
 	}
 	want, err := ParseUUID(id)
 	if err != nil {
@@ -143,7 +143,7 @@ func TestLiveGetSkinNotFound(t *testing.T) {
 		t.Fatalf("GetSkinByUUID() error = %v, want ErrNotFound", err)
 	}
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != http.StatusNotFound {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != http.StatusNotFound {
 		t.Errorf("error = %#v, want *APIError with status 404", err)
 	}
 }
@@ -156,12 +156,12 @@ func TestLiveGetUser(t *testing.T) {
 		var apiErr *APIError
 		if errors.As(err, &apiErr) {
 			t.Fatalf("GetUser() failed: HTTP %d, code %q, message %q (the key may lack access to /v2/me; consider gating this test behind MINESKIN_LIVE_PAID): %v",
-				apiErr.Status, apiErr.Code, apiErr.Message, err)
+				apiErr.Meta.Status, apiErr.Code, apiErr.Message, err)
 		}
 		t.Fatalf("GetUser() failed: %v", err)
 	}
-	if !res.Success {
-		t.Errorf("Success = false, want true")
+	if res.Meta.Status != http.StatusOK {
+		t.Errorf("Status = %d, want 200", res.Meta.Status)
 	}
 	if res.User.UUID == (UUID{}) {
 		t.Error("User.UUID is zero")
@@ -179,10 +179,10 @@ func TestLiveGetUserPaidGrants(t *testing.T) {
 		t.Fatalf("GetUser() error = %v", err)
 	}
 	g := res.User.Grants
-	if g.Concurrency == nil || *g.Concurrency <= livePaidMinConcur {
+	if g.Concurrency <= livePaidMinConcur {
 		t.Errorf("Grants.Concurrency = %v, want > %d", g.Concurrency, livePaidMinConcur)
 	}
-	if g.PerMinute == nil || *g.PerMinute <= livePaidMinPerMinut {
+	if g.PerMinute <= livePaidMinPerMinut {
 		t.Errorf("Grants.PerMinute = %v, want > %d", g.PerMinute, livePaidMinPerMinut)
 	}
 }
@@ -236,7 +236,7 @@ func isInvalidSkinData(err error) bool {
 		return true
 	}
 	var failed *JobFailedError
-	return errors.As(err, &failed) && failed.Code == codeInvalidSkinData
+	return errors.As(err, &failed) && len(failed.Errors) > 0 && failed.Errors[0].Code == codeInvalidSkinData
 }
 
 // withFreshImage runs try, which must build a fresh random image or URL on
@@ -283,9 +283,8 @@ func TestLiveQueueURLAndWait(t *testing.T) {
 	t.Logf("queued job: id=%s status=%s timestamp=%s (unix ms %d) eta=%s (unix ms %d)",
 		q.Job.ID, q.Job.Status, q.Job.Timestamp.UTC().Format(time.RFC3339), q.Job.Timestamp.UnixMilli(),
 		q.Job.ETA.UTC().Format(time.RFC3339), q.Job.ETA.UnixMilli())
-	if q.RateLimit != nil {
-		t.Logf("rateLimit: delay=%s next=%+v limit=%+v", q.RateLimit.Delay, q.RateLimit.Next, q.RateLimit.Limit)
-	}
+	// The raw values let a live run confirm the unit of the window resets (epoch seconds).
+	t.Logf("rateLimit: %+v", q.RateLimit)
 
 	skin, err := c.JobSkin(ctx, res)
 	if err != nil {
@@ -308,7 +307,7 @@ func TestLiveQueueURLAndWait(t *testing.T) {
 		}
 		for _, j := range list.Jobs {
 			if j.ID == q.Job.ID {
-				if !j.Status.IsDone() {
+				if j.Status != JobStatusCompleted && j.Status != JobStatusFailed {
 					t.Errorf("listed job status = %q, want a done status", j.Status)
 				}
 				return
@@ -354,8 +353,8 @@ func TestLiveThrottleSmoke(t *testing.T) {
 			gap = start.Sub(last)
 		}
 		last = start
-		if res.RateLimit != nil && res.RateLimit.Next != nil {
-			t.Logf("call %d: gap since previous start=%s took=%s next=%+v", i, gap, time.Since(start), *res.RateLimit.Next)
+		if !res.RateLimit.NextAt.IsZero() || res.RateLimit.NextIn != 0 {
+			t.Logf("call %d: gap since previous start=%s took=%s next=%s/%s", i, gap, time.Since(start), res.RateLimit.NextAt, res.RateLimit.NextIn)
 		} else {
 			t.Logf("call %d: gap since previous start=%s took=%s next=none", i, gap, time.Since(start))
 		}

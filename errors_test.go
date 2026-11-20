@@ -9,10 +9,22 @@ import (
 )
 
 func TestAPIErrorMessageContainsStatusCodeAndMessage(t *testing.T) {
-	e := &APIError{Code: "invalid_api_key", Message: "bad key", ResponseMeta: ResponseMeta{Status: 401}}
-	want := "mineskin: API error (HTTP 401, invalid_api_key): bad key"
-	if got := e.Error(); got != want {
-		t.Fatalf("Error() = %q, want %q", got, want)
+	tests := []struct {
+		name string
+		err  *APIError
+		want string
+	}{
+		{"code and message", &APIError{Code: "invalid_api_key", Message: "bad key", Meta: ResponseMeta{Status: 401}}, "mineskin: API error (HTTP 401, invalid_api_key): bad key"},
+		{"message only", &APIError{Message: "bad key", Meta: ResponseMeta{Status: 401}}, "mineskin: API error (HTTP 401): bad key"},
+		{"code only", &APIError{Code: "invalid_api_key", Meta: ResponseMeta{Status: 401}}, "mineskin: API error (HTTP 401, invalid_api_key)"},
+		{"neither", &APIError{Meta: ResponseMeta{Status: 403}}, "mineskin: API error (HTTP 403)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.err.Error(); got != tt.want {
+				t.Fatalf("Error() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -31,7 +43,7 @@ func TestAPIErrorIs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := &APIError{ResponseMeta: ResponseMeta{Status: tt.status}}
+			e := &APIError{Meta: ResponseMeta{Status: tt.status}}
 			if got := errors.Is(e, tt.target); got != tt.want {
 				t.Fatalf("errors.Is(status %d, %v) = %v, want %v", tt.status, tt.target, got, tt.want)
 			}
@@ -40,7 +52,7 @@ func TestAPIErrorIs(t *testing.T) {
 }
 
 func TestAPIErrorAsThroughWrapper(t *testing.T) {
-	orig := &APIError{Code: "x", Message: "y", ResponseMeta: ResponseMeta{Status: 429}}
+	orig := &APIError{Code: "x", Message: "y", Meta: ResponseMeta{Status: 429}}
 	wrapped := fmt.Errorf("outer: %w", orig)
 	var got *APIError
 	if !errors.As(wrapped, &got) || got != orig {
@@ -74,7 +86,7 @@ func TestSentinelMessagesDoNotLeak(t *testing.T) {
 
 func TestResponseMetaZeroValue(t *testing.T) {
 	var m ResponseMeta
-	if m.Status != 0 || m.Success || m.Errors != nil || m.Headers != nil || m.Links != nil {
+	if m.Status != 0 || m.Header != nil || m.Breadcrumb != "" || m.Warnings != nil || m.Messages != nil || m.Links != nil {
 		t.Fatalf("zero ResponseMeta should be empty: %+v", m)
 	}
 	_ = CodeAndMessage{Code: "c", Message: "m"}
@@ -92,7 +104,7 @@ func TestSentinelsArePlainErrors(t *testing.T) {
 			}
 		})
 	}
-	for _, e := range []error{&APIError{ResponseMeta: ResponseMeta{Status: 500}}, &JobFailedError{}} {
+	for _, e := range []error{&APIError{Meta: ResponseMeta{Status: 500}}, &JobFailedError{}} {
 		if errors.Is(e, ErrInvalidInput) || errors.Is(e, ErrNotFound) {
 			t.Errorf("%T matches an unrelated sentinel", e)
 		}

@@ -6,26 +6,22 @@ import (
 	"time"
 )
 
-func TestJobStatusPredicates(t *testing.T) {
+func TestJobStatusIsPending(t *testing.T) {
 	tests := []struct {
 		status  JobStatus
 		pending bool
-		done    bool
 	}{
-		{JobStatusWaiting, true, false},
-		{JobStatusProcessing, true, false},
-		{JobStatusCompleted, false, true},
-		{JobStatusFailed, false, true},
-		{JobStatusUnknown, false, false},
-		{JobStatus("weird"), false, false},
+		{JobStatusWaiting, true},
+		{JobStatusProcessing, true},
+		{JobStatusCompleted, false},
+		{JobStatusFailed, false},
+		{JobStatus("unknown"), false},
+		{JobStatus("weird"), false},
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.status), func(t *testing.T) {
 			if got := tt.status.IsPending(); got != tt.pending {
 				t.Errorf("IsPending() = %v, want %v", got, tt.pending)
-			}
-			if got := tt.status.IsDone(); got != tt.done {
-				t.Errorf("IsDone() = %v, want %v", got, tt.done)
 			}
 		})
 	}
@@ -82,7 +78,7 @@ func TestJobUnmarshalJSON(t *testing.T) {
 	}
 }
 
-func TestIsPollDone(t *testing.T) {
+func TestJobIsTerminal(t *testing.T) {
 	result := UUID{1}
 	tests := []struct {
 		name string
@@ -97,9 +93,19 @@ func TestIsPollDone(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := isPollDone(tt.job); got != tt.want {
-				t.Errorf("isPollDone() = %v, want %v", got, tt.want)
+			if got := tt.job.IsTerminal(); got != tt.want {
+				t.Errorf("IsTerminal() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestJobUnmarshalJSONIgnoresPreviousState(t *testing.T) {
+	prev := Job{ID: "old", Status: JobStatusFailed, Result: UUID{9}, ETA: time.UnixMilli(5)}
+	if err := json.Unmarshal([]byte(`{"id":"new","status":"waiting"}`), &prev); err != nil {
+		t.Fatal(err)
+	}
+	if want := (Job{ID: "new", Status: JobStatusWaiting}); prev != want {
+		t.Errorf("Job = %+v, want %+v", prev, want)
 	}
 }

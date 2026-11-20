@@ -17,8 +17,6 @@ func newTestTuner(t *testing.T) (*Tuner, *clock.Fake) {
 	return NewTuner(TunerConfig{Clock: fake}), fake
 }
 
-func intPtr(n int) *int { return &n }
-
 func TestTunerBaselineBeforeLoad(t *testing.T) {
 	tn, fake := newTestTuner(t)
 	got := tn.Limits(fake.Now())
@@ -34,19 +32,19 @@ func TestTunerApplyGrants(t *testing.T) {
 		wantInterval time.Duration
 		wantConc     int
 	}{
-		{"60 per minute", Grants{PerMinute: intPtr(60)}, time.Second, 1},
-		{"600 per minute", Grants{PerMinute: intPtr(600)}, 100 * time.Millisecond, 1},
-		{"6000 clamps to min", Grants{PerMinute: intPtr(6000)}, 100 * time.Millisecond, 1},
-		{"30 clamps to max", Grants{PerMinute: intPtr(30)}, time.Second, 1},
-		{"70 truncates to ms", Grants{PerMinute: intPtr(70)}, 857 * time.Millisecond, 1},
+		{"60 per minute", Grants{PerMinute: 60}, time.Second, 1},
+		{"600 per minute", Grants{PerMinute: 600}, 100 * time.Millisecond, 1},
+		{"6000 clamps to min", Grants{PerMinute: 6000}, 100 * time.Millisecond, 1},
+		{"30 clamps to max", Grants{PerMinute: 30}, time.Second, 1},
+		{"70 truncates to ms", Grants{PerMinute: 70}, 857 * time.Millisecond, 1},
 		{"per minute missing keeps interval", Grants{}, time.Second, 1},
-		{"per minute zero keeps interval", Grants{PerMinute: intPtr(0)}, time.Second, 1},
-		{"per minute negative keeps interval", Grants{PerMinute: intPtr(-4)}, time.Second, 1},
-		{"concurrency 10", Grants{Concurrency: intPtr(10)}, time.Second, 10},
-		{"concurrency 0 clamps to 1", Grants{Concurrency: intPtr(0)}, time.Second, 1},
-		{"concurrency negative clamps to 1", Grants{Concurrency: intPtr(-5)}, time.Second, 1},
-		{"concurrency 50 clamps to 30", Grants{Concurrency: intPtr(50)}, time.Second, 30},
-		{"concurrency missing keeps value", Grants{PerMinute: intPtr(600)}, 100 * time.Millisecond, 1},
+		{"per minute zero keeps interval", Grants{PerMinute: 0}, time.Second, 1},
+		{"per minute negative keeps interval", Grants{PerMinute: -4}, time.Second, 1},
+		{"concurrency 10", Grants{Concurrency: 10}, time.Second, 10},
+		{"concurrency zero keeps value", Grants{Concurrency: 0}, time.Second, 1},
+		{"concurrency negative keeps value", Grants{Concurrency: -5}, time.Second, 1},
+		{"concurrency 50 clamps to 30", Grants{Concurrency: 50}, time.Second, 30},
+		{"concurrency missing keeps value", Grants{PerMinute: 600}, 100 * time.Millisecond, 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -62,7 +60,7 @@ func TestTunerApplyGrants(t *testing.T) {
 
 func TestTunerApplyGrantsKeepsUnsetFieldsFromEarlierGrants(t *testing.T) {
 	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(600), Concurrency: intPtr(7)})
+	tn.applyGrants(Grants{PerMinute: 600, Concurrency: 7})
 	tn.applyGrants(Grants{})
 	got := tn.Limits(fake.Now())
 	if got.Interval != 100*time.Millisecond || got.Concurrency != 7 {
@@ -72,7 +70,7 @@ func TestTunerApplyGrantsKeepsUnsetFieldsFromEarlierGrants(t *testing.T) {
 
 func TestTunerKeepsLastKnownValuesWithoutNewGrants(t *testing.T) {
 	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(300), Concurrency: intPtr(4)})
+	tn.applyGrants(Grants{PerMinute: 300, Concurrency: 4})
 	fake.Advance(time.Hour)
 	got := tn.Limits(fake.Now())
 	if got.Interval != 200*time.Millisecond || got.Concurrency != 4 {
@@ -82,7 +80,7 @@ func TestTunerKeepsLastKnownValuesWithoutNewGrants(t *testing.T) {
 
 func TestTunerPenaltyAddsStep(t *testing.T) {
 	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
+	tn.applyGrants(Grants{PerMinute: 60})
 	tn.ReportFailure()
 	if got := tn.Limits(fake.Now()).Interval; got != 1500*time.Millisecond {
 		t.Errorf("after one failure interval = %v, want 1.5s", got)
@@ -95,7 +93,7 @@ func TestTunerPenaltyAddsStep(t *testing.T) {
 
 func TestTunerPenaltyDecaysLinearly(t *testing.T) {
 	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
+	tn.applyGrants(Grants{PerMinute: 60})
 	tn.ReportFailure()
 	fake.Advance(2 * time.Second)
 	if got := tn.Limits(fake.Now()).Interval; got != 1300*time.Millisecond {
@@ -109,7 +107,7 @@ func TestTunerPenaltyDecaysLinearly(t *testing.T) {
 
 func TestTunerPenaltyStacksOnDecayed(t *testing.T) {
 	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
+	tn.applyGrants(Grants{PerMinute: 60})
 	tn.ReportFailure()
 	fake.Advance(3 * time.Second)
 	tn.ReportFailure()
@@ -120,7 +118,7 @@ func TestTunerPenaltyStacksOnDecayed(t *testing.T) {
 
 func TestTunerPenaltyClamp(t *testing.T) {
 	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
+	tn.applyGrants(Grants{PerMinute: 60})
 	for range 30 {
 		tn.ReportFailure()
 	}
@@ -136,7 +134,7 @@ func TestTunerPenaltyClamp(t *testing.T) {
 
 func TestTunerDecayNoOverflow(t *testing.T) {
 	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
+	tn.applyGrants(Grants{PerMinute: 60})
 	tn.ReportFailure()
 	fake.Advance(1000 * time.Hour)
 	if got := tn.Limits(fake.Now()).Interval; got != time.Second {
@@ -150,7 +148,7 @@ func TestTunerDecayNoOverflow(t *testing.T) {
 
 func TestTunerRealClock(t *testing.T) {
 	tn := NewTuner(TunerConfig{Clock: clock.Real()})
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
+	tn.applyGrants(Grants{PerMinute: 60})
 	tn.ReportFailure()
 	got := tn.Limits(time.Now()).Interval
 	if got <= time.Second || got > 1500*time.Millisecond {
@@ -169,7 +167,7 @@ func TestTunerCallsKickOutsideLock(t *testing.T) {
 		tn.mu.Unlock()
 		kicks++
 	})
-	tn.applyGrants(Grants{PerMinute: intPtr(600)})
+	tn.applyGrants(Grants{PerMinute: 600})
 	tn.ReportFailure()
 	if kicks != 2 {
 		t.Errorf("kicks = %d, want 2", kicks)
@@ -179,12 +177,25 @@ func TestTunerCallsKickOutsideLock(t *testing.T) {
 func TestTunerLogsChangesAtDebug(t *testing.T) {
 	var buf bytes.Buffer
 	tn := NewTuner(TunerConfig{Clock: clock.NewFake(tunerT0), Logger: captureLogger(&buf)})
-	tn.applyGrants(Grants{PerMinute: intPtr(600), Concurrency: intPtr(3)})
+	tn.applyGrants(Grants{PerMinute: 600, Concurrency: 3})
 	tn.ReportFailure()
 	out := buf.String()
 	for _, want := range []string{"level=DEBUG", "grants", "penalty"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("log %q does not contain %q", out, want)
+		}
+	}
+}
+
+// TestTunerNonPositiveConcurrencyKeepsCurrentValue pins OQ8: a grant of zero or
+// less means unknown and keeps the concurrency from an earlier grant.
+func TestTunerNonPositiveConcurrencyKeepsCurrentValue(t *testing.T) {
+	for _, unknown := range []int{0, -3} {
+		tn, fake := newTestTuner(t)
+		tn.applyGrants(Grants{Concurrency: 7})
+		tn.applyGrants(Grants{Concurrency: unknown})
+		if got := tn.Limits(fake.Now()).Concurrency; got != 7 {
+			t.Errorf("concurrency after grant %d = %d, want 7", unknown, got)
 		}
 	}
 }

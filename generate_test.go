@@ -13,7 +13,8 @@ import (
 )
 
 const queueFixture = `{"success":true,"job":{"id":"job-1","status":"waiting","timestamp":1700000000000},
-"rateLimit":{"next":{"relative":500},"limit":{"limit":10,"remaining":9}},
+"rateLimit":{"next":{"relative":500},"limit":{"limit":10,"remaining":9,
+"hour":{"limit":100,"remaining":99,"used":1,"reset":1700003600}}},
 "usage":{"credits":{"used":2,"remaining":98}}}`
 
 func TestQueueURLSendsJSON(t *testing.T) {
@@ -40,18 +41,17 @@ func TestQueueURLSendsJSON(t *testing.T) {
 	if sent["url"] != "https://example.com/s.png" || sent["name"] != "n" || sent["variant"] != "slim" {
 		t.Errorf("body = %v", sent)
 	}
-	if got.Job.ID != "job-1" || got.Job.Status != JobStatusWaiting || got.Job.Breadcrumb != "crumb-q" {
+	if got.Job.ID != "job-1" || got.Job.Status != JobStatusWaiting {
 		t.Errorf("job = %+v", got.Job)
 	}
-	if got.Breadcrumb != "crumb-q" || got.Status != 200 || !got.Success {
-		t.Errorf("meta = %+v", got.ResponseMeta)
+	if got.Meta.Breadcrumb != "crumb-q" || got.Meta.Status != 200 {
+		t.Errorf("meta = %+v", got.Meta)
 	}
-	if got.RateLimit == nil || got.RateLimit.Next == nil || got.RateLimit.Next.Relative != 500*time.Millisecond ||
-		got.RateLimit.Limit == nil || got.RateLimit.Limit.Remaining != 9 {
-		t.Errorf("rateLimit = %+v", got.RateLimit)
-	}
-	if got.Usage == nil || got.Usage.Credits == nil || got.Usage.Credits.Used != 2 || got.Usage.Credits.Remaining != 98 {
-		t.Errorf("usage = %+v", got.Usage)
+	wantRL := RateLimit{NextIn: 500 * time.Millisecond, Limit: 10, Remaining: 9,
+		Hour: WindowLimit{Limit: 100, Remaining: 99, Used: 1, Reset: time.Unix(1700003600, 0)}}
+	assertRateLimit(t, got.RateLimit, wantRL)
+	if want := (Usage{CreditsUsed: 2, CreditsRemaining: 98}); got.Usage != want {
+		t.Errorf("usage = %+v, want %+v", got.Usage, want)
 	}
 }
 
@@ -105,25 +105,23 @@ func TestGenerateDecodesSkin(t *testing.T) {
 	if got.Skin.UUID.String() != testSkinID || got.Skin.Name != "Steve" || got.Skin.Texture.Data.Value != "VAL" {
 		t.Errorf("skin = %+v", got.Skin)
 	}
-	if got.Skin.Breadcrumb != "crumb-g" || got.Breadcrumb != "crumb-g" {
-		t.Errorf("breadcrumb skin=%q meta=%q", got.Skin.Breadcrumb, got.Breadcrumb)
+	if got.Meta.Breadcrumb != "crumb-g" || got.Meta.Status != 200 {
+		t.Errorf("meta = %+v", got.Meta)
 	}
-	if got.RateLimit == nil || got.RateLimit.Limit == nil || got.RateLimit.Limit.Limit != 5 {
-		t.Errorf("rateLimit = %+v", got.RateLimit)
-	}
-	if got.Usage == nil || got.Usage.Credits == nil || got.Usage.Credits.Remaining != 9 {
-		t.Errorf("usage = %+v", got.Usage)
+	assertRateLimit(t, got.RateLimit, RateLimit{Limit: 5, Remaining: 4})
+	if want := (Usage{CreditsUsed: 1, CreditsRemaining: 9}); got.Usage != want {
+		t.Errorf("usage = %+v, want %+v", got.Usage, want)
 	}
 }
 
-func TestQueueAbsentRateLimitIsNil(t *testing.T) {
+func TestQueueAbsentRateLimitIsZero(t *testing.T) {
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"job":{"id":"j","status":"waiting"}}`))
 	got, err := newTestClient(t, srv.URL).Queue(context.Background(), FromURL("https://example.com/a.png"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RateLimit != nil || got.Usage != nil {
-		t.Errorf("rateLimit=%+v usage=%+v, want nil", got.RateLimit, got.Usage)
+	if !got.RateLimit.NextAt.IsZero() || got.RateLimit != (RateLimit{}) || got.Usage != (Usage{}) {
+		t.Errorf("rateLimit=%+v usage=%+v, want zero", got.RateLimit, got.Usage)
 	}
 }
 
@@ -171,7 +169,7 @@ func TestQueueAPIError(t *testing.T) {
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("error = %v, want *APIError", err)
 	}
-	if got != nil || apiErr.Status != 429 || apiErr.Code != "too_many_requests" {
+	if got != nil || apiErr.Meta.Status != 429 || apiErr.Code != "too_many_requests" {
 		t.Errorf("got=%v apiErr=%+v", got, apiErr)
 	}
 }

@@ -2,9 +2,9 @@ package mineskin
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -21,6 +21,9 @@ import (
 // endpoints to internal/poll, and maps the raw errors of internal/ratelimit
 // and internal/poll to the public error contract.
 
+// discardLogger is for decoding a response that was already decoded and logged.
+var discardLogger = slog.New(slog.DiscardHandler)
+
 // errCheckSkipped is returned by a request whose start gate declined it. The
 // poller treats it as "nothing to do", never as a job failure.
 var errCheckSkipped = ratelimit.ErrSkipped
@@ -29,10 +32,6 @@ const (
 	generateGroupName = "generate"
 	getGroupName      = "get"
 )
-
-// acceptAnyBody is a payload decoder that never fails, so handleResponse only
-// reports envelope and API errors.
-func acceptAnyBody(map[string]json.RawMessage, []byte) error { return nil }
 
 // newRequestGroups builds the generate and get groups from the resolved
 // throttle settings.
@@ -131,7 +130,7 @@ type retryCancelledError struct {
 // the error of the 429 that caused the retry; without a 429 error it returns
 // ctxErr alone.
 func newRetryCancelledError(ctxErr error, last transport.Response) error {
-	_, rateLimited := handleResponse(last, acceptAnyBody)
+	_, _, rateLimited := decodeResponse[struct{}](last, discardLogger, "")
 	if rateLimited == nil {
 		return ctxErr
 	}
@@ -179,7 +178,7 @@ func (s jobSource) List(ctx context.Context) ([]poll.State, error) {
 
 // jobState derives the neutral poll state of j.
 func jobState(j Job) poll.State {
-	return poll.State{ID: j.ID, ETA: j.ETA, Done: isPollDone(j), Failed: j.Status == JobStatusFailed}
+	return poll.State{ID: j.ID, ETA: j.ETA, Done: j.IsTerminal(), Failed: j.Status == JobStatusFailed}
 }
 
 // toPollOptions maps the resolved public polling options to the neutral ones.
@@ -223,27 +222,25 @@ func (c *Client) do(ctx context.Context, method, path string, body *transport.Bo
 	return c.doer.Do(ctx, method, path, body)
 }
 
-// get sends a GET request through the get group (GetSkin, GetUser, GetJob,
-// ListJobs and the poller) and interprets the response with handleResponse.
-func (c *Client) get(ctx context.Context, path string, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
-	return c.getGated(ctx, path, nil, decodeBody)
-}
-
-// getGated is get with a start gate (see exchange); a nil proceed is no gate.
-func (c *Client) getGated(ctx context.Context, path string, proceed func() bool, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
+// getResponse sends a GET request through the get group (GetSkin, GetUser,
+// GetJob, ListJobs and the poller) and decodes the response with
+// decodeResponse. A non-nil proceed is the start gate (see exchange).
+func getResponse[W any](ctx context.Context, c *Client, path string, proceed func() bool) (W, ResponseMeta, error) {
 	raw, err := c.exchange(ctx, c.getGroup, http.MethodGet, path, nil, proceed)
 	if err != nil {
-		return ResponseMeta{}, err
+		var zero W
+		return zero, ResponseMeta{}, err
 	}
-	return handleResponse(raw, decodeBody)
+	return decodeResponse[W](raw, c.logger, path)
 }
 
-// post sends a POST request with body through the generate group (Queue and
-// Generate) and interprets the response with handleResponse.
-func (c *Client) post(ctx context.Context, path string, body *transport.Body, decodeBody func(map[string]json.RawMessage, []byte) error) (ResponseMeta, error) {
+// postResponse sends a POST request with body through the generate group
+// (Queue and Generate) and decodes the response with decodeResponse.
+func postResponse[W any](ctx context.Context, c *Client, path string, body *transport.Body) (W, ResponseMeta, error) {
 	raw, err := c.exchange(ctx, c.genGroup, http.MethodPost, path, body, nil)
 	if err != nil {
-		return ResponseMeta{}, err
+		var zero W
+		return zero, ResponseMeta{}, err
 	}
-	return handleResponse(raw, decodeBody)
+	return decodeResponse[W](raw, c.logger, path)
 }

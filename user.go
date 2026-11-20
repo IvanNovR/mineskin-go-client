@@ -3,33 +3,32 @@ package mineskin
 import (
 	"context"
 	"encoding/json"
-	"strconv"
 )
 
 const (
-	mePath             = "/v2/me"
-	fieldUser          = "user"
-	fieldGrants        = "grants"
-	fieldPerMinute     = "per_minute"
-	fieldConcurrency   = "concurrency"
-	jsonNull           = "null"
-	jsonStringQuoteTag = '"'
+	mePath   = "/v2/me"
+	jsonNull = "null"
+
+	grantPerMinute   = "per_minute"
+	grantPerHour     = "per_hour"
+	grantConcurrency = "concurrency"
 )
 
-// Grants describes what the API key of the current user may do.
+// Grants describes what the API key of the current user may do. Zero means
+// the API did not send a usable (positive integer) value.
 type Grants struct {
-	// PerMinute is the request limit per minute, or nil when the API did not
-	// send a positive integer.
-	PerMinute *int
-	// Concurrency is the number of concurrent requests allowed, or nil when
-	// the API did not send an integer.
-	Concurrency *int
+	// PerMinute is the request limit per minute.
+	PerMinute int
+	// PerHour is the request limit per hour.
+	PerHour int
+	// Concurrency is the number of concurrent requests allowed.
+	Concurrency int
 	// Raw holds every grant as sent by the API, or nil when there were none.
 	Raw map[string]json.RawMessage
 }
 
-// UserInfo describes the current user.
-type UserInfo struct {
+// User describes the current user.
+type User struct {
 	// UUID is the value of the "user" field of the response; it is the zero
 	// UUID when the field is absent or null.
 	UUID UUID
@@ -39,9 +38,45 @@ type UserInfo struct {
 
 // UserResponse is the response to GetUser.
 type UserResponse struct {
-	ResponseMeta
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 	// User is the current user.
-	User UserInfo
+	User User
+}
+
+// userWire is the wire shape of a /v2/me response.
+type userWire struct {
+	User   UUID   `json:"user"`
+	Grants Grants `json:"grants"`
+}
+
+// UnmarshalJSON decodes the grants object. A null value leaves g unchanged; a
+// value that is not an object is an error. Inside the object it is lenient: a
+// grant that is not a positive integer is left zero.
+func (g *Grants) UnmarshalJSON(b []byte) error {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	if raw == nil {
+		return nil
+	}
+	*g = Grants{
+		Raw:         raw,
+		PerMinute:   positiveInt(raw[grantPerMinute]),
+		PerHour:     positiveInt(raw[grantPerHour]),
+		Concurrency: positiveInt(raw[grantConcurrency]),
+	}
+	return nil
+}
+
+// positiveInt parses a JSON integer, returning 0 for anything else (absent,
+// null, string, fraction) and for values below 1.
+func positiveInt(v json.RawMessage) int {
+	if n := lenientInt(v); n > 0 {
+		return n
+	}
+	return 0
 }
 
 // GetUser fetches the user and grants of the configured API key. Missing user
@@ -50,67 +85,9 @@ func (c *Client) GetUser(ctx context.Context) (*UserResponse, error) {
 	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
-	var user UserInfo
-	meta, err := c.get(ctx, mePath, func(obj map[string]json.RawMessage, _ []byte) error {
-		return decodeUser(obj, &user)
-	})
+	wire, meta, err := getResponse[userWire](ctx, c, mePath, nil)
 	if err != nil {
 		return nil, err
 	}
-	return &UserResponse{ResponseMeta: meta, User: user}, nil
-}
-
-// decodeUser fills dst from the top-level fields of a /v2/me response.
-func decodeUser(obj map[string]json.RawMessage, dst *UserInfo) error {
-	if v := obj[fieldUser]; len(v) > 0 {
-		if err := json.Unmarshal(v, &dst.UUID); err != nil {
-			return err
-		}
-	}
-	return decodeGrants(obj[fieldGrants], &dst.Grants)
-}
-
-// decodeGrants decodes the grants object. Absent or null grants leave dst
-// zero; a value that is not an object is an error.
-func decodeGrants(v json.RawMessage, dst *Grants) error {
-	if len(v) == 0 {
-		return nil
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(v, &raw); err != nil {
-		return err
-	}
-	if raw == nil {
-		return nil
-	}
-	dst.Raw = raw
-	dst.PerMinute = positiveInt(raw[fieldPerMinute])
-	dst.Concurrency = integer(raw[fieldConcurrency])
-	return nil
-}
-
-// integer parses a JSON integer, returning nil for anything else (absent,
-// null, string, fraction).
-func integer(v json.RawMessage) *int {
-	if len(v) == 0 || v[0] == jsonStringQuoteTag || string(v) == jsonNull {
-		return nil
-	}
-	var num json.Number
-	if json.Unmarshal(v, &num) != nil {
-		return nil
-	}
-	n, err := strconv.Atoi(num.String())
-	if err != nil {
-		return nil
-	}
-	return &n
-}
-
-// positiveInt is like integer but also returns nil for values below 1.
-func positiveInt(v json.RawMessage) *int {
-	n := integer(v)
-	if n == nil || *n <= 0 {
-		return nil
-	}
-	return n
+	return &UserResponse{Meta: meta, User: User{UUID: wire.User, Grants: wire.Grants}}, nil
 }

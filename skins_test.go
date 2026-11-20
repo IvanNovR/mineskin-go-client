@@ -46,8 +46,8 @@ func TestGetSkinDecodesFullSkin(t *testing.T) {
 	if !s.Generator.Timestamp.Equal(time.UnixMilli(1700000000123)) || s.Generator.Duration != 1500*time.Millisecond {
 		t.Errorf("generator = %+v", s.Generator)
 	}
-	if s.Breadcrumb != "crumb1" || got.Breadcrumb != "crumb1" || got.Status != 200 || !got.Success {
-		t.Errorf("meta = %+v breadcrumb=%q", got.ResponseMeta, s.Breadcrumb)
+	if got.Meta.Breadcrumb != "crumb1" || got.Meta.Status != 200 {
+		t.Errorf("meta = %+v", got.Meta)
 	}
 }
 
@@ -158,11 +158,8 @@ func TestGetSkinNotFoundIsAPIErrorNotParseError(t *testing.T) {
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("err = %T %v, want *APIError", err, err)
 	}
-	if !errors.Is(err, ErrNotFound) || apiErr.Status != 404 || apiErr.Message != "Skin not found" || apiErr.Code != "skin_not_found" {
+	if !errors.Is(err, ErrNotFound) || apiErr.Meta.Status != 404 || apiErr.Message != "Skin not found" || apiErr.Code != "skin_not_found" {
 		t.Errorf("apiErr = %+v", apiErr)
-	}
-	if apiErr.Code == defaultErrorCode {
-		t.Error("error looks like a parse error, not the reported API error")
 	}
 }
 
@@ -242,7 +239,7 @@ func TestGetSkinWrongTypedPayloadOnErrorResponseIsAPIError(t *testing.T) {
 			srv := newTestServer(t, writeJSON(tc.status, tc.body))
 			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
 			var apiErr *APIError
-			if !errors.As(err, &apiErr) || apiErr.Status != tc.status {
+			if !errors.As(err, &apiErr) || apiErr.Meta.Status != tc.status {
 				t.Fatalf("err = %T %v, want *APIError %d", err, err, tc.status)
 			}
 			if tc.is != nil && !errors.Is(err, tc.is) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -12,31 +13,28 @@ import (
 
 func TestJobFailedError(t *testing.T) {
 	job := Job{ID: "job-9", Status: JobStatusFailed}
-	withErrs := &JobResponse{Job: job, ResponseMeta: ResponseMeta{
-		Status: 200, Errors: []CodeAndMessage{{Code: "invalid_image", Message: "bad image"}, {Code: "other", Message: "second"}},
-	}}
+	errs := []CodeAndMessage{{Code: "invalid_image", Message: "bad image"}, {Code: "other", Message: "second"}}
+	meta := ResponseMeta{Status: 200, Breadcrumb: "bc"}
 	tests := []struct {
-		name        string
-		resp        *JobResponse
-		wantCode    string
-		wantMessage string
+		name       string
+		resp       *JobResponse
+		wantErrors []CodeAndMessage
+		wantText   string
 	}{
-		{"first error", withErrs, "invalid_image", "bad image"},
-		{"fallback", &JobResponse{Job: job}, "job_failed", "job failed"},
+		{"first error in the text", &JobResponse{Job: job, Meta: meta, errs: errs}, errs, "mineskin: job job-9 failed (invalid_image): bad image"},
+		{"no errors", &JobResponse{Job: job, Meta: meta}, nil, "mineskin: job job-9 failed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := newJobFailedError(tt.resp)
-			if err.Code != tt.wantCode || err.Message != tt.wantMessage {
-				t.Fatalf("code/message = %q/%q, want %q/%q", err.Code, err.Message, tt.wantCode, tt.wantMessage)
+			if err.Error() != tt.wantText {
+				t.Errorf("Error() = %q, want %q", err.Error(), tt.wantText)
 			}
-			for _, want := range []string{"job-9", tt.wantCode, tt.wantMessage} {
-				if !strings.Contains(err.Error(), want) {
-					t.Errorf("Error() = %q, missing %q", err.Error(), want)
-				}
+			if !reflect.DeepEqual(err.Errors, tt.wantErrors) {
+				t.Errorf("Errors = %v, want %v", err.Errors, tt.wantErrors)
 			}
-			if err.Job != job {
-				t.Errorf("Job = %+v, want %+v", err.Job, job)
+			if err.Job != job || err.Meta.Breadcrumb != "bc" || err.Meta.Status != 200 {
+				t.Errorf("Job = %+v Meta = %+v, want the response's", err.Job, err.Meta)
 			}
 			if errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalidInput) {
 				t.Error("matches unrelated sentinel")
@@ -74,7 +72,7 @@ func TestJobSkin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	failedErrs := ResponseMeta{Errors: []CodeAndMessage{{Code: "invalid_image", Message: "bad image"}}}
+	failedErrs := []CodeAndMessage{{Code: "invalid_image", Message: "bad image"}}
 	tests := []struct {
 		name     string
 		resp     *JobResponse
@@ -89,15 +87,15 @@ func TestJobSkin(t *testing.T) {
 			}
 		}},
 		{name: "failed with skin present", resp: &JobResponse{
-			ResponseMeta: failedErrs, Job: Job{ID: "j", Status: JobStatusFailed, Result: result}, Skin: &SkinInfo{Name: "embedded"},
+			errs: failedErrs, Job: Job{ID: "j", Status: JobStatusFailed, Result: result}, Skin: &Skin{Name: "embedded"},
 		}, check: func(t *testing.T, err error) {
 			var jf *JobFailedError
-			if !errors.As(err, &jf) || jf.Code != "invalid_image" {
+			if !errors.As(err, &jf) || len(jf.Errors) != 1 || jf.Errors[0].Code != "invalid_image" {
 				t.Errorf("err = %v, want *JobFailedError invalid_image", err)
 			}
 		}},
 		{name: "embedded skin", resp: &JobResponse{
-			Job: Job{ID: "j", Status: JobStatusCompleted, Result: result}, Skin: &SkinInfo{Name: "embedded"},
+			Job: Job{ID: "j", Status: JobStatusCompleted, Result: result}, Skin: &Skin{Name: "embedded"},
 		}, wantName: "embedded"},
 		{name: "result without skin", resp: &JobResponse{Job: Job{ID: "j", Status: JobStatusCompleted, Result: result}},
 			handler:  writeJSON(200, `{"success":true,"skin":{"uuid":"`+jobResultID+`","name":"fetched"}}`),

@@ -1,38 +1,34 @@
 package mineskin
 
-import (
-	"context"
-	"encoding/json"
-)
+import "context"
 
 const (
-	queuePath      = "/v2/queue"
-	generatePath   = "/v2/generate"
-	fieldJob       = "job"
-	fieldRateLimit = "rateLimit"
-	fieldUsage     = "usage"
+	queuePath    = "/v2/queue"
+	generatePath = "/v2/generate"
 )
 
 // QueueResponse is the response to a queued generation request.
 type QueueResponse struct {
-	ResponseMeta
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 	// Job is the queued job.
 	Job Job
-	// RateLimit is the rate limit state, or nil when absent.
-	RateLimit *RateLimitInfo
-	// Usage is the usage state, or nil when absent.
-	Usage *UsageInfo
+	// RateLimit is the rate limit state; zero when absent.
+	RateLimit RateLimit
+	// Usage is the usage state; zero when absent.
+	Usage Usage
 }
 
 // GenerateResponse is the response to a synchronous generation request.
 type GenerateResponse struct {
-	ResponseMeta
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 	// Skin is the generated skin.
-	Skin SkinInfo
-	// RateLimit is the rate limit state, or nil when absent.
-	RateLimit *RateLimitInfo
-	// Usage is the usage state, or nil when absent.
-	Usage *UsageInfo
+	Skin Skin
+	// RateLimit is the rate limit state; zero when absent.
+	RateLimit RateLimit
+	// Usage is the usage state; zero when absent.
+	Usage Usage
 }
 
 // Queue submits a skin generation job and returns it without waiting for the
@@ -42,23 +38,11 @@ func (c *Client) Queue(ctx context.Context, src Source, opts *GenerateOptions) (
 	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
-	var out QueueResponse
-	meta, err := c.submit(ctx, queuePath, src, opts, func(obj map[string]json.RawMessage) error {
-		if v := obj[fieldJob]; len(v) > 0 {
-			if err := json.Unmarshal(v, &out.Job); err != nil {
-				return err
-			}
-		}
-		out.RateLimit = decodeRateLimit(obj[fieldRateLimit])
-		out.Usage = decodeUsage(obj[fieldUsage])
-		return nil
-	})
+	wire, meta, err := submit[queueWire](ctx, c, queuePath, src, opts)
 	if err != nil {
 		return nil, err
 	}
-	out.ResponseMeta = meta
-	out.Job.Breadcrumb = meta.Breadcrumb
-	return &out, nil
+	return &QueueResponse{Meta: meta, Job: wire.Job, RateLimit: wire.RateLimit.RateLimit, Usage: wire.Usage.Usage}, nil
 }
 
 // Generate generates a skin and waits for it in a single request. The request
@@ -71,33 +55,46 @@ func (c *Client) Generate(ctx context.Context, src Source, opts *GenerateOptions
 	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
-	var out GenerateResponse
-	meta, err := c.submit(ctx, generatePath, src, opts, func(obj map[string]json.RawMessage) error {
-		if err := decodeSkin(obj[fieldSkin], &out.Skin); err != nil {
-			return err
-		}
-		out.RateLimit = decodeRateLimit(obj[fieldRateLimit])
-		out.Usage = decodeUsage(obj[fieldUsage])
-		return nil
-	})
+	wire, meta, err := submit[generateWire](ctx, c, generatePath, src, opts)
 	if err != nil {
 		return nil, err
 	}
-	out.ResponseMeta = meta
-	out.Skin.Breadcrumb = meta.Breadcrumb
-	return &out, nil
+	return &GenerateResponse{Meta: meta, Skin: wire.Skin, RateLimit: wire.RateLimit.RateLimit, Usage: wire.Usage.Usage}, nil
 }
 
-// submit encodes src, posts it to path and decodes the response with decode.
-func (c *Client) submit(ctx context.Context, path string, src Source, opts *GenerateOptions, decode func(map[string]json.RawMessage) error) (ResponseMeta, error) {
+// queueWire is the wire shape of a queued generation response.
+type queueWire struct {
+	Job       Job              `json:"job"`
+	RateLimit trackedRateLimit `json:"rateLimit"`
+	Usage     trackedUsage     `json:"usage"`
+}
+
+// droppedFields lists the malformed rateLimit and usage parts.
+func (w *queueWire) droppedFields() []string {
+	return append(append([]string(nil), w.RateLimit.dropped...), w.Usage.dropped...)
+}
+
+// generateWire is the wire shape of a synchronous generation response.
+type generateWire struct {
+	Skin      Skin             `json:"skin"`
+	RateLimit trackedRateLimit `json:"rateLimit"`
+	Usage     trackedUsage     `json:"usage"`
+}
+
+// droppedFields lists the malformed rateLimit and usage parts.
+func (w *generateWire) droppedFields() []string {
+	return append(append([]string(nil), w.RateLimit.dropped...), w.Usage.dropped...)
+}
+
+// submit encodes src, posts it to path and decodes the response into W.
+func submit[W any](ctx context.Context, c *Client, path string, src Source, opts *GenerateOptions) (W, ResponseMeta, error) {
+	var zero W
 	if src == nil {
-		return ResponseMeta{}, invalidInput("source is nil")
+		return zero, ResponseMeta{}, invalidInput("source is nil")
 	}
 	body, err := src.requestBody(opts)
 	if err != nil {
-		return ResponseMeta{}, err
+		return zero, ResponseMeta{}, err
 	}
-	return c.post(ctx, path, body, func(obj map[string]json.RawMessage, _ []byte) error {
-		return decode(obj)
-	})
+	return postResponse[W](ctx, c, path, body)
 }

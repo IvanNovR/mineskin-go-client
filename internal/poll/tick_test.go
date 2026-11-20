@@ -10,7 +10,7 @@ import (
 )
 
 func TestPoller_SkippedCheckKeepsJobPending(t *testing.T) {
-	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) { return nil, ErrSkipped }}
+	f := &fakeFetcher{getFn: func(_ string) (*fakeResp, error) { return nil, ErrSkipped }}
 	p := newTestPoller(t, f, Options{})
 	w := p.add("a", time.Time{})
 

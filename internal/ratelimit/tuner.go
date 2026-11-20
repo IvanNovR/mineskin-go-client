@@ -20,12 +20,12 @@ const (
 	grantsRefreshAge        = 5 * time.Minute
 	penaltyStep             = 500 * time.Millisecond
 	penaltyMax              = 10 * time.Second
-	penaltyDecayPerSecond   = 100 * time.Millisecond
+	penaltyDecayStep        = 100 * time.Millisecond
 	maxEffectiveInterval    = 10 * time.Second
 
 	// penaltyDecayDivisor turns elapsed time into decayed penalty: the
-	// penalty falls by penaltyDecayPerSecond for each elapsed second.
-	penaltyDecayDivisor = time.Second / penaltyDecayPerSecond
+	// penalty falls by penaltyDecayStep for each elapsed second.
+	penaltyDecayDivisor = time.Second / penaltyDecayStep
 )
 
 // Tuner holds the generate group's limits when auto-tuning is on: the limits

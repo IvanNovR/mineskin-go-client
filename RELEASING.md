@@ -28,7 +28,7 @@ These settings are expected on the GitHub repository:
 - Branch ruleset "Protect main": pull requests only, required status checks including `branch-policy` and `release-preview`.
 - Merge commit message = pull request title (`merge_commit_title: PR_TITLE`), so the promotion title is the merge commit subject that svu reads and the release preview simulates.
 - Tag ruleset for `v*`: no deletion and no update of tags (creation only by GitHub Actions).
-- Immutable releases enabled.
+- Immutable releases enabled, before the first release (the setting does not apply to earlier releases).
 - Dependabot alerts and security updates, and private vulnerability reporting enabled.
 - Actions workflow permissions: read-only by default, and Actions cannot approve pull requests.
 - Environment `live` (branches `dev` and `main`) holding the secret `MINESKIN_API_KEY`.
@@ -60,7 +60,9 @@ To see the coming version locally, run `make next-version` on an up-to-date `dev
 
 - Anyone with write access to the repository can release: they could dispatch an edited copy of the workflow, so the write power of the workflow's `GITHUB_TOKEN` is not fenced off from them.
 - The real protections are the `v*` tag ruleset (tags cannot be deleted or moved) and immutable releases, so a published version can never be changed.
-- Upgrade path, once anyone besides the owner gets write access: create tags and Releases with a GitHub App token held in an environment secret, and allow tag creation only for that App.
+- What this does not prevent: someone with write access can still create a new `v0.*` tag and Release through an edited dispatch. Because tags and releases are immutable and the Go module proxy caches every version permanently, such a version cannot be removed. It can only be retracted (see [Retracting a version](#retracting-a-version)).
+- Immutable releases protect only releases published after the setting is turned on, so check that it is enabled before the first release.
+- Upgrade path, once anyone besides the owner gets write access: create tags and Releases with a GitHub App token held in an environment secret, and change the tag ruleset so that only that App may create `v*` tags.
 
 ### Kill switch
 

@@ -8,9 +8,9 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
-	"time"
 )
 
 func captureLogger(buf *bytes.Buffer) *slog.Logger {

@@ -1,9 +1,11 @@
-package mineskin
+package mineskin_test
 
 import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/IvanNovR/mineskin-go-client"
 )
 
 const (
@@ -12,6 +14,7 @@ const (
 )
 
 func TestParseUUIDValid(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ name, in string }{
 		{"dashed", uuidDashed},
 		{"undashed", uuidUndashed},
@@ -21,7 +24,8 @@ func TestParseUUIDValid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u, err := ParseUUID(tt.in)
+			t.Parallel()
+			u, err := mineskin.ParseUUID(tt.in)
 			if err != nil {
 				t.Fatalf("ParseUUID(%q) error: %v", tt.in, err)
 			}
@@ -33,7 +37,8 @@ func TestParseUUIDValid(t *testing.T) {
 }
 
 func TestParseUUIDBytes(t *testing.T) {
-	u, err := ParseUUID(uuidUndashed)
+	t.Parallel()
+	u, err := mineskin.ParseUUID(uuidUndashed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,6 +48,7 @@ func TestParseUUIDBytes(t *testing.T) {
 }
 
 func TestParseUUIDInvalid(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ name, in string }{
 		{"empty", ""},
 		{"too short", "0123abcd"},
@@ -58,20 +64,30 @@ func TestParseUUIDInvalid(t *testing.T) {
 		{"unicode", "0123abcd-4567-89ef-0123-456789abcdéé"},
 		{"emoji", strings.Repeat("\U0001F600", 8)},
 		{"NUL", uuidUndashed[:31] + "\x00"},
+		{"dot", "."},
+		{"dot dot", ".."},
+		{"special chars", "a/b?c#d e"},
+		{"valid with trailing newline", uuidDashed + "\n"},
+		{"path segment", "../v2/me"},
+		{"path segment with slash", "skins/" + uuidDashed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			u, err := ParseUUID(tt.in)
+			t.Parallel()
+			u, err := mineskin.ParseUUID(tt.in)
 			if err == nil {
 				t.Fatalf("ParseUUID(%q) = %v, want error", tt.in, u)
 			}
-			if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-				t.Fatalf("error %v must match ErrInvalidInput and ErrClient", err)
+			if !errors.Is(err, mineskin.ErrInvalidInput) {
+				t.Fatalf("error %v must match ErrInvalidInput", err)
 			}
-			if errors.Is(err, ErrNotFound) {
+			if errors.Is(err, mineskin.ErrNotFound) {
 				t.Fatalf("error must not match ErrNotFound")
 			}
-			if u != (UUID{}) {
+			if msg := err.Error(); !strings.HasPrefix(msg, "mineskin: invalid input: invalid UUID: ") || strings.Count(msg, "mineskin:") != 1 {
+				t.Fatalf("error %q must have a single mineskin: prefix and the invalid-UUID text", msg)
+			}
+			if u != (mineskin.UUID{}) {
 				t.Fatalf("expected zero UUID on error, got %v", u)
 			}
 		})
@@ -79,8 +95,9 @@ func TestParseUUIDInvalid(t *testing.T) {
 }
 
 func TestParseUUIDErrorDoesNotEchoInput(t *testing.T) {
+	t.Parallel()
 	huge := strings.Repeat("secretinput", 100000)
-	_, err := ParseUUID(huge)
+	_, err := mineskin.ParseUUID(huge)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -90,20 +107,22 @@ func TestParseUUIDErrorDoesNotEchoInput(t *testing.T) {
 }
 
 func TestUUIDStringRoundTrip(t *testing.T) {
-	var zero UUID
+	t.Parallel()
+	var zero mineskin.UUID
 	if got := zero.String(); got != "00000000-0000-0000-0000-000000000000" {
 		t.Fatalf("zero String() = %q", got)
 	}
-	u, _ := ParseUUID(uuidDashed)
-	back, err := ParseUUID(u.String())
+	u, _ := mineskin.ParseUUID(uuidDashed)
+	back, err := mineskin.ParseUUID(u.String())
 	if err != nil || back != u {
 		t.Fatalf("round trip failed: %v %v", back, err)
 	}
 }
 
 func TestUUIDTextRoundTrip(t *testing.T) {
+	t.Parallel()
 	const dashed = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
-	var u UUID
+	var u mineskin.UUID
 	if err := u.UnmarshalText([]byte("744C993E0E8A4F0B9B6A2F3C7A1B5D11")); err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +130,79 @@ func TestUUIDTextRoundTrip(t *testing.T) {
 	if err != nil || string(b) != dashed {
 		t.Errorf("MarshalText() = %q, %v", b, err)
 	}
-	if err := u.UnmarshalText([]byte("nope")); !errors.Is(err, ErrInvalidInput) {
+	if err := u.UnmarshalText([]byte("nope")); !errors.Is(err, mineskin.ErrInvalidInput) {
 		t.Errorf("UnmarshalText(nope) err = %v", err)
 	}
+}
+
+func TestUUIDIsZero(t *testing.T) {
+	t.Parallel()
+	parsed, err := mineskin.ParseUUID(uuidDashed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		in   mineskin.UUID
+		want bool
+	}{
+		{"zero value", mineskin.UUID{}, true},
+		{"parsed nil UUID", mustParseUUID(t, "00000000-0000-0000-0000-000000000000"), true},
+		{"non-zero", parsed, false},
+		{"last byte set", mineskin.UUID{15: 1}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tt.in.IsZero(); got != tt.want {
+				t.Errorf("IsZero() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func mustParseUUID(t *testing.T, s string) mineskin.UUID {
+	t.Helper()
+	u, err := mineskin.ParseUUID(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}
+
+func FuzzParseUUID(f *testing.F) {
+	for _, seed := range []string{
+		uuidDashed, uuidUndashed, strings.ToUpper(uuidDashed), "", ".", "..", "../v2/me",
+		uuidDashed + "\n", "\x00", strings.Repeat("\U0001F600", 8), "0123abcd-4567-89ef-0123-456789abcdeg",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		u, err := mineskin.ParseUUID(s)
+		if err != nil {
+			if !errors.Is(err, mineskin.ErrInvalidInput) || u != (mineskin.UUID{}) {
+				t.Fatalf("ParseUUID(%q) = (%v, %v), want zero UUID and ErrInvalidInput", s, u, err)
+			}
+			return
+		}
+		if len(s) != 32 && len(s) != 36 {
+			t.Fatalf("ParseUUID(%q) accepted input of length %d", s, len(s))
+		}
+		dashed := u.String()
+		if len(dashed) != 36 || dashed != strings.ToLower(dashed) {
+			t.Fatalf("String() = %q, want 36 lower-case characters", dashed)
+		}
+		again, err := mineskin.ParseUUID(dashed)
+		if err != nil || again != u {
+			t.Fatalf("round trip of %q through %q = (%v, %v)", s, dashed, again, err)
+		}
+		text, err := u.MarshalText()
+		if err != nil {
+			t.Fatalf("MarshalText() error = %v", err)
+		}
+		var viaText mineskin.UUID
+		if err := viaText.UnmarshalText(text); err != nil || viaText != u {
+			t.Fatalf("text round trip = (%v, %v), want %v", viaText, err, u)
+		}
+	})
 }

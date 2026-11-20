@@ -1,0 +1,163 @@
+package poll
+
+import (
+	"context"
+	"errors"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+)
+
+var errClosed = errors.New("closed")
+
+func TestPoller_UsesBaseContext(t *testing.T) {
+	type key struct{}
+	base := context.WithValue(context.Background(), key{}, "base")
+	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) { return completed(id), nil }}
+	p := New(Config[*fakeResp]{
+		Ctx: base, Clock: clock.NewFake(pollerT0), Fetcher: f,
+		Options: Options{InitialDelay: time.Second, Interval: func(int) time.Duration { return time.Second }, MaxAttempts: 10},
+	})
+	p.add("j0", time.Time{})
+	p.tick(pollerT0.Add(time.Hour))
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.getCtxs) != 1 || f.getCtxs[0] != base {
+		t.Errorf("fetcher ctxs = %v, want exactly the base context", f.getCtxs)
+	}
+}
+
+func TestPoller_RegisterAfterCloseIsFinished(t *testing.T) {
+	p := newTestPoller(t, &fakeFetcher{}, Options{})
+	p.Close(errClosed)
+	w := p.Register("j0", time.Time{})
+	if !isFinished(w) || !errors.Is(w.err, errClosed) {
+		t.Errorf("register after close: finished=%v err=%v, want finished with the close error", isFinished(w), w.err)
+	}
+	if p.Running() {
+		t.Error("run goroutine started after close")
+	}
+}
+
+func TestPoller_CloseFailsPending(t *testing.T) {
+	p := newTestPoller(t, &fakeFetcher{}, Options{})
+	ws := addJobs(p, 3)
+	p.Close(errClosed)
+	for _, w := range ws {
+		r, st, err := w.Result()
+		if !isFinished(w) || !errors.Is(err, errClosed) || r != nil || st != (State{}) {
+			t.Errorf("job %s: result = %v %+v %v, want the close error only", w.id, r, st, err)
+		}
+	}
+	if got := pendingCount(p); got != 0 {
+		t.Errorf("pending = %d, want 0", got)
+	}
+}
+
+func TestPoller_CloseIsIdempotent(t *testing.T) {
+	p := newTestPoller(t, &fakeFetcher{}, Options{})
+	w := p.Register("a", time.Time{})
+	p.Close(errClosed)
+	p.Close(errors.New("second")) // keeps the first error
+	if _, _, err := w.Result(); !errors.Is(err, errClosed) {
+		t.Errorf("err = %v, want the first close error", err)
+	}
+}
+
+func TestPoller_RunLoopPollsUntilDoneThenStops(t *testing.T) {
+	fake := clock.NewFake(pollerT0)
+	var calls int
+	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) {
+		calls++
+		if calls < 3 {
+			return waiting(id), nil
+		}
+		return completed(id), nil
+	}}
+	p := New(Config[*fakeResp]{
+		Ctx: context.Background(), Clock: fake, Fetcher: f,
+		Options: Options{InitialDelay: time.Second, Interval: func(int) time.Duration { return time.Second }, MaxAttempts: 10},
+	})
+	t.Cleanup(func() { p.Close(errClosed) })
+
+	w := p.Register("a", time.Time{})
+	if !p.Running() {
+		t.Fatal("Register did not start the run loop")
+	}
+	if err := driveClock(t, fake, time.Second, func() error {
+		for !isFinished(w) {
+			pause()
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r, st, err := w.Result()
+	if err != nil || r == nil || !st.Done {
+		t.Errorf("Result() = %v %+v %v, want the completed response", r, st, err)
+	}
+	eventually(t, "run loop to stop", func() bool { return !p.Running() })
+}
+
+func TestPoller_LeaveStopsIdleRunLoop(t *testing.T) {
+	p := newTestPoller(t, &fakeFetcher{}, Options{InitialDelay: time.Hour})
+	t.Cleanup(func() { p.Close(errClosed) })
+	w := p.Register("a", time.Time{})
+
+	p.Leave(w)
+
+	eventually(t, "run loop to stop", func() bool { return !p.Running() })
+}
+
+func TestPoller_CloseWaitsForRunLoopAndInFlightGet(t *testing.T) {
+	fake := clock.NewFake(pollerT0)
+	entered := make(chan struct{})
+	f := &fakeFetcher{}
+	p := New(Config[*fakeResp]{
+		Ctx: context.Background(), Clock: fake, Fetcher: f,
+		Options: Options{InitialDelay: time.Second, Interval: func(int) time.Duration { return time.Second }, MaxAttempts: 10},
+	})
+	release := make(chan struct{})
+	var checkFinished atomic.Bool
+	f.getFn = func(id string) (*fakeResp, error) {
+		close(entered)
+		<-release
+		defer checkFinished.Store(true)
+		return waiting(id), nil
+	}
+	w := p.Register("a", time.Time{})
+	go func() {
+		for {
+			select {
+			case <-entered:
+				return
+			default:
+				fake.Advance(time.Second)
+				pause()
+			}
+		}
+	}()
+	<-entered
+
+	closed := make(chan struct{})
+	go func() { p.Close(errClosed); close(closed) }()
+	close(release)
+	select {
+	case <-closed:
+	case <-time.After(waitTimeout(t)):
+		t.Fatal("Close did not return")
+	}
+	if !checkFinished.Load() {
+		t.Error("Close returned before the in-flight check finished")
+	}
+	if _, _, err := w.Result(); !errors.Is(err, errClosed) {
+		t.Errorf("err = %v, want the close error", err)
+	}
+	if p.Running() {
+		t.Error("run loop alive after Close returned")
+	}
+}

@@ -16,7 +16,9 @@ import (
 )
 
 var (
-	subjectPattern = regexp.MustCompile(`^(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\([^\r\n()]+\))?!?: \S.*$`)
+	// subjectPattern accepts the Conventional Commits superset of types, or the
+	// subject git generates for `git revert`: Revert "<original subject>".
+	subjectPattern = regexp.MustCompile(`^(?:(?:feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(?:\([^\r\n()]+\))?!?: \S.*|Revert "[^\r\n]*\S[^\r\n]*")$`)
 	shaPattern     = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
@@ -31,36 +33,56 @@ type commit struct{ SHA, Subject string }
 // gitLog runs `git log` with the given arguments and returns the commits.
 type gitLog func(ctx context.Context, args ...string) ([]commit, error)
 
-// check returns one message per violation: invalid SHAs, git failures, commit
-// subjects in base..head (the full history of head when base is empty or all
-// zeros) and an invalid, non-blank prTitle.
-func check(ctx context.Context, git gitLog, base, head, prTitle string) []string {
+// report is the outcome of check.
+type report struct {
+	Violations []string // problems that fail the run
+	Warnings   []string // notable conditions that do not fail the run
+	Checked    int      // number of commit subjects checked
+}
+
+// check lints the non-merge commits in base..head (the full history of head
+// when base is empty or all zeros) and a non-blank prTitle. Invalid SHAs and
+// git failures are violations. When base is not reachable, for example after a
+// force-push, only head is linted and a warning is recorded.
+func check(ctx context.Context, git gitLog, base, head, prTitle string) report {
 	base, head = strings.TrimSpace(base), strings.TrimSpace(head)
 	if !shaPattern.MatchString(head) {
-		return []string{"HEAD_SHA must be a 40-character lowercase hex SHA"}
+		return report{Violations: []string{"HEAD_SHA must be a 40-character lowercase hex SHA"}}
 	}
-	revRange := head
-	if base != "" && base != zeroSHA {
-		if !shaPattern.MatchString(base) {
-			return []string{"BASE_SHA must be empty, all zeros, or a 40-character lowercase hex SHA"}
-		}
-		revRange = base + ".." + head
+	hasBase := base != "" && base != zeroSHA
+	if hasBase && !shaPattern.MatchString(base) {
+		return report{Violations: []string{"BASE_SHA must be empty, all zeros, or a 40-character lowercase hex SHA"}}
 	}
 
-	var violations []string
-	commits, err := git(ctx, "log", logFormat, revRange)
+	var rep report
+	logArgs := []string{"log", "--no-merges", logFormat, head}
+	if hasBase {
+		if _, err := git(ctx, "cat-file", "-e", base+"^{commit}"); err != nil {
+			rep.Warnings = append(rep.Warnings, "BASE_SHA is not reachable (force-push?); linting only HEAD")
+			logArgs = []string{"log", "--no-merges", "-1", logFormat, head}
+			hasBase = false
+		} else {
+			logArgs[len(logArgs)-1] = base + ".." + head
+		}
+	}
+
+	commits, err := git(ctx, logArgs...)
 	if err != nil {
-		return []string{fmt.Sprintf("git log %s failed: %v", revRange, err)}
+		return report{Violations: []string{fmt.Sprintf("git log %s failed: %v", logArgs[len(logArgs)-1], err)}}
+	}
+	rep.Checked = len(commits)
+	if hasBase && len(commits) == 0 {
+		rep.Warnings = append(rep.Warnings, "BASE_SHA..HEAD_SHA contains no commits to check")
 	}
 	for _, c := range commits {
 		if !subjectPattern.MatchString(c.Subject) {
-			violations = append(violations, fmt.Sprintf("commit %s: %q is not a Conventional Commit subject", shortSHA(c.SHA), c.Subject))
+			rep.Violations = append(rep.Violations, fmt.Sprintf("commit %s: %q is not a Conventional Commit subject", shortSHA(c.SHA), c.Subject))
 		}
 	}
 	if strings.TrimSpace(prTitle) != "" && !subjectPattern.MatchString(prTitle) {
-		violations = append(violations, fmt.Sprintf("PR title %q is not a Conventional Commit subject", prTitle))
+		rep.Violations = append(rep.Violations, fmt.Sprintf("PR title %q is not a Conventional Commit subject", prTitle))
 	}
-	return violations
+	return rep
 }
 
 func shortSHA(sha string) string {
@@ -70,15 +92,18 @@ func shortSHA(sha string) string {
 // run executes the check using env for inputs, writes the report to out and
 // returns the process exit code.
 func run(ctx context.Context, env func(string) string, git gitLog, out io.Writer) int {
-	violations := check(ctx, git, env("BASE_SHA"), env("HEAD_SHA"), env("PR_TITLE"))
-	if len(violations) == 0 {
-		_, _ = fmt.Fprintln(out, "commitlint: ok")
+	rep := check(ctx, git, env("BASE_SHA"), env("HEAD_SHA"), env("PR_TITLE"))
+	for _, w := range rep.Warnings {
+		_, _ = fmt.Fprintln(out, "commitlint: warning:", w)
+	}
+	if len(rep.Violations) == 0 {
+		_, _ = fmt.Fprintf(out, "commitlint: ok (%d commits checked)\n", rep.Checked)
 		return 0
 	}
-	for _, v := range violations {
+	for _, v := range rep.Violations {
 		_, _ = fmt.Fprintln(out, "commitlint:", v)
 	}
-	_, _ = fmt.Fprintln(out, "Expected: type(scope)!: description, with type one of feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert")
+	_, _ = fmt.Fprintln(out, "Expected: type(scope)!: description, with type one of feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert, or a git Revert \"...\" subject")
 	return 1
 }
 
@@ -101,7 +126,7 @@ func execGit(dir string) gitLog {
 // parseLog parses `git log --format=%H%x00%s` output.
 func parseLog(raw []byte) ([]commit, error) {
 	var commits []commit
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if line == "" {
 			continue
 		}

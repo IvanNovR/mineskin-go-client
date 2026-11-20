@@ -1,14 +1,20 @@
 package mineskin
 
 import (
-	"errors"
+	"context"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
-	"time"
-	"unicode"
+	"sync"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/poll"
+	"github.com/IvanNovR/mineskin-go-client/internal/ratelimit"
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 const (
@@ -17,135 +23,181 @@ const (
 	// DefaultUserAgent is the User-Agent used when none is configured. Set a
 	// custom one such as "AppName/1.0" instead.
 	DefaultUserAgent = "MineSkinClient"
-	// DefaultTimeout is the default timeout of a single HTTP request.
-	DefaultTimeout = 10 * time.Second
 
-	maxRedirects = 10
 	apiKeyPrefix = "msk_"
 )
 
 // Client is a MineSkin API client. It is immutable after NewClient returns and
 // safe for concurrent use by multiple goroutines.
 //
-// Go's HTTP client already strips the Authorization header when a redirect
-// leads to a different host, and this client refuses redirects from https to
-// http and stops after 10 redirects.
+// The configuration is immutable; Close only changes lifecycle state. The only
+// background goroutine is the job poller used by WaitForJob. It is started
+// lazily by the first wait and exits by itself once no wait is pending; a
+// later wait starts it again. Close releases the client's resources: it fails
+// queued and waiting calls, cancels requests in flight and waits for the
+// poller to exit (see Close). The client creates its own HTTP transport
+// unless WithTransport is used.
+//
+// The API key is held in a redacted type: formatting a Client with %v, %+v or
+// %#v and logging it with log/slog never shows the key.
+//
+// The API does not redirect. This client drops the Authorization header when a
+// redirect leads to a different host (a different port or a sibling subdomain
+// counts), refuses redirects from https to http and stops after 10 redirects.
+// NewClient refuses an API key with an http:// base URL to a non-loopback
+// host unless WithInsecureHTTP is given.
 type Client struct {
-	baseURL    string
-	userAgent  string
-	apiKey     string
-	httpClient *http.Client
-	logger     *slog.Logger
+	// doer holds the base URL, User-Agent, API key and HTTP client.
+	doer     *transport.Doer
+	logger   *slog.Logger
+	polling  PollOptions
+	poller   *poll.Poller[*JobResponse]
+	clock    clock.Clock
+	genGroup *ratelimit.Group
+	getGroup *ratelimit.Group
+
+	// baseCtx is cancelled by Close and parents every request context. A done
+	// baseCtx is the closed state. It is handed to the poller and tuner as a
+	// constructor argument only.
+	baseCtx    context.Context
+	cancelBase context.CancelCauseFunc
+	closeOnce  sync.Once
+	// bg tracks the grants load goroutine, which Close waits for.
+	bg sync.WaitGroup
+	// idleCloser closes idle connections of a transport the client created;
+	// nil when the caller supplied the transport.
+	idleCloser func()
 }
 
+var _ io.Closer = (*Client)(nil)
+
 // NewClient creates a Client from the given options. Invalid configuration
-// yields an error matching ErrInvalidInput and ErrClient; the error never
+// yields an error matching ErrInvalidInput; the error never
 // contains the API key.
 func NewClient(opts ...Option) (*Client, error) {
-	cfg := &config{
-		baseURL:   DefaultBaseURL,
-		userAgent: DefaultUserAgent,
-		timeout:   DefaultTimeout,
-	}
+	cfg := defaultConfig()
 	for _, opt := range opts {
 		if opt != nil {
 			opt(cfg)
 		}
 	}
-
-	baseURL, err := normalizeBaseURL(cfg.baseURL)
-	if err != nil {
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	if cfg.timeout <= 0 {
-		return nil, newInvalidInputError("timeout must be greater than zero")
-	}
-	if cfg.transport == nil {
-		cfg.transport = http.DefaultTransport
-	}
-	if cfg.logger == nil {
-		cfg.logger = slog.New(slog.DiscardHandler)
-	}
-	userAgent := strings.TrimSpace(cfg.userAgent)
-	if userAgent == "" {
-		userAgent = DefaultUserAgent
-	}
-	apiKey := strings.TrimSpace(cfg.apiKey)
-	if err := validateHeaderValues(userAgent, apiKey); err != nil {
-		return nil, err
-	}
+	logConfig(cfg.logger, cfg.baseURL, cfg.userAgent, cfg.apiKey)
 
-	logConfig(cfg.logger, baseURL, userAgent, apiKey)
-
-	return &Client{
-		baseURL:   baseURL,
-		userAgent: userAgent,
-		apiKey:    apiKey,
-		httpClient: &http.Client{
-			Transport:     cfg.transport,
-			Timeout:       cfg.timeout,
-			CheckRedirect: checkRedirect,
+	// A transport the caller did not supply is created here and owned by the
+	// client, which closes its idle connections.
+	rt, idleCloser := cfg.transport, (func())(nil)
+	if rt == nil {
+		owned := transport.DefaultTransport()
+		rt, idleCloser = owned, owned.CloseIdleConnections
+	}
+	c := &Client{
+		doer: &transport.Doer{
+			BaseURL:   cfg.baseURL,
+			UserAgent: cfg.userAgent,
+			APIKey:    cfg.apiKey,
+			HTTP: &http.Client{
+				Transport:     rt,
+				CheckRedirect: transport.CheckRedirect,
+			},
+			Timeout: cfg.timeout,
+			Clock:   cfg.clock,
+			Logger:  cfg.logger,
 		},
-		logger: cfg.logger,
-	}, nil
+		logger:     cfg.logger,
+		polling:    cfg.polling,
+		clock:      cfg.clock,
+		idleCloser: idleCloser,
+	}
+	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
+	c.genGroup, c.getGroup = c.newRequestGroups(cfg)
+	c.poller = poll.New(poll.Config[*JobResponse]{
+		Ctx: c.baseCtx, Clock: c.clock, Fetcher: jobSource{c}, Options: toPollOptions(cfg.polling),
+		Logger: cfg.logger, OnJobFailure: c.failureHook(),
+		GetLogAttrs: []any{"path", queuePath + "/{id}"}, ListLogAttrs: []any{"path", queuePath},
+	})
+	return c, nil
+}
+
+// failureHook returns the poller's FAILED-job hook: the penalty with
+// auto-tuning, nil (a no-op) otherwise.
+func (c *Client) failureHook() func() {
+	if c.genGroup.Tuner == nil {
+		return nil
+	}
+	return c.genGroup.Tuner.ReportFailure
 }
 
 // normalizeBaseURL validates raw and returns it without trailing slashes.
 func normalizeBaseURL(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return "", newInvalidInputError("base URL is not a valid URL")
+		return "", invalidInput("base URL is not a valid URL")
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
-		return "", newInvalidInputError("base URL scheme must be http or https")
+		return "", invalidInput("base URL scheme must be http or https")
 	}
 	if u.User != nil {
-		return "", newInvalidInputError("base URL must not contain credentials")
+		return "", invalidInput("base URL must not contain credentials")
 	}
 	if u.Host == "" {
-		return "", newInvalidInputError("base URL must include a host")
+		return "", invalidInput("base URL must include a host")
 	}
 	if u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
-		return "", newInvalidInputError("base URL must not contain a query or fragment")
+		return "", invalidInput("base URL must not contain a query or fragment")
 	}
 	return strings.TrimRight(raw, "/"), nil
 }
 
 // logConfig emits the construction warnings and the debug key id. It never
 // logs the key or its secret part.
-func logConfig(l *slog.Logger, baseURL, userAgent, apiKey string) {
+func logConfig(l *slog.Logger, baseURL, userAgent string, key transport.Secret) {
+	apiKey := key.Reveal()
 	if userAgent == DefaultUserAgent {
 		l.Warn("Using the default User-Agent, please set a custom one (e.g. AppName/Version)")
 	}
-	if apiKey == "" {
+	if key.IsEmpty() {
 		l.Warn("Creating MineSkin client without API key, get one at https://account.mineskin.org/keys")
 		return
 	}
-	if sendsKeyOverPlainHTTP(baseURL) {
+	if sendsKeyOverPlainHTTP(baseURL) { // only reachable with WithInsecureHTTP
 		l.Warn("Sending the API key over plain HTTP to a non-loopback host; use https")
 	}
-	if strings.HasPrefix(apiKey, apiKeyPrefix) {
-		if parts := strings.SplitN(apiKey, "_", 3); len(parts) == 3 {
-			l.Debug("Using MineSkin API key", "key_id", parts[1])
-		}
+	if id, ok := keyID(apiKey); ok {
+		l.Debug("Using MineSkin API key", "key_id", id)
 	}
+}
+
+// keyIDPattern is the shape of the id part of a key, msk_<id>_<secret>. Only
+// an id of this shape is logged, so a malformed key never leaks its secret.
+var keyIDPattern = regexp.MustCompile(`^[A-Za-z0-9]{1,32}$`)
+
+// keyID returns the id of a key of the form msk_<id>_<secret>, or false when
+// the key does not have that form or the id does not look like an id.
+func keyID(apiKey string) (string, bool) {
+	rest, ok := strings.CutPrefix(apiKey, apiKeyPrefix)
+	if !ok {
+		return "", false
+	}
+	id, secret, ok := strings.Cut(rest, "_")
+	if !ok || secret == "" || !keyIDPattern.MatchString(id) {
+		return "", false
+	}
+	return id, true
 }
 
 // validateHeaderValues rejects a User-Agent or API key with control
 // characters, which could inject headers. The messages never echo the values.
 func validateHeaderValues(userAgent, apiKey string) error {
-	if hasControlChar(userAgent) {
-		return newInvalidInputError("User-Agent must not contain control characters")
+	if transport.HasControlChar(userAgent) {
+		return invalidInput("User-Agent must not contain control characters")
 	}
-	if hasControlChar(apiKey) {
-		return newInvalidInputError("API key must not contain control characters")
+	if transport.HasControlChar(apiKey) {
+		return invalidInput("API key must not contain control characters")
 	}
 	return nil
-}
-
-// hasControlChar reports whether s contains a control character.
-func hasControlChar(s string) bool {
-	return strings.IndexFunc(s, unicode.IsControl) >= 0
 }
 
 // sendsKeyOverPlainHTTP reports whether baseURL uses http with a host that is
@@ -161,20 +213,4 @@ func sendsKeyOverPlainHTTP(baseURL string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip == nil || !ip.IsLoopback()
-}
-
-// checkRedirect refuses redirects from https to http and stops after
-// maxRedirects redirects.
-func checkRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= maxRedirects {
-		return wrapClientError("redirect", errors.New("stopped after 10 redirects"))
-	}
-	if req.URL.Scheme == "http" {
-		for _, prev := range via {
-			if prev.URL.Scheme == "https" {
-				return wrapClientError("redirect", errors.New("refusing redirect from https to http"))
-			}
-		}
-	}
-	return nil
 }

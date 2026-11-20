@@ -1,0 +1,95 @@
+# Release preview: on pull requests into main, report the version that merging
+# would release ("Merging releases vX.Y.Z" or "No release ..."), using the same
+# pinned svu and .svu.yml as release.yml. The check fails when svu would compute
+# anything other than a v0.x.y version. The `release-preview` job is meant to be
+# a required status check in the "Protect main" ruleset.
+#
+# The merge commit on main carries the PR title (repository setting: merge
+# commit message = pull request title), so the title is added as a local,
+# never-pushed empty commit on top of the PR merge ref before svu runs;
+# re-running on `edited` keeps the preview in step with title changes. svu reads
+# .svu.yml from main, so a PR cannot change its own version rules; until main
+# has the file, the PR's own copy is used and the summary says so.
+#
+# Hardening: read-only token, no PR comments, actions pinned to full commit
+# SHAs, credentials not persisted, and the PR title reaches the script only
+# through env:, never through ${{ }} inside run:.
+name: Release preview
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+env:
+  GOTOOLCHAIN: local
+
+concurrency:
+  group: release-preview-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-preview:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable # svu v3.4.4 needs Go >= 1.27.3
+          cache: false
+      - name: Install svu
+        # Keep in sync with SVU_VERSION in the Makefile.
+        run: go install github.com/caarlos0/svu/v3@v3.4.4
+      - name: Preview the next version
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          tag_re='^v0\.[0-9]+\.[0-9]+$'
+
+          # The title is taken verbatim (a leading '#' is not a comment) and may
+          # be blank; either way it only becomes a local commit message.
+          git -c user.name=release-preview -c user.email=release-preview@invalid \
+            commit --quiet --allow-empty --allow-empty-message --cleanup=verbatim -m "$PR_TITLE"
+
+          # A missing or unreadable config makes svu silently use no config
+          # (and compute v1.0.0 for a breaking change), so only a .svu.yml that
+          # is absent on main falls back to the PR's copy; anything else fails.
+          git rev-parse --verify --quiet 'origin/main^{commit}' >/dev/null || fail "origin/main is not available."
+          cfg="${RUNNER_TEMP}/svu.yml"
+          note=""
+          if git cat-file -e origin/main:.svu.yml 2>/dev/null; then
+            git cat-file blob origin/main:.svu.yml > "$cfg" || fail "Could not read .svu.yml from main."
+          else
+            cfg=.svu.yml
+            note="Note: main has no .svu.yml yet, so this preview uses the pull request's own .svu.yml."
+          fi
+
+          cur=$(svu current --config "$cfg")
+          next=$(svu next --config "$cfg")
+          echo "svu current ${cur}, next ${next}."
+          [[ $next =~ $tag_re ]] || fail "Merging would release ${next}, which is not a v0.x.y version."
+
+          if [ "$next" != "$cur" ]; then
+            msg="Merging releases ${next}."
+          elif [ -n "$(git tag --list 'v*')" ]; then
+            msg="No release (no feat/fix/breaking commits since ${cur})."
+          else
+            msg="No release (no feat/fix/breaking commits yet)."
+          fi
+          {
+            echo "$msg"
+            if [ -n "$note" ]; then
+              echo ""
+              echo "$note"
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,28 @@
+# Dependency updates target `dev` (feature work never goes straight to main).
+# Commit-message prefixes keep the Conventional Commits lint green.
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      go-modules:
+        patterns: ["*"]

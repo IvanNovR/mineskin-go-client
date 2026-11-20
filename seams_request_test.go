@@ -3,8 +3,8 @@ package mineskin
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +13,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 const testAPIKey = "msk_abc12345_supersecretvalue"
@@ -22,6 +25,7 @@ func okHandler(w http.ResponseWriter, _ *http.Request) {
 }
 
 func TestDoSendsHeaders(t *testing.T) {
+	t.Parallel()
 	var got http.Header
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Clone()
@@ -41,7 +45,7 @@ func TestDoSendsHeaders(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c := newTestClient(t, srv.URL, tt.opts...)
-			if _, err := c.do(context.Background(), http.MethodGet, "/v2/x"); err != nil {
+			if _, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil); err != nil {
 				t.Fatalf("do() error = %v", err)
 			}
 			if v := got.Get("Authorization"); v != tt.wantAuth {
@@ -61,13 +65,14 @@ func TestDoSendsHeaders(t *testing.T) {
 }
 
 func TestDoURLIsBasePlusPath(t *testing.T) {
+	t.Parallel()
 	var uri, method string
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		uri, method = r.RequestURI, r.Method
 		okHandler(w, r)
 	})
 	c := newTestClient(t, srv.URL+"/")
-	raw, err := c.do(context.Background(), http.MethodGet, "/v2/skins/a%2Fb")
+	raw, err := c.do(context.Background(), http.MethodGet, "/v2/skins/a%2Fb", nil)
 	if err != nil {
 		t.Fatalf("do() error = %v", err)
 	}
@@ -79,32 +84,21 @@ func TestDoURLIsBasePlusPath(t *testing.T) {
 	}
 }
 
-func TestDoNilContextIsInvalidInput(t *testing.T) {
-	var hits atomic.Int32
-	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		okHandler(w, r)
-	})
-	c := newTestClient(t, srv.URL)
-	var nilCtx context.Context
-	_, err := c.do(nilCtx, http.MethodGet, "/v2/x")
-	if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want ErrInvalidInput and ErrClient", err)
-	}
-	if hits.Load() != 0 {
-		t.Error("a request was sent for a nil context")
-	}
-}
-
 func TestDoInvalidPathIsInvalidInput(t *testing.T) {
+	t.Parallel()
 	c := newTestClient(t, "http://example.invalid")
-	_, err := c.do(context.Background(), http.MethodGet, "/v2/\x7f")
+	_, err := c.do(context.Background(), http.MethodGet, "/v2/\x7f", nil)
+	if _, ok := errors.AsType[*transport.BuildError](err); !ok {
+		t.Fatalf("err = %v, want *transport.BuildError", err)
+	}
+	_, _, err = getResponse[struct{}](context.Background(), c, "/v2/\x7f", nil)
 	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("err = %v, want ErrInvalidInput", err)
+		t.Fatalf("get err = %v, want ErrInvalidInput", err)
 	}
 }
 
 func TestTimeoutWhileBodyStalls(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1000")
@@ -119,15 +113,12 @@ func TestTimeoutWhileBodyStalls(t *testing.T) {
 
 	c := newTestClient(t, srv.URL, WithTimeout(80*time.Millisecond))
 	start := time.Now()
-	_, err := c.do(context.Background(), http.MethodGet, "/v2/x")
+	_, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
 	if err == nil {
 		t.Fatal("expected a timeout error")
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Errorf("took %v, timeout not enforced on the body read", time.Since(start))
-	}
-	if !errors.Is(err, ErrClient) {
-		t.Errorf("err does not match ErrClient: %v", err)
 	}
 	var ne net.Error
 	isNetTimeout := errors.As(err, &ne) && ne.Timeout()
@@ -137,6 +128,7 @@ func TestTimeoutWhileBodyStalls(t *testing.T) {
 }
 
 func TestContextCancelReturnsCanceled(t *testing.T) {
+	t.Parallel()
 	started := make(chan struct{})
 	release := make(chan struct{})
 	srv := newTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
@@ -154,13 +146,14 @@ func TestContextCancelReturnsCanceled(t *testing.T) {
 		<-started
 		cancel()
 	}()
-	_, err := c.do(ctx, http.MethodGet, "/v2/x")
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want Canceled and ErrClient", err)
+	_, err := c.do(ctx, http.MethodGet, "/v2/x", nil)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want Canceled", err)
 	}
 }
 
 func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
+	t.Parallel()
 	var plainHits atomic.Int32
 	plain := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		plainHits.Add(1)
@@ -172,10 +165,8 @@ func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
 	t.Cleanup(tlsSrv.Close)
 
 	c := newTestClient(t, tlsSrv.URL, WithTransport(tlsSrv.Client().Transport), WithAPIKey(testAPIKey))
-	_, err := c.do(context.Background(), http.MethodGet, "/v2/x")
-	if !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want ErrClient", err)
-	}
+	_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
+	assertGoStyleMessage(t, err)
 	if plainHits.Load() != 0 {
 		t.Error("plain http server was contacted after an https->http redirect")
 	}
@@ -185,6 +176,7 @@ func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
 }
 
 func TestRedirectHTTPSToHTTPSIsFollowed(t *testing.T) {
+	t.Parallel()
 	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/v2/start" {
 			http.Redirect(w, r, "/v2/final", http.StatusFound)
@@ -195,7 +187,7 @@ func TestRedirectHTTPSToHTTPSIsFollowed(t *testing.T) {
 	t.Cleanup(tlsSrv.Close)
 
 	c := newTestClient(t, tlsSrv.URL, WithTransport(tlsSrv.Client().Transport))
-	raw, err := c.do(context.Background(), http.MethodGet, "/v2/start")
+	raw, err := c.do(context.Background(), http.MethodGet, "/v2/start", nil)
 	if err != nil {
 		t.Fatalf("do() error = %v", err)
 	}
@@ -205,6 +197,7 @@ func TestRedirectHTTPSToHTTPSIsFollowed(t *testing.T) {
 }
 
 func TestWithTransportInterception(t *testing.T) {
+	t.Parallel()
 	var seenHeader string
 	var seenStatus int
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +214,7 @@ func TestWithTransportInterception(t *testing.T) {
 		return resp, err
 	})
 	c := newTestClient(t, srv.URL, WithTransport(wrapper))
-	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x"); err != nil {
+	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil); err != nil {
 		t.Fatalf("do() error = %v", err)
 	}
 	if seenHeader != "intercepted" || seenStatus != 200 {
@@ -230,6 +223,7 @@ func TestWithTransportInterception(t *testing.T) {
 }
 
 func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
+	t.Parallel()
 	var logs bytes.Buffer
 	closed := httptest.NewServer(http.HandlerFunc(okHandler))
 	closedURL := closed.URL
@@ -249,10 +243,8 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := append([]Option{WithAPIKey(testAPIKey), WithLogger(captureLogger(&logs))}, tt.opts...)
 			c := newTestClient(t, closedURL, opts...)
-			_, err := c.do(context.Background(), http.MethodGet, "/v2/skins/abc")
-			if !errors.Is(err, ErrClient) {
-				t.Fatalf("err = %v, want ErrClient", err)
-			}
+			_, _, err := getResponse[struct{}](context.Background(), c, "/v2/skins/abc", nil)
+			assertGoStyleMessage(t, err)
 			if strings.Contains(err.Error(), testAPIKey) || strings.Contains(err.Error(), "Bearer") {
 				t.Errorf("error leaks credentials: %v", err)
 			}
@@ -267,26 +259,30 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 }
 
 func TestDoBodySizeLimit(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		size    int
 		wantErr bool
 	}{
-		{"exactly at the cap", maxResponseBodyBytes, false},
-		{"one byte over the cap", maxResponseBodyBytes + 1, true},
+		{"exactly at the cap", transport.MaxResponseBodyBytes, false},
+		{"one byte over the cap", transport.MaxResponseBodyBytes + 1, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			payload := bytes.Repeat([]byte("a"), tt.size)
 			srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = w.Write(payload)
 			})
 			c := newTestClient(t, srv.URL, WithTimeout(30*time.Second))
-			raw, err := c.do(context.Background(), http.MethodGet, "/v2/x")
+			raw, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
 			if tt.wantErr {
-				if !errors.Is(err, ErrClient) {
-					t.Fatalf("err = %v, want ErrClient", err)
+				if err == nil {
+					t.Fatal("do() error = nil, want an error")
 				}
+				_, _, getErr := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
+				assertGoStyleMessage(t, getErr)
 				return
 			}
 			if err != nil || len(raw.Body) != tt.size {
@@ -297,13 +293,14 @@ func TestDoBodySizeLimit(t *testing.T) {
 }
 
 func TestDoLogsDebugWithoutSecrets(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Mineskin-Breadcrumb", "crumb123")
 		okHandler(w, r)
 	})
 	var logs bytes.Buffer
 	c := newTestClient(t, srv.URL, WithAPIKey(testAPIKey), WithLogger(captureLogger(&logs)))
-	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x"); err != nil {
+	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil); err != nil {
 		t.Fatalf("do() error = %v", err)
 	}
 	out := logs.String()
@@ -318,32 +315,31 @@ func TestDoLogsDebugWithoutSecrets(t *testing.T) {
 }
 
 func TestGetHappyPath(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Mineskin-Breadcrumb", "bc")
 		_, _ = w.Write([]byte(`{"success":true,"user":"jeb"}`))
 	})
 	c := newTestClient(t, srv.URL)
-	var user string
-	meta, err := c.get(context.Background(), "/v2/x", func(obj map[string]json.RawMessage, _ []byte) error {
-		return json.Unmarshal(obj["user"], &user)
-	})
+	wire, meta, err := getResponse[testWire](context.Background(), c, "/v2/x", nil)
 	if err != nil {
 		t.Fatalf("get() error = %v", err)
 	}
-	if user != "jeb" || !meta.Success || meta.Status != 200 || meta.Breadcrumb != "bc" {
+	if user := wire.User; user != "jeb" || meta.Status != 200 || meta.Breadcrumb != "bc" {
 		t.Errorf("user=%q meta=%+v", user, meta)
 	}
 }
 
 func TestGetAPIError(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":"skin_not_found","message":"Skin not found"}]}`))
 	})
 	c := newTestClient(t, srv.URL)
-	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
+	_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
 	var apiErr *APIError
-	if !errors.As(err, &apiErr) || apiErr.Status != 404 || apiErr.Code != "skin_not_found" {
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != 404 || apiErr.Code != "skin_not_found" {
 		t.Fatalf("err = %v, want 404 APIError", err)
 	}
 	if !errors.Is(err, ErrNotFound) {
@@ -352,26 +348,31 @@ func TestGetAPIError(t *testing.T) {
 }
 
 func TestGetPropagatesTransportError(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("boom")
 	c := newTestClient(t, "http://example.invalid", WithTransport(roundTripFunc(
-		func(*http.Request) (*http.Response, error) { return nil, errors.New("boom") })))
-	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
-	if !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want ErrClient", err)
+		func(*http.Request) (*http.Response, error) { return nil, boom })))
+	_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap boom", err)
 	}
+	if !strings.HasPrefix(err.Error(), "mineskin: GET /v2/x:") {
+		t.Errorf("err = %q, want the method and path label", err)
+	}
+	assertGoStyleMessage(t, err)
 }
 
 func TestDoConcurrent(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, okHandler)
 	c := newTestClient(t, srv.URL, WithAPIKey(testAPIKey))
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
 	for range 20 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			_, err := c.get(context.Background(), "/v2/x", noopDecoder)
+		wg.Go(func() {
+			_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
 			errs <- err
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)
@@ -379,5 +380,131 @@ func TestDoConcurrent(t *testing.T) {
 		if err != nil {
 			t.Errorf("concurrent get() error = %v", err)
 		}
+	}
+}
+
+func TestDoSendsBody(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"url":"https://example.com/a.png"}`)
+	var gotMethod, gotType string
+	var gotLen int64
+	var gotBody []byte
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotType = r.Header.Get("Content-Type")
+		gotLen = r.ContentLength
+		gotBody, _ = io.ReadAll(r.Body)
+		okHandler(w, r)
+	})
+	c := newTestClient(t, srv.URL)
+	_, err := c.do(context.Background(), http.MethodPost, "/v2/queue",
+		&transport.Body{ContentType: "application/json", Data: payload})
+	if err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	if gotMethod != http.MethodPost || gotType != "application/json" {
+		t.Errorf("method=%q content-type=%q", gotMethod, gotType)
+	}
+	if !bytes.Equal(gotBody, payload) || gotLen != int64(len(payload)) {
+		t.Errorf("body=%q len=%d", gotBody, gotLen)
+	}
+}
+
+func TestDoGetHasNoBody(t *testing.T) {
+	t.Parallel()
+	var gotType string
+	var gotBody []byte
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, gotTypePresent := r.Header["Content-Type"]
+		if gotTypePresent {
+			gotType = r.Header.Get("Content-Type")
+		}
+		gotBody, _ = io.ReadAll(r.Body)
+		okHandler(w, r)
+	})
+	c := newTestClient(t, srv.URL)
+	if _, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil); err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	if gotType != "" || len(gotBody) != 0 {
+		t.Errorf("content-type=%q body=%q, want none", gotType, gotBody)
+	}
+}
+
+func TestPostHappyPath(t *testing.T) {
+	t.Parallel()
+	var gotBody []byte
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.Header().Set("Mineskin-Breadcrumb", "bc")
+		_, _ = w.Write([]byte(`{"success":true,"user":"jeb"}`))
+	})
+	c := newTestClient(t, srv.URL)
+	wire, meta, err := postResponse[testWire](context.Background(), c, "/v2/x",
+		&transport.Body{ContentType: "application/json", Data: []byte(`{"a":1}`)})
+	if err != nil {
+		t.Fatalf("post() error = %v", err)
+	}
+	if user := wire.User; user != "jeb" || meta.Status != 200 || meta.Breadcrumb != "bc" {
+		t.Errorf("user=%q meta=%+v", user, meta)
+	}
+	if string(gotBody) != `{"a":1}` {
+		t.Errorf("server body = %q", gotBody)
+	}
+}
+
+func TestPostAPIError(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"success":false,"errors":[{"code":"skin_not_found","message":"Skin not found"}]}`))
+	})
+	c := newTestClient(t, srv.URL)
+	_, _, err := postResponse[struct{}](context.Background(), c, "/v2/x", nil)
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Meta.Status != 404 || apiErr.Code != "skin_not_found" {
+		t.Fatalf("err = %v, want 404 APIError", err)
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Error("expected ErrNotFound")
+	}
+}
+
+func TestDoPostRedirect307ReplaysBody(t *testing.T) {
+	t.Parallel()
+	payload := []byte(`{"user":"abc"}`)
+	var finalBody []byte
+	var finalMethod string
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/start" {
+			http.Redirect(w, r, "/v2/final", http.StatusTemporaryRedirect)
+			return
+		}
+		finalMethod = r.Method
+		finalBody, _ = io.ReadAll(r.Body)
+		okHandler(w, r)
+	})
+	c := newTestClient(t, srv.URL)
+	_, err := c.do(context.Background(), http.MethodPost, "/v2/start",
+		&transport.Body{ContentType: "application/json", Data: payload})
+	if err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	if finalMethod != http.MethodPost || !bytes.Equal(finalBody, payload) {
+		t.Errorf("after redirect method=%q body=%q", finalMethod, finalBody)
+	}
+}
+
+func TestDoRecordsReceivedTime(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(`{}`)) })
+	fake := clock.NewFake(testNow)
+	c := newTestClient(t, srv.URL, withClock(fake))
+	raw, err := c.do(context.Background(), http.MethodGet, "/x", nil)
+	if err != nil {
+		t.Fatalf("do() error = %v", err)
+	}
+	if !raw.Received.Equal(fake.Now()) {
+		t.Errorf("Received = %v, want %v", raw.Received, fake.Now())
 	}
 }

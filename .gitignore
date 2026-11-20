@@ -4,4 +4,6 @@
 .codex/
 .pi/
 .env
-coverage.out
+*.out
+*.test
+*.prof

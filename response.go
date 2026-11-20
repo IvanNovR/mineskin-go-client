@@ -1,178 +1,202 @@
 package mineskin
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
+	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 const (
-	defaultErrorCode    = "request_failed"
-	defaultErrorMessage = "Request Failed"
-
-	fieldSuccess  = "success"
-	fieldErrors   = "errors"
-	fieldWarnings = "warnings"
-	fieldMessages = "messages"
-	fieldLinks    = "links"
-
-	headerPrefix        = "mineskin-"
-	headerPrefixExtra   = "x-mineskin-"
-	headerMineskinSrv   = "mineskin-server"
-	headerMineskinCrumb = "mineskin-breadcrumb"
-	headerValueSep      = ","
+	headerMineskinCrumb = transport.HeaderMineskinCrumb
 
 	parseFailureMessage = "failed to parse response"
 )
 
-// utf8BOM is the byte order mark some proxies prepend to JSON bodies.
-var utf8BOM = []byte("\xef\xbb\xbf")
+// envelope holds the fields every MineSkin response has in common. Absent
+// lists stay nil here and are made empty by newMeta.
+type envelope struct {
+	Success  *bool            `json:"success"`
+	Errors   []CodeAndMessage `json:"errors"`
+	Warnings []CodeAndMessage `json:"warnings"`
+	Messages []CodeAndMessage `json:"messages"`
+	Links    json.RawMessage  `json:"links"`
+}
 
-// ResponseMeta describes the envelope of a MineSkin API response.
+// failureWire is the envelope plus the fields an unsuccessful response may
+// carry, decoded before the endpoint specific payload.
+type failureWire struct {
+	envelope
+	RateLimit trackedRateLimit `json:"rateLimit"`
+	Usage     trackedUsage     `json:"usage"`
+}
+
+// droppedFields lists the malformed rateLimit and usage parts of the head.
+func (h failureWire) droppedFields() []string {
+	return append(append([]string(nil), h.RateLimit.dropped...), h.Usage.dropped...)
+}
+
+// droppedReporter is implemented by the wire structs that decode rateLimit or
+// usage, so that decodeResponse can log what they dropped.
+type droppedReporter interface{ droppedFields() []string }
+
+const (
+	logMalformed = "MineSkin response field malformed, ignored"
+	// fieldRetryAfter names the Retry-After header among the dropped fields.
+	fieldRetryAfter = "Retry-After"
+)
+
+// logDropped logs, once per response and without any value, the fields that
+// were present but malformed and therefore ignored.
+func logDropped(log *slog.Logger, path string, raw transport.Response, fields []string) {
+	if hasGarbledRetryAfter(raw) {
+		fields = append(fields, fieldRetryAfter)
+	}
+	if len(fields) > 0 {
+		log.Warn(logMalformed, "path", path, "fields", strings.Join(fields, ","))
+	}
+}
+
+// hasGarbledRetryAfter reports whether the response has a Retry-After header
+// that cannot be parsed.
+func hasGarbledRetryAfter(raw transport.Response) bool {
+	value := raw.Header.Get(transport.HeaderRetryAfter)
+	if strings.TrimSpace(value) == "" {
+		return false
+	}
+	_, ok := transport.ParseRetryAfter(value, raw.Received)
+	return !ok
+}
+
+// ResponseMeta describes the envelope of a MineSkin API response. Every
+// response type has it in a field named Meta, and so do *APIError and
+// *JobFailedError.
 type ResponseMeta struct {
 	// Status is the HTTP status code.
 	Status int
-	// Success is the value of the response's success field, or whether the
-	// status is 200 when the field is absent.
-	Success bool
-	// Errors lists the errors reported by the API.
-	Errors []CodeAndMessage
+	// Header holds the mineskin-* and x-mineskin-* response headers, keyed by
+	// canonical name. It is a copy: other headers are not passed on and the
+	// caller may modify it.
+	Header http.Header
+	// Breadcrumb is the value of the mineskin-breadcrumb header, which MineSkin
+	// asks to be quoted in support requests. Repeated headers are joined with
+	// commas.
+	Breadcrumb string
 	// Warnings lists the warnings reported by the API.
 	Warnings []CodeAndMessage
 	// Messages lists the informational messages reported by the API.
 	Messages []CodeAndMessage
-	// Headers holds the mineskin-* and x-mineskin-* response headers, keyed
-	// by lower-case name.
-	Headers map[string]string
-	// Server is the value of the mineskin-server header.
-	Server string
-	// Breadcrumb is the value of the mineskin-breadcrumb header.
-	Breadcrumb string
 	// Links is the raw links field of the response, or nil when absent.
 	Links json.RawMessage
 }
 
-// rawResponse is a fully read HTTP response, before any interpretation.
-type rawResponse struct {
-	Status int
-	Header http.Header
-	Body   []byte
-}
-
-// handleResponse turns a raw response into its metadata or an error. It
-// mirrors the Java client: the HTTP status is only used when the body has no
-// success field. A leading UTF-8 byte order mark is ignored. decodeBody decodes the endpoint specific fields; it receives
-// the top-level JSON fields and the complete body.
+// decodeResponse turns a raw response into the endpoint's wire struct W and
+// the response metadata, or an error. It mirrors the Java client: the HTTP
+// status is only used when the body has no success field. A leading UTF-8 byte
+// order mark is ignored.
 //
-// The steps are, in order: a body that is not a JSON object gives an
-// *UnexpectedResponseError; so does a body that fails to unmarshal; a failing
-// envelope gives a parse error matching ErrClient; an unsuccessful response
-// gives an *APIError without decoding the payload; a failing decodeBody on a
-// successful response gives a parse error; otherwise the metadata is returned.
-func handleResponse(raw rawResponse, decodeBody func(obj map[string]json.RawMessage, body []byte) error) (ResponseMeta, error) {
-	body := bytes.TrimPrefix(raw.Body, utf8BOM)
-	if !looksLikeJSONObject(body) {
-		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, nil)
+// Fields that are present but malformed and therefore ignored (rateLimit,
+// usage, Retry-After) are logged at Warn once per response, as a list of field
+// paths without values; path is the request path.
+//
+// The steps are, in order: a body that is not a JSON object, or is not valid
+// JSON, gives an *UnexpectedResponseError; a failing envelope gives a parse
+// error; an unsuccessful response gives an *APIError without decoding the
+// payload; a failing payload on a successful response gives a parse error;
+// otherwise the wire struct and the metadata are returned.
+func decodeResponse[W any](raw transport.Response, log *slog.Logger, path string) (W, ResponseMeta, error) {
+	var wire W
+	body := transport.TrimBOM(raw.Body)
+	if !transport.IsJSONObject(body) {
+		logDropped(log, path, raw, nil)
+		return wire, ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, nil, raw.Received)
 	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(body, &obj); err != nil {
-		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, err)
-	}
-	meta, err := decodeEnvelope(raw, obj)
-	if err != nil {
-		return ResponseMeta{}, wrapClientError(parseFailureMessage, err)
-	}
-	if !meta.Success {
-		return ResponseMeta{}, newAPIError(meta)
-	}
-	if decodeBody != nil {
-		if err := decodeBody(obj, body); err != nil {
-			return ResponseMeta{}, wrapClientError(parseFailureMessage, err)
+	var head failureWire
+	if err := json.Unmarshal(body, &head); err != nil {
+		if _, ok := errors.AsType[*json.SyntaxError](err); ok {
+			logDropped(log, path, raw, nil)
+			return wire, ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, err, raw.Received)
 		}
+		return wire, ResponseMeta{}, parseFailure(err)
 	}
-	return meta, nil
+	meta := newMeta(raw, head.envelope)
+	if !head.succeeded(raw.Status) {
+		logDropped(log, path, raw, head.droppedFields())
+		return wire, ResponseMeta{}, newAPIError(meta, head, raw.Header, raw.Received)
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return wire, ResponseMeta{}, parseFailure(err)
+	}
+	var fields []string
+	if r, ok := any(&wire).(droppedReporter); ok {
+		fields = r.droppedFields()
+	}
+	logDropped(log, path, raw, fields)
+	return wire, meta, nil
 }
 
-// looksLikeJSONObject reports whether the first non-whitespace byte is '{'.
-func looksLikeJSONObject(body []byte) bool {
-	trimmed := bytes.TrimLeft(body, " \t\r\n\f\v")
-	return len(trimmed) > 0 && trimmed[0] == '{'
+// parseFailure wraps a payload decoding error. A malformed value in a server
+// response (for example a UUID that ParseUUID rejects) is a parse failure, not
+// bad caller input, so the ErrInvalidInput classification and its prefix are
+// dropped from the text and the chain.
+func parseFailure(err error) error {
+	if errors.Is(err, ErrInvalidInput) {
+		plain := strings.Replace(err.Error(), errorPrefix+"invalid input: ", "", 1)
+		return fmt.Errorf("%s%s: %s", errorPrefix, parseFailureMessage, plain)
+	}
+	return fmt.Errorf("%s%s: %w", errorPrefix, parseFailureMessage, err)
 }
 
-// decodeEnvelope reads the common fields of a response object.
-func decodeEnvelope(raw rawResponse, obj map[string]json.RawMessage) (ResponseMeta, error) {
-	headers := filterHeaders(raw.Header)
-	meta := ResponseMeta{
+// succeeded reports whether the response was successful: the value of its
+// success field, or whether the status is 200 when the field is absent.
+func (e envelope) succeeded(status int) bool {
+	if e.Success != nil {
+		return *e.Success
+	}
+	return status == http.StatusOK
+}
+
+// newMeta builds the metadata from the raw response and its decoded envelope.
+// The lists are never nil.
+func newMeta(raw transport.Response, env envelope) ResponseMeta {
+	header := transport.FilterHeaders(raw.Header)
+	return ResponseMeta{
 		Status:     raw.Status,
-		Success:    raw.Status == http.StatusOK,
-		Headers:    headers,
-		Server:     headers[headerMineskinSrv],
-		Breadcrumb: headers[headerMineskinCrumb],
+		Header:     header,
+		Breadcrumb: strings.Join(header.Values(headerMineskinCrumb), ","),
+		Warnings:   nonNilList(env.Warnings),
+		Messages:   nonNilList(env.Messages),
+		Links:      env.Links,
 	}
-	if v, ok := obj[fieldSuccess]; ok {
-		if err := json.Unmarshal(v, &meta.Success); err != nil {
-			return ResponseMeta{}, err
-		}
-	}
-	for field, dst := range map[string]*[]CodeAndMessage{
-		fieldErrors: &meta.Errors, fieldWarnings: &meta.Warnings, fieldMessages: &meta.Messages,
-	} {
-		if err := decodeList(obj[field], dst); err != nil {
-			return ResponseMeta{}, err
-		}
-	}
-	meta.Links = obj[fieldLinks]
-	return meta, nil
 }
 
-// decodeList decodes a list field, leaving an empty non-nil slice when the
-// field is absent or null.
-func decodeList(v json.RawMessage, dst *[]CodeAndMessage) error {
-	*dst = []CodeAndMessage{}
-	if len(v) == 0 {
-		return nil
+// nonNilList returns l, or an empty non-nil slice when l is nil.
+func nonNilList(l []CodeAndMessage) []CodeAndMessage {
+	if l == nil {
+		return []CodeAndMessage{}
 	}
-	if err := json.Unmarshal(v, dst); err != nil {
-		return err
-	}
-	if *dst == nil {
-		*dst = []CodeAndMessage{}
-	}
-	return nil
+	return l
 }
 
-// newAPIError builds the error for an unsuccessful response, using the first
-// reported error or the defaults.
-func newAPIError(meta ResponseMeta) *APIError {
-	e := &APIError{Code: defaultErrorCode, Message: defaultErrorMessage, ResponseMeta: meta}
-	if len(meta.Errors) > 0 {
-		e.Code = meta.Errors[0].Code
-		e.Message = meta.Errors[0].Message
+// newAPIError builds the error for an unsuccessful response. Code and Message
+// are those of the first reported error and stay empty when the server sent
+// none. The rateLimit, usage and Retry-After values are decoded leniently:
+// anything missing or malformed stays zero and never replaces the original
+// error (JB-13).
+func newAPIError(meta ResponseMeta, head failureWire, h http.Header, now time.Time) *APIError {
+	e := &APIError{
+		Errors: nonNilList(head.Errors), Meta: meta,
+		RateLimit: head.RateLimit.RateLimit, Usage: head.Usage.Usage,
+	}
+	e.RetryAfter, _ = transport.ParseRetryAfter(h.Get(transport.HeaderRetryAfter), now)
+	if len(e.Errors) > 0 {
+		e.Code = e.Errors[0].Code
+		e.Message = e.Errors[0].Message
 	}
 	return e
-}
-
-// filterHeaders keeps the mineskin-* and x-mineskin-* headers, keyed by
-// lower-case name. Repeated headers are joined with commas, so duplicates
-// never cause a failure.
-func filterHeaders(h http.Header) map[string]string {
-	keys := make([]string, 0, len(h))
-	for k := range h {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	joined := make(map[string][]string)
-	for _, k := range keys {
-		name := strings.ToLower(k)
-		if strings.HasPrefix(name, headerPrefix) || strings.HasPrefix(name, headerPrefixExtra) {
-			joined[name] = append(joined[name], h[k]...)
-		}
-	}
-	out := make(map[string]string, len(joined))
-	for name, values := range joined {
-		out[name] = strings.Join(values, headerValueSep)
-	}
-	return out
 }

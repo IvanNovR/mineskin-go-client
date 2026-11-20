@@ -1,0 +1,201 @@
+package ratelimit
+
+import (
+	"bytes"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+)
+
+var tunerT0 = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+
+func newTestTuner(t *testing.T) (*Tuner, *clock.Fake) {
+	t.Helper()
+	fake := clock.NewFake(tunerT0)
+	return NewTuner(TunerConfig{Clock: fake}), fake
+}
+
+func TestTunerBaselineBeforeLoad(t *testing.T) {
+	tn, fake := newTestTuner(t)
+	got := tn.Limits(fake.Now())
+	if got.Interval != time.Second || got.Concurrency != 1 {
+		t.Errorf("limits = %+v, want 1s/1 (JB-01)", got)
+	}
+}
+
+func TestTunerApplyGrants(t *testing.T) {
+	tests := []struct {
+		name         string
+		grants       Grants
+		wantInterval time.Duration
+		wantConc     int
+	}{
+		{"60 per minute", Grants{PerMinute: 60}, time.Second, 1},
+		{"600 per minute", Grants{PerMinute: 600}, 100 * time.Millisecond, 1},
+		{"6000 clamps to min", Grants{PerMinute: 6000}, 100 * time.Millisecond, 1},
+		{"30 clamps to max", Grants{PerMinute: 30}, time.Second, 1},
+		{"70 truncates to ms", Grants{PerMinute: 70}, 857 * time.Millisecond, 1},
+		{"per minute missing keeps interval", Grants{}, time.Second, 1},
+		{"per minute zero keeps interval", Grants{PerMinute: 0}, time.Second, 1},
+		{"per minute negative keeps interval", Grants{PerMinute: -4}, time.Second, 1},
+		{"concurrency 10", Grants{Concurrency: 10}, time.Second, 10},
+		{"concurrency zero keeps value", Grants{Concurrency: 0}, time.Second, 1},
+		{"concurrency negative keeps value", Grants{Concurrency: -5}, time.Second, 1},
+		{"concurrency 50 clamps to 30", Grants{Concurrency: 50}, time.Second, 30},
+		{"concurrency missing keeps value", Grants{PerMinute: 600}, 100 * time.Millisecond, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tn, fake := newTestTuner(t)
+			tn.applyGrants(tt.grants)
+			got := tn.Limits(fake.Now())
+			if got.Interval != tt.wantInterval || got.Concurrency != tt.wantConc {
+				t.Errorf("limits = %+v, want %v/%d", got, tt.wantInterval, tt.wantConc)
+			}
+		})
+	}
+}
+
+func TestTunerApplyGrantsKeepsUnsetFieldsFromEarlierGrants(t *testing.T) {
+	tn, fake := newTestTuner(t)
+	tn.applyGrants(Grants{PerMinute: 600, Concurrency: 7})
+	tn.applyGrants(Grants{})
+	got := tn.Limits(fake.Now())
+	if got.Interval != 100*time.Millisecond || got.Concurrency != 7 {
+		t.Errorf("limits = %+v, want 100ms/7", got)
+	}
+}
+
+func TestTunerKeepsLastKnownValuesWithoutNewGrants(t *testing.T) {
+	tn, fake := newTestTuner(t)
+	tn.applyGrants(Grants{PerMinute: 300, Concurrency: 4})
+	fake.Advance(time.Hour)
+	got := tn.Limits(fake.Now())
+	if got.Interval != 200*time.Millisecond || got.Concurrency != 4 {
+		t.Errorf("limits = %+v, want 200ms/4", got)
+	}
+}
+
+func TestTunerPenaltyAddsStep(t *testing.T) {
+	tn, fake := newTestTuner(t)
+	tn.applyGrants(Grants{PerMinute: 60})
+	tn.ReportFailure()
+	if got := tn.Limits(fake.Now()).Interval; got != 1500*time.Millisecond {
+		t.Errorf("after one failure interval = %v, want 1.5s", got)
+	}
+	tn.ReportFailure()
+	if got := tn.Limits(fake.Now()).Interval; got != 2*time.Second {
+		t.Errorf("after two failures interval = %v, want 2s", got)
+	}
+}
+
+func TestTunerPenaltyDecaysLinearly(t *testing.T) {
+	tn, fake := newTestTuner(t)
+	tn.applyGrants(Grants{PerMinute: 60})
+	tn.ReportFailure()
+	fake.Advance(2 * time.Second)
+	if got := tn.Limits(fake.Now()).Interval; got != 1300*time.Millisecond {
+		t.Errorf("after 2s interval = %v, want 1.3s", got)
+	}
+	fake.Advance(10 * time.Second)
+	if got := tn.Limits(fake.Now()).Interval; got != time.Second {
+		t.Errorf("after 12s interval = %v, want 1s (floored)", got)
+	}
+}
+
+func TestTunerPenaltyStacksOnDecayed(t *testing.T) {
+	tn, fake := newTestTuner(t)
+	tn.applyGrants(Grants{PerMinute: 60})
+	tn.ReportFailure()
+	fake.Advance(3 * time.Second)
+	tn.ReportFailure()
+	if got := tn.Limits(fake.Now()).Interval; got != 1700*time.Millisecond {
+		t.Errorf("interval = %v, want 1.7s", got)
+	}
+}
+
+func TestTunerPenaltyClamp(t *testing.T) {
+	tn, fake := newTestTuner(t)
+	tn.applyGrants(Grants{PerMinute: 60})
+	for range 30 {
+		tn.ReportFailure()
+	}
+	if got := tn.Limits(fake.Now()).Interval; got != 10*time.Second {
+		t.Errorf("interval = %v, want 10s (capped)", got)
+	}
+	tn.mu.Lock()
+	defer tn.mu.Unlock()
+	if tn.penalty != 10*time.Second {
+		t.Errorf("penalty = %v, want 10s", tn.penalty)
+	}
+}
+
+func TestTunerDecayNoOverflow(t *testing.T) {
+	tn, fake := newTestTuner(t)
+	tn.applyGrants(Grants{PerMinute: 60})
+	tn.ReportFailure()
+	fake.Advance(1000 * time.Hour)
+	if got := tn.Limits(fake.Now()).Interval; got != time.Second {
+		t.Errorf("interval = %v, want 1s after 1000h", got)
+	}
+	// A clock that went backwards must not yield a larger penalty.
+	if got := tn.Limits(fake.Now().Add(-2000 * time.Hour)).Interval; got < time.Second || got > 10*time.Second {
+		t.Errorf("interval = %v with a backwards clock, want within [1s, 10s]", got)
+	}
+}
+
+func TestTunerRealClock(t *testing.T) {
+	tn := NewTuner(TunerConfig{Clock: clock.Real()})
+	tn.applyGrants(Grants{PerMinute: 60})
+	tn.ReportFailure()
+	got := tn.Limits(time.Now()).Interval
+	if got <= time.Second || got > 1500*time.Millisecond {
+		t.Errorf("interval = %v, want in (1s, 1.5s]", got)
+	}
+}
+
+func TestTunerCallsKickOutsideLock(t *testing.T) {
+	tn, _ := newTestTuner(t)
+	kicks := 0
+	tn.SetKick(func() {
+		if !tn.mu.TryLock() {
+			t.Error("kick called with tuner mutex held")
+			return
+		}
+		tn.mu.Unlock()
+		kicks++
+	})
+	tn.applyGrants(Grants{PerMinute: 600})
+	tn.ReportFailure()
+	if kicks != 2 {
+		t.Errorf("kicks = %d, want 2", kicks)
+	}
+}
+
+func TestTunerLogsChangesAtDebug(t *testing.T) {
+	var buf bytes.Buffer
+	tn := NewTuner(TunerConfig{Clock: clock.NewFake(tunerT0), Logger: captureLogger(&buf)})
+	tn.applyGrants(Grants{PerMinute: 600, Concurrency: 3})
+	tn.ReportFailure()
+	out := buf.String()
+	for _, want := range []string{"level=DEBUG", "grants", "penalty"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log %q does not contain %q", out, want)
+		}
+	}
+}
+
+// TestTunerNonPositiveConcurrencyKeepsCurrentValue pins OQ8: a grant of zero or
+// less means unknown and keeps the concurrency from an earlier grant.
+func TestTunerNonPositiveConcurrencyKeepsCurrentValue(t *testing.T) {
+	for _, unknown := range []int{0, -3} {
+		tn, fake := newTestTuner(t)
+		tn.applyGrants(Grants{Concurrency: 7})
+		tn.applyGrants(Grants{Concurrency: unknown})
+		if got := tn.Limits(fake.Now()).Concurrency; got != 7 {
+			t.Errorf("concurrency after grant %d = %d, want 7", unknown, got)
+		}
+	}
+}

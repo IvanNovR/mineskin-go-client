@@ -1,5 +1,9 @@
 version: "2"
 
+run:
+  build-tags:
+    - live
+
 linters:
   default: standard
   enable:
@@ -10,14 +14,22 @@ linters:
     - misspell
     - revive
     - nolintlint
+    - modernize
+    - gocritic
+    - thelper
+    - usetesting
+    - unconvert
+    - unparam
+    - errname
+    - exhaustive
+    - sloglint
+    - perfsprint
   settings:
-    revive:
-      rules:
-        - name: exported
+    exhaustive:
+      default-signifies-exhaustive: true
 
 formatters:
   enable:
-    - gofmt
     - goimports
   settings:
     goimports:

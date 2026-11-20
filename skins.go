@@ -13,10 +13,9 @@ import (
 
 const (
 	skinsPathPrefix = "/v2/skins/"
-	fieldSkin       = "skin"
 
 	// maxDurationMillis is the largest millisecond count a time.Duration holds.
-	maxDurationMillis = int64(math.MaxInt64 / int64(time.Millisecond))
+	maxDurationMillis = math.MaxInt64 / int64(time.Millisecond)
 )
 
 // Variant is the model of a skin: classic (wide arms) or slim.
@@ -138,9 +137,9 @@ func optionalInt64(v json.RawMessage) (n int64, ok bool, err error) {
 	return n, true, nil
 }
 
-// SkinInfo describes a skin stored by MineSkin. Its UUID is the MineSkin skin
-// id, not a player UUID.
-type SkinInfo struct {
+// Skin describes a skin stored by MineSkin. Its UUID is the MineSkin skin id,
+// not a player UUID.
+type Skin struct {
 	UUID       UUID          `json:"uuid"`
 	Name       string        `json:"name"`
 	Variant    Variant       `json:"variant"`
@@ -149,49 +148,38 @@ type SkinInfo struct {
 	Generator  GeneratorInfo `json:"generator"`
 	Views      int           `json:"views"`
 	Duplicate  bool          `json:"duplicate"`
-	// Breadcrumb is the mineskin-breadcrumb header of the response.
-	Breadcrumb string `json:"-"`
 }
 
 // SkinResponse is the response to a skin lookup.
 type SkinResponse struct {
-	ResponseMeta
+	// Meta holds the status, headers and messages of the response.
+	Meta ResponseMeta
 	// Skin is the requested skin.
-	Skin SkinInfo
+	Skin Skin
 }
 
-// GetSkin fetches a skin by its MineSkin skin id. The id must be a UUID in
-// dashed or undashed form (any letter case); it is a MineSkin skin id, not a
-// player UUID. An invalid id, including an empty one, fails with
-// ErrInvalidInput without sending a request. The request always uses the
-// canonical dashed lower-case form.
-func (c *Client) GetSkin(ctx context.Context, id string) (*SkinResponse, error) {
-	parsed, err := ParseUUID(id)
+// GetSkin fetches a skin by its MineSkin skin id. The id is a MineSkin skin
+// id, not a player UUID; use ParseUUID to convert a string, and
+// resp.Job.Result for the skin of a finished job. The zero UUID fails with
+// ErrInvalidInput without sending a request. The request uses the canonical
+// dashed lower-case form.
+func (c *Client) GetSkin(ctx context.Context, id UUID) (*SkinResponse, error) {
+	if err := c.checkOpen(); err != nil {
+		return nil, err
+	}
+	if id.IsZero() {
+		return nil, invalidInput("skin id is the zero UUID")
+	}
+	wire, meta, err := getResponse[skinWire](ctx, c, skinsPathPrefix+url.PathEscape(id.String()), nil)
 	if err != nil {
 		return nil, err
 	}
-	var skin SkinInfo
-	meta, err := c.get(ctx, skinsPathPrefix+url.PathEscape(parsed.String()), func(obj map[string]json.RawMessage, _ []byte) error {
-		return decodeSkin(obj[fieldSkin], &skin)
-	})
-	if err != nil {
-		return nil, err
-	}
-	skin.Breadcrumb = meta.Breadcrumb
-	return &SkinResponse{ResponseMeta: meta, Skin: skin}, nil
+	return &SkinResponse{Meta: meta, Skin: wire.Skin}, nil
 }
 
-// GetSkinByUUID fetches a skin by its MineSkin skin id, sent in dashed form.
-// The UUID is a MineSkin skin id, not a player UUID.
-func (c *Client) GetSkinByUUID(ctx context.Context, id UUID) (*SkinResponse, error) {
-	return c.GetSkin(ctx, id.String())
-}
-
-// decodeSkin decodes the skin field; an absent or null field leaves dst zero so
-// that error responses without a skin still produce an *APIError.
-func decodeSkin(v json.RawMessage, dst *SkinInfo) error {
-	if len(v) == 0 {
-		return nil
-	}
-	return json.Unmarshal(v, dst)
+// skinWire is the wire shape of a skin lookup. An absent or null skin leaves
+// the zero value so that error responses without a skin still produce an
+// *APIError.
+type skinWire struct {
+	Skin Skin `json:"skin"`
 }

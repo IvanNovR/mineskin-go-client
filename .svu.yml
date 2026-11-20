@@ -1,0 +1,4 @@
+# svu configuration (https://github.com/caarlos0/svu), read by release.yml,
+# release-preview.yml and `make next-version`. While the module is on v0, a
+# breaking change raises the minor version instead of jumping to v1.0.0.
+v0: true

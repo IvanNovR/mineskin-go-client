@@ -44,6 +44,10 @@ Set `MINESKIN_LIVE_PAID=1` to also run the tests that need a paid key. A real
 environment variable overrides `.env`, and `.env` is gitignored. Never commit
 a key.
 
+Maintainers can also run the live tests in GitHub Actions with the manual
+`live.yml` workflow, which uses the key stored in the `live` environment (see
+[RELEASING.md](RELEASING.md#live-tests)).
+
 ## Security
 
 Report vulnerabilities as described in [SECURITY.md](SECURITY.md), not in public issues.

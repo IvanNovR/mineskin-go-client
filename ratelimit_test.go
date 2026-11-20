@@ -2,6 +2,7 @@ package mineskin
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -129,4 +130,59 @@ func fieldBody(name, raw string) string {
 		return `{}`
 	}
 	return `{"` + name + `":` + raw + `}`
+}
+
+func TestRateLimitLenientDroppedPaths(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"valid", `{"next":{"absolute":1,"relative":2},"delay":{"millis":3},"limit":{"limit":4,"remaining":5,"hour":{"used":1}}}`, nil},
+		{"null", `null`, nil},
+		{"empty object", `{}`, nil},
+		{"null parts are absent", `{"next":null,"delay":null,"limit":null}`, nil},
+		{"not an object", `"x"`, []string{"rateLimit"}},
+		{"parts of the wrong type", `{"next":"soon","delay":[1],"limit":5}`, []string{"rateLimit.next", "rateLimit.delay", "rateLimit.limit"}},
+		{"next values", `{"next":{"absolute":"1","relative":-1}}`, []string{"rateLimit.next.absolute", "rateLimit.next.relative"}},
+		{"relative out of range", `{"next":{"relative":9223372036854775807}}`, []string{"rateLimit.next.relative"}},
+		{"delay values", `{"delay":{"millis":"5","seconds":1.5}}`, []string{"rateLimit.delay.millis", "rateLimit.delay.seconds"}},
+		{"delay seconds only read when millis is zero", `{"delay":{"millis":1500,"seconds":"x"}}`, nil},
+		{"limit values and windows", `{"limit":{"limit":"x","minute":"y","hour":{"used":true}}}`,
+			[]string{"rateLimit.limit.limit", "rateLimit.limit.minute", "rateLimit.limit.hour.used"}},
+		{"window reset", `{"limit":{"minute":{"reset":"soon"}}}`, []string{"rateLimit.limit.minute.reset"}},
+		{"overflowing int", `{"limit":{"remaining":99999999999999999999}}`, []string{"rateLimit.limit.remaining"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, got := parseRateLimit([]byte(tc.raw))
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("dropped = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUsageLenientDroppedPaths(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"valid", `{"credits":{"used":1,"remaining":2}}`, nil},
+		{"null", `null`, nil},
+		{"empty object", `{}`, nil},
+		{"not an object", `[]`, []string{"usage"}},
+		{"credits of the wrong type", `{"credits":5}`, []string{"usage.credits"}},
+		{"garbled remaining", `{"credits":{"remaining":"x","used":1}}`, []string{"usage.credits.remaining"}},
+		{"both garbled", `{"credits":{"remaining":1.5,"used":"1"}}`, []string{"usage.credits.used", "usage.credits.remaining"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, got := parseUsage([]byte(tc.raw))
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("dropped = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

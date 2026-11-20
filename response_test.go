@@ -26,7 +26,7 @@ func (*wireWithCause) UnmarshalJSON([]byte) error { return errBadJob }
 
 // decodeMeta runs decodeResponse and returns only the metadata and error.
 func decodeMeta[W any](raw transport.Response) (ResponseMeta, error) {
-	_, meta, err := decodeResponse[W](raw)
+	_, meta, err := decodeResponse[W](raw, discardLogger, "/test")
 	return meta, err
 }
 
@@ -172,7 +172,7 @@ func TestHandleResponseParseError(t *testing.T) {
 
 func TestDecodeResponseReturnsWire(t *testing.T) {
 	body := []byte(`{"success":true,"user":"abc"}`)
-	wire, meta, err := decodeResponse[testWire](transport.Response{Status: 200, Body: body})
+	wire, meta, err := decodeResponse[testWire](transport.Response{Status: 200, Body: body}, discardLogger, "/test")
 	if err != nil || wire.User != "abc" || meta.Status != 200 {
 		t.Fatalf("wire = %+v meta = %+v err = %v", wire, meta, err)
 	}

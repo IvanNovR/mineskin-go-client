@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -19,6 +20,9 @@ import (
 // neutral internal packages: it wires the request groups, adapts the job
 // endpoints to internal/poll, and maps the raw errors of internal/ratelimit
 // and internal/poll to the public error contract.
+
+// discardLogger is for decoding a response that was already decoded and logged.
+var discardLogger = slog.New(slog.DiscardHandler)
 
 // errCheckSkipped is returned by a request whose start gate declined it. The
 // poller treats it as "nothing to do", never as a job failure.
@@ -126,7 +130,7 @@ type retryCancelledError struct {
 // the error of the 429 that caused the retry; without a 429 error it returns
 // ctxErr alone.
 func newRetryCancelledError(ctxErr error, last transport.Response) error {
-	_, _, rateLimited := decodeResponse[struct{}](last)
+	_, _, rateLimited := decodeResponse[struct{}](last, discardLogger, "")
 	if rateLimited == nil {
 		return ctxErr
 	}
@@ -227,7 +231,7 @@ func getResponse[W any](ctx context.Context, c *Client, path string, proceed fun
 		var zero W
 		return zero, ResponseMeta{}, err
 	}
-	return decodeResponse[W](raw)
+	return decodeResponse[W](raw, c.logger, path)
 }
 
 // postResponse sends a POST request with body through the generate group
@@ -238,5 +242,5 @@ func postResponse[W any](ctx context.Context, c *Client, path string, body *tran
 		var zero W
 		return zero, ResponseMeta{}, err
 	}
-	return decodeResponse[W](raw)
+	return decodeResponse[W](raw, c.logger, path)
 }

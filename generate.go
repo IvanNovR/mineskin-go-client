@@ -42,7 +42,7 @@ func (c *Client) Queue(ctx context.Context, src Source, opts *GenerateOptions) (
 	if err != nil {
 		return nil, err
 	}
-	return &QueueResponse{Meta: meta, Job: wire.Job, RateLimit: wire.RateLimit, Usage: wire.Usage}, nil
+	return &QueueResponse{Meta: meta, Job: wire.Job, RateLimit: wire.RateLimit.RateLimit, Usage: wire.Usage.Usage}, nil
 }
 
 // Generate generates a skin and waits for it in a single request. The request
@@ -59,21 +59,31 @@ func (c *Client) Generate(ctx context.Context, src Source, opts *GenerateOptions
 	if err != nil {
 		return nil, err
 	}
-	return &GenerateResponse{Meta: meta, Skin: wire.Skin, RateLimit: wire.RateLimit, Usage: wire.Usage}, nil
+	return &GenerateResponse{Meta: meta, Skin: wire.Skin, RateLimit: wire.RateLimit.RateLimit, Usage: wire.Usage.Usage}, nil
 }
 
 // queueWire is the wire shape of a queued generation response.
 type queueWire struct {
-	Job       Job       `json:"job"`
-	RateLimit RateLimit `json:"rateLimit"`
-	Usage     Usage     `json:"usage"`
+	Job       Job              `json:"job"`
+	RateLimit trackedRateLimit `json:"rateLimit"`
+	Usage     trackedUsage     `json:"usage"`
+}
+
+// droppedFields lists the malformed rateLimit and usage parts.
+func (w *queueWire) droppedFields() []string {
+	return append(append([]string(nil), w.RateLimit.dropped...), w.Usage.dropped...)
 }
 
 // generateWire is the wire shape of a synchronous generation response.
 type generateWire struct {
-	Skin      Skin      `json:"skin"`
-	RateLimit RateLimit `json:"rateLimit"`
-	Usage     Usage     `json:"usage"`
+	Skin      Skin             `json:"skin"`
+	RateLimit trackedRateLimit `json:"rateLimit"`
+	Usage     trackedUsage     `json:"usage"`
+}
+
+// droppedFields lists the malformed rateLimit and usage parts.
+func (w *generateWire) droppedFields() []string {
+	return append(append([]string(nil), w.RateLimit.dropped...), w.Usage.dropped...)
 }
 
 // submit encodes src, posts it to path and decodes the response into W.

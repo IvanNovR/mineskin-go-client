@@ -67,8 +67,8 @@ func TestHandleResponseAPIError(t *testing.T) {
 	}{
 		{"invalid api key", 401, `{"success":false,"errors":[{"code":"invalid_api_key","message":"Invalid API key"}]}`, "invalid_api_key", "Invalid API key", false},
 		{"first error wins", 400, `{"success":false,"errors":[{"code":"a","message":"A"},{"code":"b","message":"B"}]}`, "a", "A", false},
-		{"fallbacks without errors", 400, `{"success":false}`, "request_failed", "Request Failed", false},
-		{"fallbacks with empty errors", 400, `{"success":false,"errors":[]}`, "request_failed", "Request Failed", false},
+		{"fallbacks without errors", 400, `{"success":false}`, "request_failed", "request failed", false},
+		{"fallbacks with empty errors", 400, `{"success":false,"errors":[]}`, "request_failed", "request failed", false},
 		{"success absent with 404", 404, `{"errors":[{"code":"skin_not_found","message":"nope"}]}`, "skin_not_found", "nope", true},
 	}
 	for _, tt := range tests {
@@ -125,7 +125,7 @@ func TestHandleResponseUnexpectedUsesHeaders(t *testing.T) {
 		Body:   []byte("error code: 1033"),
 	}
 	_, err := handleResponse(raw, noopDecoder)
-	want := "HTTP 530 from Cloudflare (error 1033, ray 8f3a-FRA): error code: 1033"
+	want := "mineskin: HTTP 530 from Cloudflare (error 1033, ray 8f3a-FRA): error code: 1033"
 	if err == nil || err.Error() != want {
 		t.Errorf("err = %v, want %q", err, want)
 	}

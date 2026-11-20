@@ -98,10 +98,10 @@ func newUnexpectedResponseError(status int, h http.Header, body []byte, cause er
 }
 
 // Error implements the error interface. The format is
-// "HTTP <status>[ from Cloudflare| from <server>][ (error <code>, ray <ray>)]: <snippet>".
+// "mineskin: HTTP <status>[ from Cloudflare| from <server>][ (error <code>, ray <ray>)]: <snippet>".
 func (e *UnexpectedResponseError) Error() string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "HTTP %d", e.Status)
+	fmt.Fprintf(&b, "mineskin: HTTP %d", e.Status)
 	switch e.Source {
 	case SourceCloudflare:
 		b.WriteString(" from Cloudflare")

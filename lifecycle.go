@@ -44,6 +44,12 @@ func (c *Client) checkOpen() error {
 	return nil
 }
 
+// closedError returns ErrClientClosed with the call it interrupted. The text
+// of the sentinel carries the package prefix, so the label follows it.
+func closedError(label string) error {
+	return fmt.Errorf("%w: %s", ErrClientClosed, label)
+}
+
 // requestContext returns a context that ends when ctx ends or the client is
 // closed, in which case its cause is ErrClientClosed. The returned cancel
 // func must be called to release the link to the base context.
@@ -60,7 +66,7 @@ func (c *Client) requestContext(ctx context.Context) (context.Context, context.C
 // because Close cancelled merged while the caller's own ctx is still live.
 func closedOrSame(ctx, merged context.Context, label string, err error) error {
 	if ctx.Err() == nil && errors.Is(context.Cause(merged), ErrClientClosed) {
-		return fmt.Errorf("mineskin: %s: %w", label, ErrClientClosed)
+		return closedError(label)
 	}
 	return err
 }

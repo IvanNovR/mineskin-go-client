@@ -179,7 +179,8 @@ func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
 	t.Cleanup(tlsSrv.Close)
 
 	c := newTestClient(t, tlsSrv.URL, WithTransport(tlsSrv.Client().Transport), WithAPIKey(testAPIKey))
-	_, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
+	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
+	assertGoStyleMessage(t, err)
 	if err == nil {
 		t.Fatalf("err = %v, want a error", err)
 	}

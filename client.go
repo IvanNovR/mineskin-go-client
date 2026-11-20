@@ -2,7 +2,6 @@ package mineskin
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -103,7 +102,7 @@ func NewClient(opts ...Option) (*Client, error) {
 			HTTP: &http.Client{
 				Transport:     r.transport,
 				Timeout:       r.timeout,
-				CheckRedirect: checkRedirect,
+				CheckRedirect: transport.CheckRedirect,
 			},
 			Clock:  r.clock,
 			Logger: r.logger,
@@ -284,13 +283,4 @@ func sendsKeyOverPlainHTTP(baseURL string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip == nil || !ip.IsLoopback()
-}
-
-// checkRedirect applies the transport's redirect policy and marks its refusals
-// as client errors.
-func checkRedirect(req *http.Request, via []*http.Request) error {
-	if err := transport.CheckRedirect(req, via); err != nil {
-		return fmt.Errorf("mineskin: redirect: %w", err)
-	}
-	return nil
 }

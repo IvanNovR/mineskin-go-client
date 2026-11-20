@@ -22,7 +22,7 @@ func TestJobFailedError(t *testing.T) {
 		wantMessage string
 	}{
 		{"first error", withErrs, "invalid_image", "bad image"},
-		{"fallback", &JobResponse{Job: job}, "job_failed", "Job failed"},
+		{"fallback", &JobResponse{Job: job}, "job_failed", "job failed"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

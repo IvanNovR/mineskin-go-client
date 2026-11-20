@@ -12,7 +12,7 @@ const (
 	fieldJobs = "jobs"
 
 	defaultJobFailedCode    = "job_failed"
-	defaultJobFailedMessage = "Job failed"
+	defaultJobFailedMessage = "job failed"
 )
 
 // JobStatus is the state of a queued generation job.

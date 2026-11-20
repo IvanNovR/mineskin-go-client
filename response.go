@@ -11,7 +11,7 @@ import (
 
 const (
 	defaultErrorCode    = "request_failed"
-	defaultErrorMessage = "Request Failed"
+	defaultErrorMessage = "request failed"
 
 	fieldSuccess  = "success"
 	fieldErrors   = "errors"

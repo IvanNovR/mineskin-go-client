@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
@@ -108,7 +109,7 @@ func mapGroupErr(label string, err error) error {
 	case errors.Is(err, errCheckSkipped):
 		return err
 	case errors.Is(err, throttle.ErrClosed), errors.Is(err, ratelimit.ErrClosed):
-		return fmt.Errorf("mineskin: %s: %w", label, ErrClientClosed)
+		return closedError(label)
 	case errors.As(err, &build):
 		return fmt.Errorf("%w: %s: %w", ErrInvalidInput, label, build.Err)
 	default:
@@ -139,7 +140,7 @@ func newRetryCancelledError(ctxErr error, last transport.Response) error {
 
 // Error implements the error interface and names both causes.
 func (e *retryCancelledError) Error() string {
-	return e.ctxErr.Error() + " (while retrying after " + e.rateLimited.Error() + ")"
+	return e.ctxErr.Error() + " (while retrying after " + strings.TrimPrefix(e.rateLimited.Error(), errorPrefix) + ")"
 }
 
 // Unwrap lets errors.Is and errors.As reach both causes.
@@ -197,12 +198,21 @@ func mapPollErr(err error) error {
 	case errors.As(err, &exhausted):
 		return fmt.Errorf("%w: job %s after %d attempts", ErrMaxAttempts, exhausted.ID, exhausted.Attempts)
 	case errors.As(err, &interval) && interval.Panic != nil:
-		return fmt.Errorf("mineskin: poll interval panicked: %v", interval.Panic)
+		return panickedIntervalError(interval.Panic)
 	case errors.As(err, &interval):
 		return invalidInput("poll interval must be greater than zero")
 	default:
 		return err
 	}
+}
+
+// panickedIntervalError reports a recovered poll-interval panic. When the
+// panic value is an error it stays in the chain.
+func panickedIntervalError(r any) error {
+	if err, ok := r.(error); ok {
+		return fmt.Errorf("mineskin: poll interval panicked: %w", err)
+	}
+	return fmt.Errorf("mineskin: poll interval panicked: %v", r)
 }
 
 // do sends a request through the transport and returns its raw errors: a

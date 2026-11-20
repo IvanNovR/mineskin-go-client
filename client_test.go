@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 	"time"
 )
 
@@ -243,7 +245,7 @@ func TestCheckRedirect(t *testing.T) {
 			for i, v := range tt.via {
 				via[i] = redirectReq(t, v)
 			}
-			err := checkRedirect(redirectReq(t, tt.next), via)
+			err := transport.CheckRedirect(redirectReq(t, tt.next), via)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
@@ -252,7 +254,7 @@ func TestCheckRedirect(t *testing.T) {
 			}
 		})
 	}
-	if err := checkRedirect(redirectReq(t, "https://a/"), nil); err != nil {
+	if err := transport.CheckRedirect(redirectReq(t, "https://a/"), nil); err != nil {
 		t.Errorf("empty via: %v", err)
 	}
 }

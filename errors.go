@@ -9,6 +9,11 @@ import (
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
+// errorPrefix starts the text of every error the package returns. Exactly one
+// prefix appears in a message, at the outermost layer; the internal packages
+// add none.
+const errorPrefix = "mineskin: "
+
 // Sentinel errors for use with errors.Is.
 var (
 	// ErrInvalidInput matches configuration and argument validation errors.
@@ -46,7 +51,7 @@ type CodeAndMessage struct {
 type APIError struct {
 	// Code is the first error code of the response, or "request_failed".
 	Code string
-	// Message is the first error message of the response, or "Request Failed".
+	// Message is the first error message of the response, or "request failed".
 	Message string
 	// RateLimit is the rateLimit field of the response, or nil when absent or
 	// malformed.
@@ -87,7 +92,7 @@ func invalidInput(format string, args ...any) error {
 type JobFailedError struct {
 	// Code is the first error code of the response, or "job_failed".
 	Code string
-	// Message is the first error message of the response, or "Job failed".
+	// Message is the first error message of the response, or "job failed".
 	Message string
 	// Job is the failed job.
 	Job Job

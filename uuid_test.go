@@ -167,3 +167,40 @@ func mustParseUUID(t *testing.T, s string) UUID {
 	}
 	return u
 }
+
+func FuzzParseUUID(f *testing.F) {
+	for _, seed := range []string{
+		uuidDashed, uuidUndashed, strings.ToUpper(uuidDashed), "", ".", "..", "../v2/me",
+		uuidDashed + "\n", "\x00", strings.Repeat("\U0001F600", 8), "0123abcd-4567-89ef-0123-456789abcdeg",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, s string) {
+		u, err := ParseUUID(s)
+		if err != nil {
+			if !errors.Is(err, ErrInvalidInput) || u != (UUID{}) {
+				t.Fatalf("ParseUUID(%q) = (%v, %v), want zero UUID and ErrInvalidInput", s, u, err)
+			}
+			return
+		}
+		if len(s) != 32 && len(s) != 36 {
+			t.Fatalf("ParseUUID(%q) accepted input of length %d", s, len(s))
+		}
+		dashed := u.String()
+		if len(dashed) != 36 || dashed != strings.ToLower(dashed) {
+			t.Fatalf("String() = %q, want 36 lower-case characters", dashed)
+		}
+		again, err := ParseUUID(dashed)
+		if err != nil || again != u {
+			t.Fatalf("round trip of %q through %q = (%v, %v)", s, dashed, again, err)
+		}
+		text, err := u.MarshalText()
+		if err != nil {
+			t.Fatalf("MarshalText() error = %v", err)
+		}
+		var viaText UUID
+		if err := viaText.UnmarshalText(text); err != nil || viaText != u {
+			t.Fatalf("text round trip = (%v, %v), want %v", viaText, err, u)
+		}
+	})
+}

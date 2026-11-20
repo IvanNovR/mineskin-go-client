@@ -1,7 +1,9 @@
 package transport
 
 import (
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -113,4 +115,32 @@ func TestOriginSourceValues(t *testing.T) {
 	if SourceCloudflare != "cloudflare" || SourceNginx != "nginx" || SourceUnknown != "unknown" {
 		t.Error("source values are part of the public ResponseSource contract")
 	}
+}
+
+func FuzzParseRetryAfter(f *testing.F) {
+	for _, seed := range []string{
+		"120", "0", "-3", " 5 ", "", "soon", "1.5", "+5", "99999999999999999999",
+		"9223372036854775807", "9223372036", "9223372037",
+		testNow.Add(30 * time.Second).Format(http.TimeFormat),
+		testNow.Add(-time.Hour).Format(time.RFC850),
+		"Mon, 01 Jan 0001 00:00:00 GMT", "Fri, 31 Dec 9999 23:59:59 GMT",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, value string) {
+		d, ok := ParseRetryAfter(value, testNow)
+		if d < 0 {
+			t.Fatalf("ParseRetryAfter(%q) = %v, want never negative", value, d)
+		}
+		if !ok && d != 0 {
+			t.Fatalf("ParseRetryAfter(%q) = (%v, false), want a zero delay when absent", value, d)
+		}
+		// A delta-seconds value must not wrap around the int64 nanosecond range:
+		// the seconds go back out unchanged, or the value is rejected.
+		if sec, err := strconv.ParseInt(strings.TrimSpace(value), 10, 64); err == nil && sec >= 0 && ok {
+			if sec > math.MaxInt64/int64(time.Second) || int64(d/time.Second) != sec {
+				t.Fatalf("ParseRetryAfter(%q) = %v, seconds do not survive (overflow)", value, d)
+			}
+		}
+	})
 }

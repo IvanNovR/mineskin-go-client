@@ -577,3 +577,76 @@ func TestClientRedactsAPIKeyInSlogOutput(t *testing.T) {
 		}
 	}
 }
+
+// TestClient_ConcurrentUse is a race-detector smoke test: many goroutines mix
+// the call kinds against one client.
+func TestClient_ConcurrentUse(t *testing.T) {
+	t.Parallel()
+	const workers = 20
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method + " " + r.URL.Path {
+		case keySkin:
+			writeJSON(200, skinFixture)(w, r)
+		case keyQueue:
+			writeJSON(200, jobFixture)(w, r)
+		case keyJob:
+			writeJSON(200, jobJSON("job-1", "completed"))(w, r)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	c := newTestClient(t, srv.URL, fastPolling())
+	ctx := waitCtx(t)
+	var wg sync.WaitGroup
+	for i := range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			switch i % 3 {
+			case 0:
+				if _, err := c.GetSkin(ctx, testSkinUUID); err != nil {
+					t.Errorf("worker %d GetSkin() error = %v", i, err)
+				}
+			case 1:
+				if _, err := c.Queue(ctx, FromURL("https://example.test/skin.png"), GenerateOptions{}); err != nil {
+					t.Errorf("worker %d Queue() error = %v", i, err)
+				}
+			default:
+				got, err := c.WaitForJob(ctx, Job{ID: "job-1"})
+				if err != nil || got.Job.Status != JobStatusCompleted {
+					t.Errorf("worker %d WaitForJob() = %+v, %v; want a completed job", i, got, err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	if err := c.Close(); err != nil {
+		t.Errorf("Close() error = %v", err)
+	}
+}
+
+// A MineSkin-* header sent more than once must neither fail the call nor lose
+// a value (JB-08: the Java Apache backend crashes on duplicate header names).
+func TestGetSkin_RepeatedResponseHeaders(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("MineSkin-Server", "api-1")
+		w.Header().Add("MineSkin-Server", "api-2")
+		w.Header().Add("MineSkin-Breadcrumb", "a")
+		w.Header().Add("MineSkin-Breadcrumb", "b")
+		writeJSON(200, skinFixture)(w, r)
+	})
+
+	got, err := newTestClient(t, srv.URL).GetSkin(waitCtx(t), testSkinUUID)
+
+	if err != nil {
+		t.Fatalf("GetSkin() error = %v", err)
+	}
+	if want := []string{"api-1", "api-2"}; !reflect.DeepEqual(got.Meta.Header.Values("MineSkin-Server"), want) {
+		t.Errorf("MineSkin-Server values = %v, want %v", got.Meta.Header.Values("MineSkin-Server"), want)
+	}
+	if got.Meta.Breadcrumb != "a,b" {
+		t.Errorf("Breadcrumb = %q, want a,b", got.Meta.Breadcrumb)
+	}
+}

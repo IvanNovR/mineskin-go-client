@@ -212,11 +212,8 @@ func TestUnexpectedResponseErrorClassification(t *testing.T) {
 			if got := e.Error(); got != tc.message {
 				t.Errorf("Error() = %q, want %q", got, tc.message)
 			}
-			if e.IsCloudflare() != (tc.source == SourceCloudflare) {
-				t.Errorf("IsCloudflare() = %v for source %q", e.IsCloudflare(), tc.source)
-			}
-			if e.IsRetryable() != tc.retryable {
-				t.Errorf("IsRetryable() = %v, want %v", e.IsRetryable(), tc.retryable)
+			if got := IsRetryable(e); got != tc.retryable {
+				t.Errorf("IsRetryable() = %v, want %v", got, tc.retryable)
 			}
 		})
 	}
@@ -234,8 +231,8 @@ func TestUnexpectedResponseErrorRetryAfterHTTPDate(t *testing.T) {
 	h := http.Header{}
 	h.Set("Retry-After", testNow.Add(45*time.Second).Format(http.TimeFormat))
 	e := newUnexpectedResponseError(503, h, nil, nil, testNow)
-	if !e.HasRetryAfter || e.RetryAfter != 45*time.Second {
-		t.Errorf("got (%v, %v), want (45s, true)", e.RetryAfter, e.HasRetryAfter)
+	if e.RetryAfter != 45*time.Second {
+		t.Errorf("RetryAfter = %v, want 45s", e.RetryAfter)
 	}
 }
 
@@ -248,37 +245,36 @@ func TestUnexpectedResponseErrorNilBody(t *testing.T) {
 
 func TestUnexpectedResponseErrorRetryAfter(t *testing.T) {
 	tests := []struct {
-		name    string
-		value   string
-		want    time.Duration
-		present bool
+		name  string
+		value string
+		want  time.Duration
 	}{
-		{"seconds", "30", 30 * time.Second, true},
-		{"two minutes", "120", 120 * time.Second, true},
-		{"zero", "0", 0, true},
-		{"surrounding whitespace", " 5 ", 5 * time.Second, true},
+		{"seconds", "30", 30 * time.Second},
+		{"two minutes", "120", 120 * time.Second},
+		{"zero", "0", 0},
+		{"surrounding whitespace", " 5 ", 5 * time.Second},
 		// JB-18 deviation, D13: the HTTP-date form is supported, and a past
-		// date or a negative value is present with a zero delay.
-		{"http date in the past", "Wed, 21 Oct 2026 07:28:00 GMT", 0, true},
-		{"negative", "-1", 0, true},
-		{"fractional", "1.5", 0, false},
-		{"empty", "", 0, false},
-		{"overflow", "99999999999999999999", 0, false},
-		{"too large for duration", "9223372036854775807", 0, false},
+		// date or a negative value gives a zero delay, like an absent header.
+		{"http date in the past", "Wed, 21 Oct 2026 07:28:00 GMT", 0},
+		{"negative", "-1", 0},
+		{"fractional", "1.5", 0},
+		{"empty", "", 0},
+		{"overflow", "99999999999999999999", 0},
+		{"too large for duration", "9223372036854775807", 0},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			h := http.Header{}
 			h.Set("Retry-After", tc.value)
 			e := newUnexpectedResponseError(503, h, []byte("Service Unavailable"), nil, testNow)
-			if e.HasRetryAfter != tc.present || e.RetryAfter != tc.want {
-				t.Errorf("got (%v, %v), want (%v, %v)", e.RetryAfter, e.HasRetryAfter, tc.want, tc.present)
+			if e.RetryAfter != tc.want {
+				t.Errorf("RetryAfter = %v, want %v", e.RetryAfter, tc.want)
 			}
 		})
 	}
 	absent := newUnexpectedResponseError(503, http.Header{}, nil, nil, testNow)
-	if absent.HasRetryAfter || absent.RetryAfter != 0 {
-		t.Errorf("missing header: got (%v, %v)", absent.RetryAfter, absent.HasRetryAfter)
+	if absent.RetryAfter != 0 {
+		t.Errorf("missing header: RetryAfter = %v, want 0", absent.RetryAfter)
 	}
 }
 
@@ -289,7 +285,7 @@ func TestUnexpectedResponseErrorIsRetryable(t *testing.T) {
 	}
 	for status, want := range tests {
 		e := newUnexpectedResponseError(status, http.Header{}, nil, nil, testNow)
-		if got := e.IsRetryable(); got != want {
+		if got := IsRetryable(e); got != want {
 			t.Errorf("status %d: IsRetryable() = %v, want %v", status, got, want)
 		}
 	}
@@ -304,8 +300,8 @@ func TestUnexpectedResponseErrorIs(t *testing.T) {
 		t.Error("must not match ErrInvalidInput")
 	}
 	bad := newUnexpectedResponseError(502, http.Header{}, nil, nil, testNow)
-	if errors.Is(bad, ErrNotFound) {
-		t.Error("502 must not match ErrNotFound")
+	if errors.Is(bad, ErrNotFound) || errors.Is(bad, ErrRateLimited) {
+		t.Error("502 must match neither ErrNotFound nor ErrRateLimited")
 	}
 }
 
@@ -315,7 +311,7 @@ func TestUnexpectedResponseErrorUnwrapAndAs(t *testing.T) {
 	if !errors.Is(e, cause) || !errors.Is(e.Unwrap(), cause) {
 		t.Error("cause must be reachable through Unwrap")
 	}
-	if e.IsRetryable() {
+	if IsRetryable(e) {
 		t.Error("200 must not be retryable")
 	}
 	var target *UnexpectedResponseError

@@ -52,12 +52,15 @@
 //
 // # Errors
 //
-// Invalid arguments or options also match ErrInvalidInput. A 404 response
-// matches ErrNotFound. When the API reports a failure the error is an
-// *APIError (use errors.As); a body that is not the expected JSON, such as a
-// Cloudflare error page, yields an *UnexpectedResponseError. Context
+// Error text starts with "mineskin:", once, at the outermost layer. Invalid
+// arguments or options match ErrInvalidInput. A 404 response matches
+// ErrNotFound and a 429 response matches ErrRateLimited, whatever the body.
+// When the API reports a failure the error is an *APIError (use errors.As); a
+// body that is not the expected JSON, such as a Cloudflare error page, yields
+// an *UnexpectedResponseError. A failed job is a *JobFailedError. Context
 // cancellation, deadlines and network errors are preserved and can be matched
-// with errors.Is.
+// with errors.Is. IsRetryable(err) tells whether trying the call again may
+// succeed.
 //
 // # Rate limiting
 //
@@ -106,7 +109,7 @@
 // the 429 (errors.As with *APIError or
 // *UnexpectedResponseError). Only 429
 // is retried; for other failures the errors carry APIError.RetryAfter,
-// APIError.RateLimit and APIError.IsRetryable so that the caller can decide.
+// APIError.RateLimit and IsRetryable(err) so that the caller can decide.
 // Time spent waiting in the throttle is bounded only by the context of the
 // call: WithTimeout covers the HTTP exchange alone.
 //

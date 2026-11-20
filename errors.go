@@ -1,8 +1,10 @@
 package mineskin
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
 
@@ -21,6 +23,11 @@ var (
 
 	// ErrNotFound matches errors caused by an HTTP 404 response.
 	ErrNotFound = errors.New("mineskin: not found")
+
+	// ErrRateLimited matches errors caused by an HTTP 429 response, whether
+	// the body was a MineSkin JSON error or something else such as an HTML
+	// page of a proxy.
+	ErrRateLimited = errors.New("mineskin: rate limited")
 
 	// ErrMaxAttempts matches the error returned when job polling gave up after
 	// the maximum number of attempts.
@@ -47,7 +54,7 @@ type CodeAndMessage struct {
 
 // APIError is returned when the MineSkin API reports that a request was not
 // successful. It matches ErrNotFound with errors.Is when the HTTP status is
-// 404. Use errors.As to obtain it.
+// 404 and ErrRateLimited when it is 429. Use errors.As to obtain it.
 type APIError struct {
 	// Code is the first error code of the response, or "request_failed".
 	Code string
@@ -66,18 +73,56 @@ type APIError struct {
 	ResponseMeta
 }
 
-// IsRetryable reports whether the error is likely temporary: status 408, 429,
-// or 500 and above except 501 and 505.
-func (e *APIError) IsRetryable() bool { return transport.IsRetryableStatus(e.Status) }
-
 // Error implements the error interface.
 func (e *APIError) Error() string {
 	return fmt.Sprintf("mineskin: API error (HTTP %d, %s): %s", e.Status, e.Code, e.Message)
 }
 
-// Is reports whether target is ErrNotFound and the HTTP status is 404.
-func (e *APIError) Is(target error) bool {
-	return target == ErrNotFound && e.Status == http.StatusNotFound
+// Is reports whether target is the sentinel of the HTTP status: ErrNotFound
+// for 404 and ErrRateLimited for 429.
+func (e *APIError) Is(target error) bool { return matchesStatus(e.Status, target) }
+
+// statusSentinel returns the sentinel that classifies an HTTP status: 404 is
+// ErrNotFound and 429 is ErrRateLimited. Other statuses have none (nil).
+func statusSentinel(status int) error {
+	switch status {
+	case http.StatusNotFound:
+		return ErrNotFound
+	case http.StatusTooManyRequests:
+		return ErrRateLimited
+	default:
+		return nil
+	}
+}
+
+// matchesStatus is the Is logic shared by the response error types.
+func matchesStatus(status int, target error) bool {
+	s := statusSentinel(status)
+	return s != nil && target == s //nolint:errorlint // sentinel identity is the contract of Is
+}
+
+// IsRetryable reports whether retrying the call that returned err may
+// succeed. It is true for an *APIError or *UnexpectedResponseError whose HTTP
+// status is 408, 429 or 500 and above except 501 and 505, and for a network
+// error that is a timeout. It is false for nil, for a cancelled or expired
+// context, for ErrClientClosed, and for everything else. The checks look
+// through wrapping, so the result is the same for a wrapped error.
+func IsRetryable(err error) bool {
+	// The context checks come first: context.DeadlineExceeded implements
+	// Timeout() and would otherwise count as a retryable network timeout.
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrClientClosed) {
+		return false
+	}
+	var api *APIError
+	if errors.As(err, &api) {
+		return transport.IsRetryableStatus(api.Status)
+	}
+	var unexpected *UnexpectedResponseError
+	if errors.As(err, &unexpected) {
+		return transport.IsRetryableStatus(unexpected.Status)
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // invalidInput returns an error wrapping ErrInvalidInput with a formatted

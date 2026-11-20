@@ -78,14 +78,14 @@ func TestAPIErrorRetryAfter(t *testing.T) {
 	}
 }
 
-func TestAPIErrorIsRetryable(t *testing.T) {
+func TestIsRetryableAPIError(t *testing.T) {
 	tests := []struct {
 		status int
 		want   bool
 	}{{429, true}, {503, true}, {400, false}, {401, false}, {200, false}}
 	for _, tc := range tests {
 		e := apiErrorFrom(t, transport.Response{Status: tc.status, Body: []byte(`{"success":false}`)})
-		if got := e.IsRetryable(); got != tc.want {
+		if got := IsRetryable(e); got != tc.want {
 			t.Errorf("status %d: IsRetryable() = %v, want %v", tc.status, got, tc.want)
 		}
 	}

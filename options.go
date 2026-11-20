@@ -147,7 +147,7 @@ func WithAutoTuning() Option {
 // context.Canceled or context.DeadlineExceeded, and errors.As finds the
 // *APIError (or *UnexpectedResponseError) with its RateLimit and RetryAfter.
 // Only 429 is retried; other failures are returned as they are, and
-// IsRetryable lets callers decide about those. Each retry logs one Debug line.
+// IsRetryable(err) lets callers decide about those. Each retry logs one Debug line.
 func WithRateLimitRetries(n int) Option {
 	return func(c *config) { c.rateLimitRetries = n }
 }

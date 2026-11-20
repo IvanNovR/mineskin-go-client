@@ -60,8 +60,8 @@ func TestSeamClassifiersAgreeWithHandleResponse(t *testing.T) {
 			if got, want := transport.IsRetryableStatus(tt.status), tt.status == 408 || tt.status == 429 || tt.status >= 500 && tt.status != 501 && tt.status != 505; got != want {
 				t.Errorf("IsRetryableStatus = %v, want %v", got, want)
 			}
-			if ue != nil && ue.IsRetryable() != transport.IsRetryableStatus(tt.status) {
-				t.Errorf("UnexpectedResponseError.IsRetryable = %v disagrees with transport", ue.IsRetryable())
+			if ue != nil && IsRetryable(ue) != transport.IsRetryableStatus(tt.status) {
+				t.Errorf("UnexpectedResponseError.IsRetryable = %v disagrees with transport", IsRetryable(ue))
 			}
 		})
 	}

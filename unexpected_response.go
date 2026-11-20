@@ -58,14 +58,11 @@ type UnexpectedResponseError struct {
 	// for a 530 wrapping it. Zero means unknown.
 	CloudflareCode int
 	// RetryAfter is the Retry-After delay, from either the delta-seconds or the
-	// HTTP-date form (RFC 9110). A past date or a negative value gives 0. It is
-	// meaningful only when HasRetryAfter is true.
+	// HTTP-date form (RFC 9110). Zero means none: the header was absent or
+	// invalid, or it asked for no wait (a past date or a negative value).
 	RetryAfter time.Duration
-	// HasRetryAfter reports whether a valid Retry-After was present, including
-	// one that resolved to a zero delay.
-	HasRetryAfter bool
-	// Err is the underlying cause, for example a JSON parse error, or nil.
-	Err error
+	// cause is the underlying error, for example a JSON parse error, or nil.
+	cause error
 }
 
 // newUnexpectedResponseError builds the error from the response status,
@@ -82,7 +79,7 @@ func newUnexpectedResponseError(status int, h http.Header, body []byte, cause er
 	// response passed through Cloudflare, not that Cloudflare generated it.
 	viaCloudflare := cfRay != "" || strings.EqualFold(server, serverCloudflare)
 	o := transport.DetectOrigin(status, server, viaCloudflare, text)
-	retryAfter, hasRetryAfter := transport.ParseRetryAfter(h.Get(transport.HeaderRetryAfter), now)
+	retryAfter, _ := transport.ParseRetryAfter(h.Get(transport.HeaderRetryAfter), now)
 	return &UnexpectedResponseError{
 		Status:         status,
 		ContentType:    h.Get(headerContentType),
@@ -92,8 +89,7 @@ func newUnexpectedResponseError(status int, h http.Header, body []byte, cause er
 		CFRay:          cfRay,
 		CloudflareCode: o.CloudflareCode,
 		RetryAfter:     retryAfter,
-		HasRetryAfter:  hasRetryAfter,
-		Err:            cause,
+		cause:          cause,
 	}
 }
 
@@ -127,17 +123,8 @@ func (e *UnexpectedResponseError) Error() string {
 }
 
 // Unwrap returns the underlying cause, if any.
-func (e *UnexpectedResponseError) Unwrap() error { return e.Err }
+func (e *UnexpectedResponseError) Unwrap() error { return e.cause }
 
-// Is reports whether target is ErrNotFound and the HTTP status is 404.
-func (e *UnexpectedResponseError) Is(target error) bool {
-	return target == ErrNotFound && e.Status == http.StatusNotFound
-}
-
-// IsRetryable reports whether the error is likely temporary: status 408, 429,
-// or 500 and above except 501 and 505.
-func (e *UnexpectedResponseError) IsRetryable() bool { return transport.IsRetryableStatus(e.Status) }
-
-// IsCloudflare reports whether Cloudflare itself generated the error. An
-// origin error that merely passed through Cloudflare returns false; see CFRay.
-func (e *UnexpectedResponseError) IsCloudflare() bool { return e.Source == SourceCloudflare }
+// Is reports whether target is the sentinel of the HTTP status: ErrNotFound
+// for 404 and ErrRateLimited for 429.
+func (e *UnexpectedResponseError) Is(target error) bool { return matchesStatus(e.Status, target) }

@@ -111,7 +111,7 @@ func TestHandleResponseUnexpected(t *testing.T) {
 			if !errors.As(err, &ue) {
 				t.Fatalf("want *UnexpectedResponseError, got %T %v", err, err)
 			}
-			if (ue.Err != nil) != tt.wantCause || ue.IsRetryable() != tt.retryable || ue.Status != tt.status {
+			if (ue.cause != nil) != tt.wantCause || IsRetryable(ue) != tt.retryable || ue.Status != tt.status {
 				t.Errorf("ue = %+v", ue)
 			}
 		})

@@ -206,10 +206,10 @@ func TestAutoTuningOnlyAffectsGenerate(t *testing.T) {
 		t.Fatal(err)
 	}
 	var chans []<-chan error
-	for range DefaultGetConcurrency {
+	for range defaultGetConcurrency {
 		chans = append(chans, goCall(getCalls(c)[keySkin]))
 	}
-	waitCount(t, srv, keySkin, DefaultGetConcurrency)
+	waitCount(t, srv, keySkin, defaultGetConcurrency)
 	srv.open(keySkin)
 	for _, ch := range chans {
 		if err := mustDone(t, "GetSkin", ch); err != nil {

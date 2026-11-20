@@ -34,24 +34,24 @@ const (
 )
 
 // newRequestGroups builds the generate and get groups from the resolved
-// throttle settings.
-func (c *Client) newRequestGroups(r *resolvedConfig) (gen, get *ratelimit.Group) {
+// pacing settings of cfg.
+func (c *Client) newRequestGroups(cfg *config) (gen, get *ratelimit.Group) {
 	get = &ratelimit.Group{
 		Name:     getGroupName,
-		Throttle: newFixedThrottle(c.clock, r.getThrottle),
-		Retries:  r.rateLimitRetries, Logger: r.logger, Clock: c.clock,
+		Throttle: newFixedThrottle(c.clock, cfg.getThrottle),
+		Retries:  cfg.rateLimitRetries, Logger: cfg.logger, Clock: c.clock,
 	}
 	gen = &ratelimit.Group{
 		Name:    generateGroupName,
-		Retries: r.rateLimitRetries, Logger: r.logger, Clock: c.clock,
+		Retries: cfg.rateLimitRetries, Logger: cfg.logger, Clock: c.clock,
 	}
-	if !r.autoTuning {
-		gen.Throttle = newFixedThrottle(c.clock, r.generateThrottle)
+	if !cfg.generate.auto {
+		gen.Throttle = newFixedThrottle(c.clock, cfg.generate.throttle)
 		return gen, get
 	}
 	// The tuner loads its grants through GetUser, which uses the get group (D8).
 	gen.Tuner = ratelimit.NewTuner(ratelimit.TunerConfig{
-		Clock: c.clock, Logger: r.logger, Load: c.loadGrants, BaseCtx: c.baseCtx, BG: &c.bg,
+		Clock: c.clock, Logger: cfg.logger, Load: c.loadGrants, BaseCtx: c.baseCtx, BG: &c.bg,
 	})
 	gen.Throttle = throttle.New(c.clock, gen.Tuner.Limits)
 	gen.Tuner.SetKick(gen.Throttle.Kick)

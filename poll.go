@@ -6,12 +6,9 @@ import (
 )
 
 const (
-	// DefaultPollInitialDelay is the default wait before the first status check.
-	DefaultPollInitialDelay = 2 * time.Second
-	// DefaultPollInterval is the default constant wait between status checks.
-	DefaultPollInterval = time.Second
-	// DefaultPollMaxAttempts is the default number of status checks per job.
-	DefaultPollMaxAttempts = 10
+	defaultPollInitialDelay = 2 * time.Second
+	defaultPollInterval     = time.Second
+	defaultPollMaxAttempts  = 10
 )
 
 // PollInterval returns the wait before the given check attempt (1-based).
@@ -65,15 +62,15 @@ func ExponentialInterval(initial, max time.Duration, multiplier float64, freeAtt
 }
 
 // PollOptions configures how Client waits for jobs. A zero field selects its
-// default: DefaultPollInitialDelay, a constant DefaultPollInterval,
-// DefaultPollMaxAttempts and UseETA false.
+// default: an InitialDelay of 2 s, a constant Interval of 1 s, 10 MaxAttempts
+// and UseETA false.
 type PollOptions struct {
 	// InitialDelay is the wait before the first status check.
 	InitialDelay time.Duration
 	// Interval gives the wait between later checks. It must return a
 	// positive duration: zero or less fails the wait with ErrInvalidInput. A
 	// panic is recovered and fails the wait with an error.
-	// nil selects a constant DefaultPollInterval.
+	// nil selects a constant 1 s.
 	Interval PollInterval
 	// MaxAttempts is the number of status checks before giving up.
 	MaxAttempts int
@@ -82,23 +79,29 @@ type PollOptions struct {
 	UseETA bool
 }
 
-// withDefaults returns p with defaults filled in, or an error matching
-// ErrInvalidInput if InitialDelay or MaxAttempts is negative.
-func (p PollOptions) withDefaults() (PollOptions, error) {
-	if p.InitialDelay < 0 {
-		return PollOptions{}, invalidInput("poll initial delay must not be negative")
-	}
-	if p.MaxAttempts < 0 {
-		return PollOptions{}, invalidInput("poll max attempts must not be negative")
-	}
+// withDefaults returns p with zero fields replaced by their defaults.
+// Negative values are kept for validate to reject.
+func (p PollOptions) withDefaults() PollOptions {
 	if p.InitialDelay == 0 {
-		p.InitialDelay = DefaultPollInitialDelay
+		p.InitialDelay = defaultPollInitialDelay
 	}
 	if p.MaxAttempts == 0 {
-		p.MaxAttempts = DefaultPollMaxAttempts
+		p.MaxAttempts = defaultPollMaxAttempts
 	}
 	if p.Interval == nil {
-		p.Interval = func(int) time.Duration { return DefaultPollInterval }
+		p.Interval = func(int) time.Duration { return defaultPollInterval }
 	}
-	return p, nil
+	return p
+}
+
+// validate returns an error matching ErrInvalidInput if InitialDelay or
+// MaxAttempts is negative.
+func (p PollOptions) validate() error {
+	if p.InitialDelay < 0 {
+		return invalidInput("poll initial delay must not be negative")
+	}
+	if p.MaxAttempts < 0 {
+		return invalidInput("poll max attempts must not be negative")
+	}
+	return nil
 }

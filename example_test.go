@@ -140,7 +140,7 @@ func ExampleWithRateLimitRetries() {
 
 	// The default is two retries; a 429 is retried through the throttle.
 	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL), mineskin.WithUserAgent("example/1.0"),
-		mineskin.WithRateLimitRetries(mineskin.DefaultRateLimitRetries))
+		mineskin.WithRateLimitRetries(2))
 	if err != nil {
 		log.Fatal(err)
 	}

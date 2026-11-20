@@ -96,10 +96,7 @@ func TestWithJobPollingDefaults(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.in.withDefaults()
-			if err != nil {
-				t.Fatalf("withDefaults() error = %v", err)
-			}
+			got := tt.in.withDefaults()
 			if got.InitialDelay != tt.wantDelay || got.MaxAttempts != tt.wantMax || got.UseETA != tt.wantETA {
 				t.Errorf("got %+v", got)
 			}
@@ -108,8 +105,8 @@ func TestWithJobPollingDefaults(t *testing.T) {
 			}
 		})
 	}
-	if DefaultPollInitialDelay != 2*time.Second || DefaultPollInterval != time.Second || DefaultPollMaxAttempts != 10 {
-		t.Error("exported defaults changed")
+	if defaultPollInitialDelay != 2*time.Second || defaultPollInterval != time.Second || defaultPollMaxAttempts != 10 {
+		t.Error("poll defaults changed")
 	}
 }
 
@@ -126,6 +123,32 @@ func TestWithJobPollingValidation(t *testing.T) {
 			c, err := NewClient(WithJobPolling(tt.in))
 			if c != nil || !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("got (%v, %v), want nil and ErrInvalidInput", c, err)
+			}
+		})
+	}
+}
+
+func TestPollOptionsValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      PollOptions
+		wantErr string
+	}{
+		{"valid", PollOptions{InitialDelay: time.Second, MaxAttempts: 1}, ""},
+		{"negative initial delay", PollOptions{InitialDelay: -time.Second, MaxAttempts: 1}, "mineskin: invalid input: poll initial delay must not be negative"},
+		{"negative max attempts", PollOptions{InitialDelay: time.Second, MaxAttempts: -1}, "mineskin: invalid input: poll max attempts must not be negative"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.in.validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validate() = %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidInput) || err.Error() != tt.wantErr {
+				t.Fatalf("validate() = %v, want %q", err, tt.wantErr)
 			}
 		})
 	}

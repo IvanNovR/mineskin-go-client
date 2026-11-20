@@ -71,11 +71,11 @@
 //
 // Requests are throttled on the client side and the throttle is on by
 // default. Requests belong to one of two groups. The generate group holds
-// Queue and Generate and starts at most one request per DefaultGenerateInterval
-// (200 ms) with DefaultGenerateConcurrency (1) in flight. The get group holds
+// Queue and Generate and starts at most one request per 200 ms
+// with one in flight. The get group holds
 // GetSkin, GetSkinByUUID, GetUser, GetJob and ListJobs, including the calls
-// made while WaitForJob polls, and uses DefaultGetInterval (100 ms) and
-// DefaultGetConcurrency (5). Queued requests start in FIFO order, and a start
+// made while WaitForJob polls, and starts at most one request per 100 ms
+// with five in flight. Queued requests start in FIFO order, and a start
 // needs a free slot, the interval since the previous start and the group's
 // server delay to have passed.
 //
@@ -91,8 +91,8 @@
 // changes nothing.
 //
 // WithAutoTuning makes the generate group follow the limits granted to the
-// API key instead of fixed values (it cannot be combined with
-// WithGenerateThrottle). The grants are loaded lazily by the first Queue or
+// API key instead of fixed values (it replaces WithGenerateThrottle and is
+// replaced by a later one: the last option wins). The grants are loaded lazily by the first Queue or
 // Generate call, never by NewClient, and are refreshed in the background when
 // they are older than five minutes. Until the first load the group runs at one
 // request per second with one in flight. A job that ends FAILED, or a
@@ -100,7 +100,7 @@
 // interval, and the penalty decays over time.
 //
 // A request that the server rejects with HTTP 429 is retried automatically, at
-// most DefaultRateLimitRetries (2) times; WithRateLimitRetries changes that
+// most 2 times; WithRateLimitRetries changes that
 // and 0 turns it off. This applies to every request, including Generate and
 // the poller's checks: a 429 is never processed, so a retry cannot create a
 // duplicate skin or cost an extra credit. MineSkin starts the generate

@@ -46,13 +46,12 @@ func newTestClient(t *testing.T, baseURL string, opts ...Option) *Client {
 }
 
 // fastThrottles makes both groups practically unthrottled (1 ns interval, 100
-// in flight) so tests that are not about throttling stay fast. It does not
-// mark the generate throttle as explicitly set, so WithAutoTuning may still be
-// added; tests about throttling override it with their own options.
+// in flight) so tests that are not about throttling stay fast. Options given
+// after it win, so WithAutoTuning may still be added.
 func fastThrottles() Option {
 	fast := Throttle{Interval: time.Nanosecond, Concurrency: 100}
 	return func(c *config) {
-		c.generateThrottle = fast
+		c.generate = generatePacing{throttle: fast}
 		c.getThrottle = fast
 	}
 }

@@ -25,7 +25,7 @@ func TestNewClientDefaults(t *testing.T) {
 	if c.doer.BaseURL != DefaultBaseURL || c.doer.UserAgent != DefaultUserAgent || c.doer.APIKey != "" {
 		t.Errorf("defaults wrong: %q %q %q", c.doer.BaseURL, c.doer.UserAgent, c.doer.APIKey)
 	}
-	if c.doer.HTTP.Timeout != DefaultTimeout || DefaultTimeout != 10*time.Second {
+	if c.doer.HTTP.Timeout != defaultTimeout || defaultTimeout != 10*time.Second {
 		t.Errorf("timeout = %v", c.doer.HTTP.Timeout)
 	}
 	if _, ok := c.doer.HTTP.Transport.(*http.Transport); !ok || c.doer.HTTP.Transport == http.DefaultTransport {

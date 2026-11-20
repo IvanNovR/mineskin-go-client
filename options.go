@@ -3,30 +3,39 @@ package mineskin
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
-// config collects the settings applied by Option values before NewClient
-// validates them and builds an immutable Client.
+// config collects the settings applied by Option values. defaultConfig
+// prefills every default, so a config that went through the options is
+// complete; NewClient validates it once and builds the Client from it.
 type config struct {
 	baseURL   string
 	userAgent string
 	apiKey    string
 	timeout   time.Duration
+	// transport is nil until WithTransport sets it; NewClient then creates and
+	// owns a transport.
 	transport http.RoundTripper
 	logger    *slog.Logger
 	polling   PollOptions
-	// generateThrottle is the generate group's setting; generateThrottleSet
-	// records that WithGenerateThrottle was used, even with a zero value.
-	generateThrottle    Throttle
-	generateThrottleSet bool
-	getThrottle         Throttle
-	autoTuning          bool
-	rateLimitRetries    int
-	// clock is set only by tests; nil means the real clock.
+	// generate is the single pacing setting of the generate group; the last
+	// of WithGenerateThrottle and WithAutoTuning wins.
+	generate         generatePacing
+	getThrottle      Throttle
+	rateLimitRetries int
+	// clock is the real clock except in tests.
 	clock clock.Clock
+}
+
+// generatePacing is how the generate group is paced: by the fixed throttle,
+// or, when auto is set, by the limits granted to the API key.
+type generatePacing struct {
+	throttle Throttle
+	auto     bool
 }
 
 // Option configures a Client. Options are applied in order by NewClient.
@@ -36,13 +45,18 @@ type Option func(*config)
 // missing or blank key is allowed, but logs a warning and sends no
 // Authorization header. The key is never logged.
 func WithAPIKey(key string) Option {
-	return func(c *config) { c.apiKey = key }
+	return func(c *config) { c.apiKey = strings.TrimSpace(key) }
 }
 
 // WithUserAgent sets the User-Agent header, for example "AppName/1.2.3". An
 // empty value selects DefaultUserAgent, which logs a warning.
 func WithUserAgent(userAgent string) Option {
-	return func(c *config) { c.userAgent = userAgent }
+	return func(c *config) {
+		if userAgent = strings.TrimSpace(userAgent); userAgent == "" {
+			userAgent = DefaultUserAgent
+		}
+		c.userAgent = userAgent
+	}
 }
 
 // WithBaseURL sets the API base URL. It must be an absolute http or https URL
@@ -84,27 +98,28 @@ func WithTransport(rt http.RoundTripper) Option {
 // WithLogger sets the logger for diagnostics. A nil value keeps the default,
 // which discards all output. Credentials and request headers are never logged.
 func WithLogger(l *slog.Logger) Option {
-	return func(c *config) { c.logger = l }
+	return func(c *config) {
+		if l != nil {
+			c.logger = l
+		}
+	}
 }
 
 // WithJobPolling sets how the client waits for jobs. Zero fields use the
 // defaults (see PollOptions); a negative InitialDelay or MaxAttempts makes
 // NewClient return an error matching ErrInvalidInput.
 func WithJobPolling(p PollOptions) Option {
-	return func(c *config) { c.polling = p }
+	return func(c *config) { c.polling = p.withDefaults() }
 }
 
 // WithGenerateThrottle sets the pacing of the generate group, which holds
-// Queue and Generate. Zero fields select DefaultGenerateInterval (200 ms) and
-// DefaultGenerateConcurrency (1); a negative field makes NewClient return an
-// error matching ErrInvalidInput. Queue time is bounded only by the caller's
-// context, and throttling cannot be disabled. It cannot be combined with
-// WithAutoTuning.
+// Queue and Generate. Zero fields select the defaults, an interval of 200 ms
+// and 1 request in flight; a negative field makes NewClient return an error
+// matching ErrInvalidInput. Queue time is bounded only by the caller's
+// context, and throttling cannot be disabled. WithGenerateThrottle and
+// WithAutoTuning set the same pacing, so the one given last wins.
 func WithGenerateThrottle(t Throttle) Option {
-	return func(c *config) {
-		c.generateThrottle = t
-		c.generateThrottleSet = true
-	}
+	return func(c *config) { c.generate = generatePacing{throttle: t.orDefault(defaultGenerateThrottle)} }
 }
 
 // WithGetThrottle sets the pacing of the get group, which holds GetSkin,
@@ -113,7 +128,7 @@ func WithGenerateThrottle(t Throttle) Option {
 // makes NewClient return an error matching ErrInvalidInput. Queue time is
 // bounded only by the caller's context, and throttling cannot be disabled.
 func WithGetThrottle(t Throttle) Option {
-	return func(c *config) { c.getThrottle = t }
+	return func(c *config) { c.getThrottle = t.orDefault(defaultGetThrottle) }
 }
 
 // WithAutoTuning makes the generate group follow the limits granted to the
@@ -125,14 +140,14 @@ func WithGetThrottle(t Throttle) Option {
 // retryable unexpected response on the generate group, temporarily widens the
 // interval, and the penalty decays linearly.
 //
-// Auto-tuning and WithGenerateThrottle are mutually exclusive: using both, in
-// either order, makes NewClient return an error matching ErrInvalidInput.
+// WithAutoTuning replaces any WithGenerateThrottle given before it, and a
+// WithGenerateThrottle given after it replaces auto-tuning: the last one wins.
 func WithAutoTuning() Option {
-	return func(c *config) { c.autoTuning = true }
+	return func(c *config) { c.generate = generatePacing{auto: true} }
 }
 
 // WithRateLimitRetries sets how many times a request rejected with HTTP 429
-// is retried automatically; the default is DefaultRateLimitRetries. Zero
+// is retried automatically; the default is 2. Zero
 // disables retries and a negative value makes NewClient return an error
 // matching ErrInvalidInput.
 //

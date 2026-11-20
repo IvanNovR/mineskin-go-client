@@ -10,7 +10,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 	"github.com/IvanNovR/mineskin-go-client/internal/poll"
@@ -24,15 +23,9 @@ const (
 	// DefaultUserAgent is the User-Agent used when none is configured. Set a
 	// custom one such as "AppName/1.0" instead.
 	DefaultUserAgent = "MineSkinClient"
-	// DefaultTimeout is the default timeout of a single HTTP request.
-	DefaultTimeout = 10 * time.Second
 
 	apiKeyPrefix = "msk_"
 )
-
-// DefaultRateLimitRetries is the default number of automatic retries of a
-// request rejected with HTTP 429 (see WithRateLimitRetries).
-const DefaultRateLimitRetries = 2
 
 // Client is a MineSkin API client. It is immutable after NewClient returns and
 // safe for concurrent use by multiple goroutines.
@@ -76,47 +69,47 @@ var _ io.Closer = (*Client)(nil)
 // yields an error matching ErrInvalidInput; the error never
 // contains the API key.
 func NewClient(opts ...Option) (*Client, error) {
-	cfg := &config{
-		baseURL:   DefaultBaseURL,
-		userAgent: DefaultUserAgent,
-		timeout:   DefaultTimeout,
-
-		rateLimitRetries: DefaultRateLimitRetries,
-	}
+	cfg := defaultConfig()
 	for _, opt := range opts {
 		if opt != nil {
 			opt(cfg)
 		}
 	}
-
-	r, err := cfg.resolve()
-	if err != nil {
+	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	logConfig(r.logger, r.baseURL, r.userAgent, r.apiKey)
+	logConfig(cfg.logger, cfg.baseURL, cfg.userAgent, cfg.apiKey)
+
+	// A transport the caller did not supply is created here and owned by the
+	// client, which closes its idle connections.
+	rt, idleCloser := cfg.transport, (func())(nil)
+	if rt == nil {
+		owned := transport.DefaultTransport()
+		rt, idleCloser = owned, owned.CloseIdleConnections
+	}
 	c := &Client{
 		doer: &transport.Doer{
-			BaseURL:   r.baseURL,
-			UserAgent: r.userAgent,
-			APIKey:    r.apiKey,
+			BaseURL:   cfg.baseURL,
+			UserAgent: cfg.userAgent,
+			APIKey:    cfg.apiKey,
 			HTTP: &http.Client{
-				Transport:     r.transport,
-				Timeout:       r.timeout,
+				Transport:     rt,
+				Timeout:       cfg.timeout,
 				CheckRedirect: transport.CheckRedirect,
 			},
-			Clock:  r.clock,
-			Logger: r.logger,
+			Clock:  cfg.clock,
+			Logger: cfg.logger,
 		},
-		logger:  r.logger,
-		polling: r.polling,
-		clock:   r.clock,
+		logger:     cfg.logger,
+		polling:    cfg.polling,
+		clock:      cfg.clock,
+		idleCloser: idleCloser,
 	}
 	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
-	c.idleCloser = r.idleCloser
-	c.genGroup, c.getGroup = c.newRequestGroups(r)
+	c.genGroup, c.getGroup = c.newRequestGroups(cfg)
 	c.poller = poll.New(poll.Config[*JobResponse]{
-		Ctx: c.baseCtx, Clock: c.clock, Fetcher: jobSource{c}, Options: toPollOptions(r.polling),
-		Logger: r.logger, OnJobFailure: c.failureHook(),
+		Ctx: c.baseCtx, Clock: c.clock, Fetcher: jobSource{c}, Options: toPollOptions(cfg.polling),
+		Logger: cfg.logger, OnJobFailure: c.failureHook(),
 		GetLogAttrs: []any{"path", queuePath + "/{id}"}, ListLogAttrs: []any{"path", queuePath},
 	})
 	return c, nil
@@ -129,92 +122,6 @@ func (c *Client) failureHook() func() {
 		return nil
 	}
 	return c.genGroup.Tuner.ReportFailure
-}
-
-// resolvedConfig is a validated config with defaults applied.
-type resolvedConfig struct {
-	baseURL   string
-	userAgent string
-	apiKey    string
-	timeout   time.Duration
-	transport http.RoundTripper
-	logger    *slog.Logger
-	polling   PollOptions
-	clock     clock.Clock
-	// idleCloser is set only when the client created the transport itself.
-	idleCloser func()
-
-	generateThrottle Throttle
-	getThrottle      Throttle
-	autoTuning       bool
-	// rateLimitRetries is never negative.
-	rateLimitRetries int
-}
-
-// resolve validates cfg and fills in defaults. Errors match ErrInvalidInput
-// and never contain the API key.
-func (cfg *config) resolve() (*resolvedConfig, error) {
-	baseURL, err := normalizeBaseURL(cfg.baseURL)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.rateLimitRetries < 0 {
-		return nil, invalidInput("rate limit retries must not be negative")
-	}
-	if cfg.timeout <= 0 {
-		return nil, invalidInput("timeout must be greater than zero")
-	}
-	polling, err := cfg.polling.withDefaults()
-	if err != nil {
-		return nil, err
-	}
-	gen, get, err := cfg.resolveThrottles()
-	if err != nil {
-		return nil, err
-	}
-	r := &resolvedConfig{
-		generateThrottle: gen, getThrottle: get,
-		autoTuning:       cfg.autoTuning,
-		rateLimitRetries: cfg.rateLimitRetries,
-		baseURL:          baseURL, timeout: cfg.timeout, polling: polling,
-		transport: cfg.transport, logger: cfg.logger,
-		userAgent: strings.TrimSpace(cfg.userAgent),
-		apiKey:    strings.TrimSpace(cfg.apiKey),
-	}
-	if r.transport == nil {
-		owned := transport.DefaultTransport()
-		r.transport, r.idleCloser = owned, owned.CloseIdleConnections
-	}
-	r.clock = cfg.clock
-	if r.clock == nil {
-		r.clock = clock.Real()
-	}
-	if r.logger == nil {
-		r.logger = slog.New(slog.DiscardHandler)
-	}
-	if r.userAgent == "" {
-		r.userAgent = DefaultUserAgent
-	}
-	if err := validateHeaderValues(r.userAgent, r.apiKey); err != nil {
-		return nil, err
-	}
-	return r, nil
-}
-
-// resolveThrottles applies the group defaults and rejects auto-tuning
-// combined with an explicit generate throttle.
-func (cfg *config) resolveThrottles() (gen, get Throttle, err error) {
-	if cfg.autoTuning && cfg.generateThrottleSet {
-		return gen, get, invalidInput("auto-tuning and a generate throttle are mutually exclusive")
-	}
-	gen, err = cfg.generateThrottle.withDefaults(
-		Throttle{Interval: DefaultGenerateInterval, Concurrency: DefaultGenerateConcurrency}, "generate")
-	if err != nil {
-		return gen, get, err
-	}
-	get, err = cfg.getThrottle.withDefaults(
-		Throttle{Interval: DefaultGetInterval, Concurrency: DefaultGetConcurrency}, "get")
-	return gen, get, err
 }
 
 // normalizeBaseURL validates raw and returns it without trailing slashes.

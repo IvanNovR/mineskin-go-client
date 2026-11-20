@@ -62,8 +62,8 @@ func skinCall(ctx context.Context, c *Client) func() error {
 }
 
 func TestRetryDefaultConstant(t *testing.T) {
-	if DefaultRateLimitRetries != 2 {
-		t.Fatalf("DefaultRateLimitRetries = %d, want 2", DefaultRateLimitRetries)
+	if defaultRateLimitRetries != 2 {
+		t.Fatalf("defaultRateLimitRetries = %d, want 2", defaultRateLimitRetries)
 	}
 }
 

@@ -15,17 +15,29 @@ const (
 	defaultErrorCode    = "request_failed"
 	defaultErrorMessage = "request failed"
 
-	fieldSuccess  = "success"
-	fieldErrors   = "errors"
-	fieldWarnings = "warnings"
-	fieldMessages = "messages"
-	fieldLinks    = "links"
-
 	headerMineskinSrv   = "mineskin-server"
 	headerMineskinCrumb = transport.HeaderMineskinCrumb
 
 	parseFailureMessage = "failed to parse response"
 )
+
+// envelope holds the fields every MineSkin response has in common. Absent
+// lists stay nil here and are made empty by newMeta.
+type envelope struct {
+	Success  *bool            `json:"success"`
+	Errors   []CodeAndMessage `json:"errors"`
+	Warnings []CodeAndMessage `json:"warnings"`
+	Messages []CodeAndMessage `json:"messages"`
+	Links    json.RawMessage  `json:"links"`
+}
+
+// failureWire is the envelope plus the fields an unsuccessful response may
+// carry, decoded before the endpoint specific payload.
+type failureWire struct {
+	envelope
+	RateLimit *RateLimitInfo `json:"rateLimit"`
+	Usage     *UsageInfo     `json:"usage"`
+}
 
 // ResponseMeta describes the envelope of a MineSkin API response.
 type ResponseMeta struct {
@@ -51,38 +63,38 @@ type ResponseMeta struct {
 	Links json.RawMessage
 }
 
-// handleResponse turns a raw response into its metadata or an error. It
-// mirrors the Java client: the HTTP status is only used when the body has no
-// success field. A leading UTF-8 byte order mark is ignored. decodeBody decodes the endpoint specific fields; it receives
-// the top-level JSON fields and the complete body.
+// decodeResponse turns a raw response into the endpoint's wire struct W and
+// the response metadata, or an error. It mirrors the Java client: the HTTP
+// status is only used when the body has no success field. A leading UTF-8 byte
+// order mark is ignored.
 //
-// The steps are, in order: a body that is not a JSON object gives an
-// *UnexpectedResponseError; so does a body that fails to unmarshal; a failing
-// envelope gives a parse error; an unsuccessful response
-// gives an *APIError without decoding the payload; a failing decodeBody on a
-// successful response gives a parse error; otherwise the metadata is returned.
-func handleResponse(raw transport.Response, decodeBody func(obj map[string]json.RawMessage, body []byte) error) (ResponseMeta, error) {
+// The steps are, in order: a body that is not a JSON object, or is not valid
+// JSON, gives an *UnexpectedResponseError; a failing envelope gives a parse
+// error; an unsuccessful response gives an *APIError without decoding the
+// payload; a failing payload on a successful response gives a parse error;
+// otherwise the wire struct and the metadata are returned.
+func decodeResponse[W any](raw transport.Response) (W, ResponseMeta, error) {
+	var wire W
 	body := transport.TrimBOM(raw.Body)
 	if !transport.IsJSONObject(body) {
-		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, nil, raw.Received)
+		return wire, ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, nil, raw.Received)
 	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(body, &obj); err != nil {
-		return ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, err, raw.Received)
-	}
-	meta, err := decodeEnvelope(raw, obj)
-	if err != nil {
-		return ResponseMeta{}, parseFailure(err)
-	}
-	if !meta.Success {
-		return ResponseMeta{}, newAPIError(meta, obj, raw.Header, raw.Received)
-	}
-	if decodeBody != nil {
-		if err := decodeBody(obj, body); err != nil {
-			return ResponseMeta{}, parseFailure(err)
+	var head failureWire
+	if err := json.Unmarshal(body, &head); err != nil {
+		var syntax *json.SyntaxError
+		if errors.As(err, &syntax) {
+			return wire, ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, err, raw.Received)
 		}
+		return wire, ResponseMeta{}, parseFailure(err)
 	}
-	return meta, nil
+	meta := newMeta(raw, head.envelope)
+	if !meta.Success {
+		return wire, ResponseMeta{}, newAPIError(meta, head, raw.Header, raw.Received)
+	}
+	if err := json.Unmarshal(body, &wire); err != nil {
+		return wire, ResponseMeta{}, parseFailure(err)
+	}
+	return wire, meta, nil
 }
 
 // parseFailure wraps a payload decoding error. A malformed value in a server
@@ -97,57 +109,43 @@ func parseFailure(err error) error {
 	return fmt.Errorf("%s%s: %w", errorPrefix, parseFailureMessage, err)
 }
 
-// decodeEnvelope reads the common fields of a response object.
-func decodeEnvelope(raw transport.Response, obj map[string]json.RawMessage) (ResponseMeta, error) {
+// newMeta builds the metadata from the raw response and its decoded envelope.
+// The lists are never nil.
+func newMeta(raw transport.Response, env envelope) ResponseMeta {
 	headers := transport.FilterHeaders(raw.Header)
 	meta := ResponseMeta{
 		Status:     raw.Status,
 		Success:    raw.Status == http.StatusOK,
+		Errors:     nonNilList(env.Errors),
+		Warnings:   nonNilList(env.Warnings),
+		Messages:   nonNilList(env.Messages),
 		Headers:    headers,
 		Server:     headers[headerMineskinSrv],
 		Breadcrumb: headers[headerMineskinCrumb],
+		Links:      env.Links,
 	}
-	if v, ok := obj[fieldSuccess]; ok {
-		if err := json.Unmarshal(v, &meta.Success); err != nil {
-			return ResponseMeta{}, err
-		}
+	if env.Success != nil {
+		meta.Success = *env.Success
 	}
-	for field, dst := range map[string]*[]CodeAndMessage{
-		fieldErrors: &meta.Errors, fieldWarnings: &meta.Warnings, fieldMessages: &meta.Messages,
-	} {
-		if err := decodeList(obj[field], dst); err != nil {
-			return ResponseMeta{}, err
-		}
-	}
-	meta.Links = obj[fieldLinks]
-	return meta, nil
+	return meta
 }
 
-// decodeList decodes a list field, leaving an empty non-nil slice when the
-// field is absent or null.
-func decodeList(v json.RawMessage, dst *[]CodeAndMessage) error {
-	*dst = []CodeAndMessage{}
-	if len(v) == 0 {
-		return nil
+// nonNilList returns l, or an empty non-nil slice when l is nil.
+func nonNilList(l []CodeAndMessage) []CodeAndMessage {
+	if l == nil {
+		return []CodeAndMessage{}
 	}
-	if err := json.Unmarshal(v, dst); err != nil {
-		return err
-	}
-	if *dst == nil {
-		*dst = []CodeAndMessage{}
-	}
-	return nil
+	return l
 }
 
 // newAPIError builds the error for an unsuccessful response, using the first
 // reported error or the defaults. The rateLimit, usage and Retry-After values
 // are decoded leniently: anything missing or malformed stays nil or zero and
 // never replaces the original error (JB-13).
-func newAPIError(meta ResponseMeta, obj map[string]json.RawMessage, h http.Header, now time.Time) *APIError {
+func newAPIError(meta ResponseMeta, head failureWire, h http.Header, now time.Time) *APIError {
 	e := &APIError{
 		Code: defaultErrorCode, Message: defaultErrorMessage, ResponseMeta: meta,
-		RateLimit: decodeRateLimit(obj[fieldRateLimit]),
-		Usage:     decodeUsage(obj[fieldUsage]),
+		RateLimit: head.RateLimit, Usage: head.Usage,
 	}
 	e.RetryAfter, _ = transport.ParseRetryAfter(h.Get(transport.HeaderRetryAfter), now)
 	if len(meta.Errors) > 0 {

@@ -136,7 +136,7 @@ func TestInventedDefaultsAreLowerCase(t *testing.T) {
 	if err.Message != "job failed" {
 		t.Errorf("default job failure message = %q, want %q", err.Message, "job failed")
 	}
-	_, herr := handleResponse(transport.Response{Status: 400, Body: []byte(`{"success":false}`)}, noopDecoder)
+	_, herr := decodeMeta[struct{}](transport.Response{Status: 400, Body: []byte(`{"success":false}`)})
 	var apiErr *APIError
 	if !errors.As(herr, &apiErr) || apiErr.Message != "request failed" {
 		t.Errorf("default API message = %+v, want %q", apiErr, "request failed")

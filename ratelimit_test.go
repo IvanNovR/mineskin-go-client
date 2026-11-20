@@ -24,7 +24,7 @@ func TestDecodeRateLimit(t *testing.T) {
 		{name: "only delay seconds", raw: `{"delay":{"seconds":3}}`, want: &RateLimitInfo{Delay: 3 * time.Second}},
 		{name: "absent", raw: ``, want: nil},
 		{name: "null", raw: `null`, want: nil},
-		{name: "not an object", raw: `"x"`, want: nil},
+		{name: "not an object", raw: `"x"`, want: &RateLimitInfo{}},
 		{name: "empty object", raw: `{}`, want: &RateLimitInfo{}},
 		{name: "next without relative", raw: `{"next":{"absolute":1000}}`, want: &RateLimitInfo{Next: &NextRequest{Absolute: time.UnixMilli(1000)}}},
 		{name: "next without absolute", raw: `{"next":{"relative":50}}`, want: &RateLimitInfo{Next: &NextRequest{Relative: 50 * time.Millisecond}}},
@@ -40,7 +40,7 @@ func TestDecodeRateLimit(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decodeRateLimit(json.RawMessage(tc.raw))
+			got := rateLimitField(t, tc.raw)
 			assertRateLimit(t, got, tc.want)
 		})
 	}
@@ -50,7 +50,7 @@ func assertRateLimit(t *testing.T, got, want *RateLimitInfo) {
 	t.Helper()
 	if got == nil || want == nil {
 		if got != want {
-			t.Fatalf("decodeRateLimit() = %+v, want %+v", got, want)
+			t.Fatalf("rateLimitField() = %+v, want %+v", got, want)
 		}
 		return
 	}
@@ -80,7 +80,7 @@ func TestDecodeUsage(t *testing.T) {
 		{name: "full object", raw: `{"credits":{"used":7,"remaining":93}}`, want: &UsageInfo{Credits: &CreditsUsage{Used: 7, Remaining: 93}}},
 		{name: "absent", raw: ``, want: nil},
 		{name: "null", raw: `null`, want: nil},
-		{name: "not an object", raw: `[]`, want: nil},
+		{name: "not an object", raw: `[]`, want: &UsageInfo{}},
 		{name: "empty object", raw: `{}`, want: &UsageInfo{}},
 		{name: "null credits", raw: `{"credits":null}`, want: &UsageInfo{}},
 		{name: "wrong typed credits", raw: `{"credits":5}`, want: &UsageInfo{}},
@@ -91,9 +91,9 @@ func TestDecodeUsage(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decodeUsage(json.RawMessage(tc.raw))
+			got := usageField(t, tc.raw)
 			if (got == nil) != (tc.want == nil) {
-				t.Fatalf("decodeUsage() = %+v, want %+v", got, tc.want)
+				t.Fatalf("usageField() = %+v, want %+v", got, tc.want)
 			}
 			if got == nil {
 				return
@@ -106,4 +106,37 @@ func TestDecodeUsage(t *testing.T) {
 			}
 		})
 	}
+}
+
+// rateLimitField decodes raw as the rateLimit field of a response body, the way
+// the wire structs do; an absent field or null gives nil.
+func rateLimitField(t *testing.T, raw string) *RateLimitInfo {
+	t.Helper()
+	var wire struct {
+		RateLimit *RateLimitInfo `json:"rateLimit"`
+	}
+	if err := json.Unmarshal([]byte(fieldBody("rateLimit", raw)), &wire); err != nil {
+		t.Fatalf("Unmarshal() error = %v, RateLimitInfo decoding must never fail", err)
+	}
+	return wire.RateLimit
+}
+
+// usageField is rateLimitField for the usage field.
+func usageField(t *testing.T, raw string) *UsageInfo {
+	t.Helper()
+	var wire struct {
+		Usage *UsageInfo `json:"usage"`
+	}
+	if err := json.Unmarshal([]byte(fieldBody("usage", raw)), &wire); err != nil {
+		t.Fatalf("Unmarshal() error = %v, UsageInfo decoding must never fail", err)
+	}
+	return wire.Usage
+}
+
+// fieldBody builds a JSON object with one field; an empty raw omits it.
+func fieldBody(name, raw string) string {
+	if raw == "" {
+		return `{}`
+	}
+	return `{"` + name + `":` + raw + `}`
 }

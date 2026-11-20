@@ -9,8 +9,6 @@ import (
 )
 
 const (
-	fieldJobs = "jobs"
-
 	defaultJobFailedCode    = "job_failed"
 	defaultJobFailedMessage = "job failed"
 )
@@ -147,31 +145,29 @@ func (c *Client) getJobGated(ctx context.Context, id string, proceed func() bool
 	if err := validateJobID(id); err != nil {
 		return nil, err
 	}
-	var out JobResponse
-	meta, err := c.getGated(ctx, queuePath+"/"+url.PathEscape(id), proceed, func(obj map[string]json.RawMessage, _ []byte) error {
-		if v := obj[fieldJob]; len(v) > 0 {
-			if err := json.Unmarshal(v, &out.Job); err != nil {
-				return err
-			}
-		}
-		if v := obj[fieldSkin]; len(v) > 0 && !bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
-			var skin SkinInfo
-			if err := json.Unmarshal(v, &skin); err != nil {
-				return err
-			}
-			out.Skin = &skin
-		}
-		return nil
-	})
+	wire, meta, err := getResponse[jobWire](ctx, c, queuePath+"/"+url.PathEscape(id), proceed)
 	if err != nil {
 		return nil, err
 	}
-	out.ResponseMeta = meta
+	out := JobResponse{ResponseMeta: meta, Job: wire.Job, Skin: wire.Skin}
 	out.Job.Breadcrumb = meta.Breadcrumb
 	if out.Skin != nil {
 		out.Skin.Breadcrumb = meta.Breadcrumb
 	}
 	return &out, nil
+}
+
+// jobWire is the wire shape of a job lookup. An absent or null job leaves the
+// zero Job and an absent or null skin leaves Skin nil.
+type jobWire struct {
+	Job  Job       `json:"job"`
+	Skin *SkinInfo `json:"skin"`
+}
+
+// jobListWire is the wire shape of the job list; an absent or null list is
+// made empty by ListJobs.
+type jobListWire struct {
+	Jobs []Job `json:"jobs"`
 }
 
 // ListJobs lists the jobs in the queue. The Breadcrumb of the returned jobs is
@@ -180,25 +176,14 @@ func (c *Client) ListJobs(ctx context.Context) (*JobListResponse, error) {
 	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
-	out := JobListResponse{Jobs: []Job{}}
-	meta, err := c.get(ctx, queuePath, func(obj map[string]json.RawMessage, _ []byte) error {
-		v := obj[fieldJobs]
-		if len(v) == 0 {
-			return nil
-		}
-		var jobs []Job
-		if err := json.Unmarshal(v, &jobs); err != nil {
-			return err
-		}
-		if jobs != nil {
-			out.Jobs = jobs
-		}
-		return nil
-	})
+	wire, meta, err := getResponse[jobListWire](ctx, c, queuePath, nil)
 	if err != nil {
 		return nil, err
 	}
-	out.ResponseMeta = meta
+	out := JobListResponse{ResponseMeta: meta, Jobs: wire.Jobs}
+	if out.Jobs == nil {
+		out.Jobs = []Job{}
+	}
 	return &out, nil
 }
 

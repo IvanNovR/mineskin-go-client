@@ -2,28 +2,19 @@ package mineskin
 
 import (
 	"encoding/json"
+	"math"
 	"time"
 )
 
 const (
-	fieldNext      = "next"
-	fieldAbsolute  = "absolute"
-	fieldRelative  = "relative"
-	fieldDelay     = "delay"
-	fieldMillis    = "millis"
-	fieldSeconds   = "seconds"
-	fieldLimit     = "limit"
-	fieldRemaining = "remaining"
-	fieldCredits   = "credits"
-	fieldUsed      = "used"
-
 	millisPerSecond = int64(time.Second / time.Millisecond)
 	// maxDurationSeconds is the largest second count a time.Duration holds.
 	maxDurationSeconds = maxDurationMillis / millisPerSecond
 )
 
 // RateLimitInfo is the informational rate limit state sent with a response.
-// It is decoded leniently: missing or malformed parts are left zero or nil.
+// It is decoded leniently (see UnmarshalJSON): missing or malformed parts are
+// left zero or nil.
 type RateLimitInfo struct {
 	// Next describes when the next request may be sent, or nil when absent.
 	Next *NextRequest
@@ -58,71 +49,107 @@ type CreditsUsage struct {
 	Used, Remaining int
 }
 
-// decodeRateLimit decodes a rateLimit value. It never fails: a value that is
-// absent, null or not an object yields nil, and malformed fields stay zero.
-func decodeRateLimit(v json.RawMessage) *RateLimitInfo {
-	obj := jsonObject(v)
-	if obj == nil {
+// rateLimitWire is the wire shape of the rateLimit field. The parts stay raw
+// so that a malformed part is dropped without failing the whole response.
+type rateLimitWire struct {
+	Next  json.RawMessage `json:"next"`
+	Delay json.RawMessage `json:"delay"`
+	Limit json.RawMessage `json:"limit"`
+}
+
+type nextWire struct {
+	Absolute json.RawMessage `json:"absolute"`
+	Relative json.RawMessage `json:"relative"`
+}
+
+type delayWire struct {
+	Millis  json.RawMessage `json:"millis"`
+	Seconds json.RawMessage `json:"seconds"`
+}
+
+type limitWire struct {
+	Limit     json.RawMessage `json:"limit"`
+	Remaining json.RawMessage `json:"remaining"`
+}
+
+// UnmarshalJSON decodes the rateLimit field. It never fails: a value that is
+// not an object, and any malformed part, is left zero or nil (JB-13).
+func (r *RateLimitInfo) UnmarshalJSON(b []byte) error {
+	*r = RateLimitInfo{}
+	var wire rateLimitWire
+	if json.Unmarshal(b, &wire) != nil {
 		return nil
 	}
-	out := &RateLimitInfo{}
-	if next := jsonObject(obj[fieldNext]); next != nil {
-		out.Next = &NextRequest{
-			Absolute: lenientTime(next[fieldAbsolute]),
-			Relative: lenientDuration(next[fieldRelative], maxDurationMillis, time.Millisecond),
+	var next nextWire
+	if unmarshalObject(wire.Next, &next) {
+		r.Next = &NextRequest{
+			Absolute: lenientTime(next.Absolute),
+			Relative: lenientDuration(next.Relative, maxDurationMillis, time.Millisecond),
 		}
 	}
-	if delay := jsonObject(obj[fieldDelay]); delay != nil {
-		out.Delay = lenientDuration(delay[fieldMillis], maxDurationMillis, time.Millisecond)
-		if out.Delay == 0 {
-			out.Delay = lenientDuration(delay[fieldSeconds], maxDurationSeconds, time.Second)
+	var delay delayWire
+	if unmarshalObject(wire.Delay, &delay) {
+		r.Delay = lenientDuration(delay.Millis, maxDurationMillis, time.Millisecond)
+		if r.Delay == 0 {
+			r.Delay = lenientDuration(delay.Seconds, maxDurationSeconds, time.Second)
 		}
 	}
-	if limit := jsonObject(obj[fieldLimit]); limit != nil {
-		out.Limit = &LimitInfo{Limit: intOrZero(limit[fieldLimit]), Remaining: intOrZero(limit[fieldRemaining])}
+	var limit limitWire
+	if unmarshalObject(wire.Limit, &limit) {
+		r.Limit = &LimitInfo{Limit: lenientInt(limit.Limit), Remaining: lenientInt(limit.Remaining)}
 	}
-	return out
+	return nil
 }
 
-// decodeUsage decodes a usage value with the same leniency as decodeRateLimit.
-func decodeUsage(v json.RawMessage) *UsageInfo {
-	obj := jsonObject(v)
-	if obj == nil {
-		return nil
-	}
-	out := &UsageInfo{}
-	if credits := jsonObject(obj[fieldCredits]); credits != nil {
-		out.Credits = &CreditsUsage{Used: intOrZero(credits[fieldUsed]), Remaining: intOrZero(credits[fieldRemaining])}
-	}
-	return out
+// usageWire is the wire shape of the usage field.
+type usageWire struct {
+	Credits json.RawMessage `json:"credits"`
 }
 
-// jsonObject returns the fields of a JSON object, or nil for anything
-// else (absent, null, wrong type).
-func jsonObject(v json.RawMessage) map[string]json.RawMessage {
-	if len(v) == 0 {
-		return nil
-	}
-	var obj map[string]json.RawMessage
-	if json.Unmarshal(v, &obj) != nil {
-		return nil
-	}
-	return obj
+type creditsWire struct {
+	Used      json.RawMessage `json:"used"`
+	Remaining json.RawMessage `json:"remaining"`
 }
 
-// intOrZero parses a JSON integer, returning 0 for anything else.
-func intOrZero(v json.RawMessage) int {
-	if n := integer(v); n != nil {
-		return *n
+// UnmarshalJSON decodes the usage field with the same leniency as
+// RateLimitInfo.UnmarshalJSON: it never fails.
+func (u *UsageInfo) UnmarshalJSON(b []byte) error {
+	*u = UsageInfo{}
+	var wire usageWire
+	if json.Unmarshal(b, &wire) != nil {
+		return nil
 	}
-	return 0
+	var credits creditsWire
+	if unmarshalObject(wire.Credits, &credits) {
+		u.Credits = &CreditsUsage{Used: lenientInt(credits.Used), Remaining: lenientInt(credits.Remaining)}
+	}
+	return nil
+}
+
+// unmarshalObject decodes v into dst, a struct of raw fields, and reports
+// whether v was a JSON object. Absent, null and non-object values report false.
+func unmarshalObject(v json.RawMessage, dst any) bool {
+	if len(v) == 0 || string(v) == jsonNull {
+		return false
+	}
+	return json.Unmarshal(v, dst) == nil
+}
+
+// lenientInt parses a JSON integer, returning 0 for anything else (absent,
+// null, string, fraction, out of range).
+func lenientInt(v json.RawMessage) int {
+	n, ok, err := optionalInt64(v)
+	if err != nil || !ok || n < math.MinInt || n > math.MaxInt {
+		return 0
+	}
+	return int(n)
 }
 
 // lenientDuration converts an integer count of unit into a Duration. Values
-// that are malformed, negative or above max yield 0.
-func lenientDuration(v json.RawMessage, max int64, unit time.Duration) time.Duration {
+// that are malformed, negative or above limit yield 0.
+func lenientDuration(v json.RawMessage, limit int64, unit time.Duration) time.Duration {
 	n, ok, err := optionalInt64(v)
-	if err != nil || !ok || n < 0 || n > max {
+	if err != nil || !ok || n < 0 || n > limit {
 		return 0
 	}
 	return time.Duration(n) * unit

@@ -13,7 +13,6 @@ import (
 
 const (
 	skinsPathPrefix = "/v2/skins/"
-	fieldSkin       = "skin"
 
 	// maxDurationMillis is the largest millisecond count a time.Duration holds.
 	maxDurationMillis = int64(math.MaxInt64 / int64(time.Millisecond))
@@ -173,15 +172,12 @@ func (c *Client) GetSkin(ctx context.Context, id string) (*SkinResponse, error) 
 	if err != nil {
 		return nil, err
 	}
-	var skin SkinInfo
-	meta, err := c.get(ctx, skinsPathPrefix+url.PathEscape(parsed.String()), func(obj map[string]json.RawMessage, _ []byte) error {
-		return decodeSkin(obj[fieldSkin], &skin)
-	})
+	wire, meta, err := getResponse[skinWire](ctx, c, skinsPathPrefix+url.PathEscape(parsed.String()), nil)
 	if err != nil {
 		return nil, err
 	}
-	skin.Breadcrumb = meta.Breadcrumb
-	return &SkinResponse{ResponseMeta: meta, Skin: skin}, nil
+	wire.Skin.Breadcrumb = meta.Breadcrumb
+	return &SkinResponse{ResponseMeta: meta, Skin: wire.Skin}, nil
 }
 
 // GetSkinByUUID fetches a skin by its MineSkin skin id, sent in dashed form.
@@ -193,11 +189,9 @@ func (c *Client) GetSkinByUUID(ctx context.Context, id UUID) (*SkinResponse, err
 	return c.GetSkin(ctx, id.String())
 }
 
-// decodeSkin decodes the skin field; an absent or null field leaves dst zero so
-// that error responses without a skin still produce an *APIError.
-func decodeSkin(v json.RawMessage, dst *SkinInfo) error {
-	if len(v) == 0 {
-		return nil
-	}
-	return json.Unmarshal(v, dst)
+// skinWire is the wire shape of a skin lookup. An absent or null skin leaves
+// the zero value so that error responses without a skin still produce an
+// *APIError.
+type skinWire struct {
+	Skin SkinInfo `json:"skin"`
 }

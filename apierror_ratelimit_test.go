@@ -9,10 +9,10 @@ import (
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
-// apiErrorFrom runs handleResponse and returns the resulting *APIError.
+// apiErrorFrom runs decodeResponse and returns the resulting *APIError.
 func apiErrorFrom(t *testing.T, raw transport.Response) *APIError {
 	t.Helper()
-	_, err := handleResponse(raw, noopDecoder)
+	_, err := decodeMeta[struct{}](raw)
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("err = %v, want *APIError", err)

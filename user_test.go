@@ -124,3 +124,12 @@ func TestGetUserAbsentOrNullUserIsZeroUUID(t *testing.T) {
 		}
 	}
 }
+
+func TestGetUserMalformedUUIDIsPlainParseError(t *testing.T) {
+	srv := newTestServer(t, writeJSON(200, `{"user":"not-a-uuid"}`))
+	_, err := newTestClient(t, srv.URL).GetUser(context.Background())
+	assertParseError(t, err)
+	if want := "mineskin: failed to parse response: invalid UUID: unrecognised format (length 10)"; err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err, want)
+	}
+}

@@ -297,12 +297,3 @@ func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
 		t.Errorf("err = %v, want *APIError", err)
 	}
 }
-
-func TestMalformedServerUUIDIsPlainParseError(t *testing.T) {
-	body := []byte(`{"success":true,"user":"not-a-uuid"}`)
-	_, err := handleResponse(transport.Response{Status: 200, Body: body}, userDecoder)
-	assertParseError(t, err)
-	if want := "mineskin: failed to parse response: invalid UUID: unrecognised format (length 10)"; err.Error() != want {
-		t.Errorf("Error() = %q, want %q", err, want)
-	}
-}

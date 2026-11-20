@@ -34,24 +34,24 @@ const (
 )
 
 // newRequestGroups builds the generate and get groups from the resolved
-// throttle settings.
-func (c *Client) newRequestGroups(r *resolvedConfig) (gen, get *ratelimit.Group) {
+// pacing settings of cfg.
+func (c *Client) newRequestGroups(cfg *config) (gen, get *ratelimit.Group) {
 	get = &ratelimit.Group{
 		Name:     getGroupName,
-		Throttle: newFixedThrottle(c.clock, r.getThrottle),
-		Retries:  r.rateLimitRetries, Logger: r.logger, Clock: c.clock,
+		Throttle: newFixedThrottle(c.clock, cfg.getThrottle),
+		Retries:  cfg.rateLimitRetries, Logger: cfg.logger, Clock: c.clock,
 	}
 	gen = &ratelimit.Group{
 		Name:    generateGroupName,
-		Retries: r.rateLimitRetries, Logger: r.logger, Clock: c.clock,
+		Retries: cfg.rateLimitRetries, Logger: cfg.logger, Clock: c.clock,
 	}
-	if !r.autoTuning {
-		gen.Throttle = newFixedThrottle(c.clock, r.generateThrottle)
+	if !cfg.generate.auto {
+		gen.Throttle = newFixedThrottle(c.clock, cfg.generate.throttle)
 		return gen, get
 	}
 	// The tuner loads its grants through GetUser, which uses the get group (D8).
 	gen.Tuner = ratelimit.NewTuner(ratelimit.TunerConfig{
-		Clock: c.clock, Logger: r.logger, Load: c.loadGrants, BaseCtx: c.baseCtx, BG: &c.bg,
+		Clock: c.clock, Logger: cfg.logger, Load: c.loadGrants, BaseCtx: c.baseCtx, BG: &c.bg,
 	})
 	gen.Throttle = throttle.New(c.clock, gen.Tuner.Limits)
 	gen.Tuner.SetKick(gen.Throttle.Kick)
@@ -76,13 +76,10 @@ func (c *Client) loadGrants(ctx context.Context) (ratelimit.Grants, error) {
 
 // exchange waits for a start slot in g, sends the request and maps the raw
 // errors of the group to the public contract. Time spent queued is bounded
-// only by ctx; the client timeout covers the HTTP exchange alone. A non-nil
+// only by ctx; WithTimeout covers each HTTP attempt alone. A non-nil
 // proceed is the start gate (see ratelimit.Group.Do); when it declines,
 // errCheckSkipped is returned.
 func (c *Client) exchange(ctx context.Context, g *ratelimit.Group, method, path string, body *transport.Body, proceed func() bool) (transport.Response, error) {
-	if ctx == nil {
-		return transport.Response{}, invalidInput("context is nil")
-	}
 	label := method + " " + path
 	merged, cancel := c.requestContext(ctx)
 	defer cancel()
@@ -183,7 +180,7 @@ func jobState(j Job) poll.State {
 
 // toPollOptions maps the resolved public polling options to the neutral ones.
 func toPollOptions(o PollOptions) poll.Options {
-	return poll.Options{InitialDelay: o.InitialDelay, Interval: o.Interval, MaxAttempts: o.MaxAttempts, UseETA: o.UseETA}
+	return poll.Options{InitialDelay: o.InitialDelay, Interval: o.Interval.Wait, MaxAttempts: o.MaxAttempts, UseETA: o.UseETA}
 }
 
 // mapPollErr turns the errors of internal/poll into the public contract: an
@@ -215,9 +212,9 @@ func panickedIntervalError(r any) error {
 }
 
 // do sends a request through the transport and returns its raw errors: a
-// *transport.BuildError for a nil context or an unbuildable request, otherwise
+// *transport.BuildError for an unbuildable request, otherwise
 // the HTTP client or body read error. mapGroupErr adds the method and path and
-// the public classification. ctx must not be nil.
+// the public classification.
 func (c *Client) do(ctx context.Context, method, path string, body *transport.Body) (transport.Response, error) {
 	return c.doer.Do(ctx, method, path, body)
 }

@@ -25,8 +25,11 @@ func TestNewClientDefaults(t *testing.T) {
 	if c.doer.BaseURL != DefaultBaseURL || c.doer.UserAgent != DefaultUserAgent || c.doer.APIKey != "" {
 		t.Errorf("defaults wrong: %q %q %q", c.doer.BaseURL, c.doer.UserAgent, c.doer.APIKey)
 	}
-	if c.doer.HTTP.Timeout != DefaultTimeout || DefaultTimeout != 10*time.Second {
-		t.Errorf("timeout = %v", c.doer.HTTP.Timeout)
+	if c.doer.Timeout != defaultTimeout || defaultTimeout != 10*time.Second {
+		t.Errorf("timeout = %v", c.doer.Timeout)
+	}
+	if c.doer.HTTP.Timeout != 0 {
+		t.Errorf("http.Client.Timeout = %v, want 0: the timeout is applied per attempt by the Doer", c.doer.HTTP.Timeout)
 	}
 	if _, ok := c.doer.HTTP.Transport.(*http.Transport); !ok || c.doer.HTTP.Transport == http.DefaultTransport {
 		t.Error("transport should default to an owned clone of http.DefaultTransport")
@@ -176,7 +179,7 @@ func TestNewClientTimeout(t *testing.T) {
 		}
 	}
 	c, err := NewClient(WithTimeout(3 * time.Second))
-	if err != nil || c.doer.HTTP.Timeout != 3*time.Second {
+	if err != nil || c.doer.Timeout != 3*time.Second || c.doer.HTTP.Timeout != 0 {
 		t.Errorf("timeout not applied: %v %v", c, err)
 	}
 }

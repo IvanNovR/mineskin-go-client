@@ -58,6 +58,12 @@ func TestParseUUIDInvalid(t *testing.T) {
 		{"unicode", "0123abcd-4567-89ef-0123-456789abcdéé"},
 		{"emoji", strings.Repeat("\U0001F600", 8)},
 		{"NUL", uuidUndashed[:31] + "\x00"},
+		{"dot", "."},
+		{"dot dot", ".."},
+		{"special chars", "a/b?c#d e"},
+		{"valid with trailing newline", uuidDashed + "\n"},
+		{"path segment", "../v2/me"},
+		{"path segment with slash", "skins/" + uuidDashed},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -70,6 +76,9 @@ func TestParseUUIDInvalid(t *testing.T) {
 			}
 			if errors.Is(err, ErrNotFound) {
 				t.Fatalf("error must not match ErrNotFound")
+			}
+			if msg := err.Error(); !strings.HasPrefix(msg, "mineskin: invalid input: invalid UUID: ") || strings.Count(msg, "mineskin:") != 1 {
+				t.Fatalf("error %q must have a single mineskin: prefix and the invalid-UUID text", msg)
 			}
 			if u != (UUID{}) {
 				t.Fatalf("expected zero UUID on error, got %v", u)

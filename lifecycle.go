@@ -20,7 +20,6 @@ import (
 // itself; a transport given to WithTransport is left alone.
 func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
-		c.closed.Store(true)
 		c.cancelBase(ErrClientClosed)
 		if tn := c.genGroup.Tuner; tn != nil {
 			tn.Shutdown()
@@ -36,9 +35,10 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// checkOpen returns ErrClientClosed once Close has been called.
+// checkOpen returns ErrClientClosed once Close has been called, which is
+// when the base context is done.
 func (c *Client) checkOpen() error {
-	if c.closed.Load() {
+	if c.baseCtx.Err() != nil {
 		return ErrClientClosed
 	}
 	return nil

@@ -99,16 +99,16 @@ func TestLiveGetSkin(t *testing.T) {
 		id = defaultLiveSkinID
 	}
 
-	res, err := c.GetSkin(liveContext(t), id)
+	want, err := ParseUUID(id)
+	if err != nil {
+		t.Fatalf("ParseUUID(%q) error = %v", id, err)
+	}
+	res, err := c.GetSkin(liveContext(t), want)
 	if err != nil {
 		t.Fatalf("GetSkin() error = %v", err)
 	}
 	if res.Meta.Status != http.StatusOK {
 		t.Fatalf("Status = %d; want 200", res.Meta.Status)
-	}
-	want, err := ParseUUID(id)
-	if err != nil {
-		t.Fatalf("ParseUUID(%q) error = %v", id, err)
 	}
 	if res.Skin.UUID != want {
 		t.Errorf("Skin.UUID = %s, want %s", res.Skin.UUID, want)
@@ -138,9 +138,9 @@ func TestLiveGetSkinNotFound(t *testing.T) {
 		t.Fatalf("rand.Read() error = %v", err)
 	}
 
-	_, err := c.GetSkinByUUID(liveContext(t), UUID(b))
+	_, err := c.GetSkin(liveContext(t), UUID(b))
 	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("GetSkinByUUID() error = %v, want ErrNotFound", err)
+		t.Fatalf("GetSkin() error = %v, want ErrNotFound", err)
 	}
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Meta.Status != http.StatusNotFound {
@@ -272,7 +272,7 @@ func TestLiveQueueURLAndWait(t *testing.T) {
 	}
 	got := withFreshImage(t, "Queue and WaitForJob", func() (queued, error) {
 		q, err := c.Queue(ctx, FromURL(fmt.Sprintf("https://api.mineskin.org/random-image?t=%d", time.Now().UnixNano())),
-			&GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
+			GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
 		if err != nil {
 			return queued{}, err
 		}
@@ -286,9 +286,13 @@ func TestLiveQueueURLAndWait(t *testing.T) {
 	// The raw values let a live run confirm the unit of the window resets (epoch seconds).
 	t.Logf("rateLimit: %+v", q.RateLimit)
 
-	skin, err := c.JobSkin(ctx, res)
-	if err != nil {
-		t.Fatalf("JobSkin() error = %v", err)
+	skin := res.Skin
+	if skin == nil {
+		fetched, err := c.GetSkin(ctx, res.Job.Result)
+		if err != nil {
+			t.Fatalf("GetSkin(job result) error = %v", err)
+		}
+		skin = &fetched.Skin
 	}
 	if skin.Texture.Data.Value == "" || skin.Texture.Data.Signature == "" {
 		t.Error("texture value or signature is empty")
@@ -326,7 +330,7 @@ func TestLiveGenerateUpload(t *testing.T) {
 	// here; only an image MineSkin cannot process is tried again.
 	res := withFreshImage(t, "Generate()", func() (*GenerateResponse, error) {
 		return c.Generate(ctx, FromImage(randomSkinImage()),
-			&GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
+			GenerateOptions{Visibility: VisibilityUnlisted, Name: name})
 	})
 	if res.Skin.Texture.Data.Value == "" || res.Skin.Texture.Data.Signature == "" {
 		t.Error("texture value or signature is empty")
@@ -346,7 +350,7 @@ func TestLiveThrottleSmoke(t *testing.T) {
 		start := time.Now()
 		res := withFreshImage(t, fmt.Sprintf("Generate() #%d", i), func() (*GenerateResponse, error) {
 			return c.Generate(ctx, FromImage(randomSkinImage()),
-				&GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
+				GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
 		})
 		gap := time.Duration(0)
 		if !last.IsZero() {
@@ -376,7 +380,7 @@ func TestLiveAutoTuning(t *testing.T) {
 	t.Cleanup(func() { _ = c.Close() })
 
 	_, err = c.Queue(liveGenContext(t), FromURL(fmt.Sprintf("https://api.mineskin.org/random-image?t=%d", time.Now().Unix())),
-		&GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
+		GenerateOptions{Visibility: VisibilityUnlisted, Name: randomSkinName(t)})
 	if err != nil {
 		t.Fatalf("Queue() error = %v", err)
 	}

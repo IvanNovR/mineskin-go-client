@@ -8,27 +8,38 @@ import (
 )
 
 func TestConstantInterval(t *testing.T) {
-	iv, err := ConstantInterval(300 * time.Millisecond)
-	if err != nil {
-		t.Fatalf("ConstantInterval() error = %v", err)
-	}
+	iv := ConstantInterval(300 * time.Millisecond)
 	for _, attempt := range []int{0, 1, 2, 100, 1 << 30} {
-		if got := iv(attempt); got != 300*time.Millisecond {
+		if got := iv.Wait(attempt); got != 300*time.Millisecond {
 			t.Errorf("attempt %d = %v, want 300ms", attempt, got)
-		}
-	}
-	for _, d := range []time.Duration{0, -time.Second} {
-		if _, err := ConstantInterval(d); !errors.Is(err, ErrInvalidInput) {
-			t.Errorf("ConstantInterval(%v) err = %v, want ErrInvalidInput", d, err)
 		}
 	}
 }
 
-func TestExponentialInterval(t *testing.T) {
-	iv, err := ExponentialInterval(200*time.Millisecond, 2*time.Second, 2.0, 3)
-	if err != nil {
-		t.Fatalf("ExponentialInterval() error = %v", err)
+func TestConstantIntervalRejectedByNewClient(t *testing.T) {
+	for _, d := range []time.Duration{0, -time.Second} {
+		c, err := NewClient(WithJobPolling(PollOptions{Interval: ConstantInterval(d)}))
+		if c != nil || !errors.Is(err, ErrInvalidInput) ||
+			err.Error() != "mineskin: invalid input: constant interval must be greater than zero" {
+			t.Errorf("ConstantInterval(%v): got (%v, %v)", d, c, err)
+		}
 	}
+	c, err := NewClient(WithJobPolling(PollOptions{Interval: ConstantInterval(time.Nanosecond)}))
+	if err != nil {
+		t.Fatalf("smallest positive interval rejected: %v", err)
+	}
+	_ = c.Close()
+}
+
+func TestPollIntervalFunc(t *testing.T) {
+	var iv PollInterval = PollIntervalFunc(func(attempt int) time.Duration { return time.Duration(attempt) * time.Second })
+	if got := iv.Wait(3); got != 3*time.Second {
+		t.Errorf("Wait(3) = %v, want 3s", got)
+	}
+}
+
+func TestBackoff(t *testing.T) {
+	var iv PollInterval = Backoff{Initial: 200 * time.Millisecond, Max: 2 * time.Second, Multiplier: 2.0, FreeAttempts: 3}
 	tests := []struct {
 		attempt int
 		want    time.Duration
@@ -44,44 +55,55 @@ func TestExponentialInterval(t *testing.T) {
 		{1 << 30, 2 * time.Second},
 	}
 	for _, tt := range tests {
-		if got := iv(tt.attempt); got != tt.want {
+		if got := iv.Wait(tt.attempt); got != tt.want {
 			t.Errorf("attempt %d = %v, want %v", tt.attempt, got, tt.want)
 		}
 	}
 }
 
-func TestExponentialIntervalValidation(t *testing.T) {
+func TestBackoffPointerIsAPollInterval(t *testing.T) {
+	var iv PollInterval = &Backoff{Initial: time.Second, Max: time.Second, Multiplier: 1}
+	if got := iv.Wait(9); got != time.Second {
+		t.Errorf("Wait(9) = %v, want 1s", got)
+	}
+}
+
+func TestBackoffValidation(t *testing.T) {
 	const ms = time.Millisecond
 	tests := []struct {
-		name         string
-		initial, max time.Duration
-		mult         float64
-		free         int
+		name    string
+		b       Backoff
+		wantErr string
 	}{
-		{"zero initial", 0, time.Second, 2, 0},
-		{"negative initial", -ms, time.Second, 2, 0},
-		{"max below initial", 2 * ms, ms, 2, 0},
-		{"multiplier below one", ms, time.Second, 0.5, 0},
-		{"NaN multiplier", ms, time.Second, math.NaN(), 0},
-		{"+Inf multiplier", ms, time.Second, math.Inf(1), 0},
-		{"-Inf multiplier", ms, time.Second, math.Inf(-1), 0},
-		{"negative free attempts", ms, time.Second, 2, -1},
+		{"zero value", Backoff{}, "initial interval must be greater than zero"},
+		{"zero initial", Backoff{Initial: 0, Max: time.Second, Multiplier: 2}, "initial interval must be greater than zero"},
+		{"negative initial", Backoff{Initial: -ms, Max: time.Second, Multiplier: 2}, "initial interval must be greater than zero"},
+		{"max below initial", Backoff{Initial: 2 * ms, Max: ms, Multiplier: 2}, "max interval must not be below the initial interval"},
+		{"multiplier below one", Backoff{Initial: ms, Max: time.Second, Multiplier: 0.5}, "multiplier must be a finite number of at least 1"},
+		{"NaN multiplier", Backoff{Initial: ms, Max: time.Second, Multiplier: math.NaN()}, "multiplier must be a finite number of at least 1"},
+		{"+Inf multiplier", Backoff{Initial: ms, Max: time.Second, Multiplier: math.Inf(1)}, "multiplier must be a finite number of at least 1"},
+		{"-Inf multiplier", Backoff{Initial: ms, Max: time.Second, Multiplier: math.Inf(-1)}, "multiplier must be a finite number of at least 1"},
+		{"negative free attempts", Backoff{Initial: ms, Max: time.Second, Multiplier: 2, FreeAttempts: -1}, "free attempts must not be negative"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			iv, err := ExponentialInterval(tt.initial, tt.max, tt.mult, tt.free)
-			if !errors.Is(err, ErrInvalidInput) || iv != nil {
-				t.Fatalf("got (%v, %v), want nil func and ErrInvalidInput", iv != nil, err)
+			c, err := NewClient(WithJobPolling(PollOptions{Interval: tt.b}))
+			want := "mineskin: invalid input: " + tt.wantErr
+			if c != nil || !errors.Is(err, ErrInvalidInput) || err.Error() != want {
+				t.Fatalf("got (%v, %v), want nil client and %q", c, err, want)
 			}
 		})
 	}
-	if _, err := ExponentialInterval(time.Second, time.Second, 1, 0); err != nil {
+	c, err := NewClient(WithJobPolling(PollOptions{Interval: Backoff{Initial: time.Second, Max: time.Second, Multiplier: 1}}))
+	if err != nil {
 		t.Errorf("boundary values rejected: %v", err)
+	} else {
+		_ = c.Close()
 	}
 }
 
 func TestWithJobPollingDefaults(t *testing.T) {
-	custom := func(int) time.Duration { return 5 * time.Millisecond }
+	custom := PollIntervalFunc(func(int) time.Duration { return 5 * time.Millisecond })
 	tests := []struct {
 		name         string
 		in           PollOptions
@@ -96,20 +118,17 @@ func TestWithJobPollingDefaults(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := tt.in.withDefaults()
-			if err != nil {
-				t.Fatalf("withDefaults() error = %v", err)
-			}
+			got := tt.in.withDefaults()
 			if got.InitialDelay != tt.wantDelay || got.MaxAttempts != tt.wantMax || got.UseETA != tt.wantETA {
 				t.Errorf("got %+v", got)
 			}
-			if got.Interval == nil || got.Interval(1) != tt.wantInterval {
+			if got.Interval == nil || got.Interval.Wait(1) != tt.wantInterval {
 				t.Errorf("interval wrong, want %v", tt.wantInterval)
 			}
 		})
 	}
-	if DefaultPollInitialDelay != 2*time.Second || DefaultPollInterval != time.Second || DefaultPollMaxAttempts != 10 {
-		t.Error("exported defaults changed")
+	if defaultPollInitialDelay != 2*time.Second || defaultPollInterval != time.Second || defaultPollMaxAttempts != 10 {
+		t.Error("poll defaults changed")
 	}
 }
 
@@ -131,6 +150,32 @@ func TestWithJobPollingValidation(t *testing.T) {
 	}
 }
 
+func TestPollOptionsValidate(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      PollOptions
+		wantErr string
+	}{
+		{"valid", PollOptions{InitialDelay: time.Second, MaxAttempts: 1}, ""},
+		{"negative initial delay", PollOptions{InitialDelay: -time.Second, MaxAttempts: 1}, "mineskin: invalid input: poll initial delay must not be negative"},
+		{"negative max attempts", PollOptions{InitialDelay: time.Second, MaxAttempts: -1}, "mineskin: invalid input: poll max attempts must not be negative"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.in.validate()
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validate() = %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, ErrInvalidInput) || err.Error() != tt.wantErr {
+				t.Fatalf("validate() = %v, want %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestNewClientDefaultPolling(t *testing.T) {
 	c, err := NewClient()
 	if err != nil {
@@ -140,7 +185,7 @@ func TestNewClientDefaultPolling(t *testing.T) {
 	if p.InitialDelay != 2*time.Second || p.MaxAttempts != 10 || p.UseETA {
 		t.Errorf("polling = %+v", p)
 	}
-	if p.Interval == nil || p.Interval(7) != time.Second {
+	if p.Interval == nil || p.Interval.Wait(7) != time.Second {
 		t.Error("default interval should be constant 1s")
 	}
 }
@@ -152,5 +197,25 @@ func TestNewClientCustomPolling(t *testing.T) {
 	}
 	if c.polling.MaxAttempts != 4 || !c.polling.UseETA || c.polling.InitialDelay != 2*time.Second {
 		t.Errorf("polling = %+v", c.polling)
+	}
+}
+
+func TestNilIntervalImplementationsAreInvalidInput(t *testing.T) {
+	var nilBackoff *Backoff
+	tests := []struct {
+		name string
+		iv   PollInterval
+		want string
+	}{
+		{"nil *Backoff", nilBackoff, "mineskin: invalid input: poll interval is a nil *Backoff"},
+		{"nil PollIntervalFunc", PollIntervalFunc(nil), "mineskin: invalid input: poll interval is a nil function"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := NewClient(WithJobPolling(PollOptions{Interval: tt.iv}))
+			if c != nil || !errors.Is(err, ErrInvalidInput) || err.Error() != tt.want {
+				t.Fatalf("got (%v, %v), want nil client and %q", c, err, tt.want)
+			}
+		})
 	}
 }

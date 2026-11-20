@@ -34,10 +34,6 @@ var (
 	// the maximum number of attempts.
 	ErrMaxAttempts = errors.New("mineskin: job polling reached max attempts")
 
-	// ErrJobNotCompleted matches the error returned by JobSkin when the job has
-	// no result yet.
-	ErrJobNotCompleted = errors.New("mineskin: job is not completed")
-
 	// ErrClientClosed matches the error returned by every call made after
 	// Client.Close, and by calls that Close interrupts while they are queued,
 	// waiting for a job or in flight.
@@ -120,13 +116,22 @@ func matchesStatus(status int, target error) bool {
 // IsRetryable reports whether retrying the call that returned err may
 // succeed. It is true for an *APIError or *UnexpectedResponseError whose HTTP
 // status is 408, 429 or 500 and above except 501 and 505, and for a network
-// error that is a timeout. It is false for nil, for a cancelled or expired
-// context, for ErrClientClosed, and for everything else. The checks look
+// error that is a timeout, including a request that exceeded the WithTimeout
+// of the client. It is false for nil, for a cancelled context, for a deadline
+// of the caller's own context, for ErrClientClosed, and for everything else. The checks look
 // through wrapping, so the result is the same for a wrapped error.
 func IsRetryable(err error) bool {
 	// The context checks come first: context.DeadlineExceeded implements
-	// Timeout() and would otherwise count as a retryable network timeout.
-	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrClientClosed) {
+	// Timeout() and would otherwise count as a retryable network timeout. The
+	// per-request timeout also matches context.DeadlineExceeded but is
+	// retryable, so it is recognised before that check.
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, ErrClientClosed) {
+		return false
+	}
+	if transport.IsRequestTimeout(err) {
+		return true
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
 	var api *APIError

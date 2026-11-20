@@ -13,8 +13,10 @@ import (
 // pending. Waits for the same job id share one stream of requests; each waiter
 // gets its own shallow copy of the response.
 //
-// A nil ctx, or a job id that is empty, "." or "..", fails with
-// ErrInvalidInput without a request. A failed job gives a *JobFailedError, and
+// WaitForJob panics when ctx is nil, as the standard library does. A job id
+// that is empty, "." or ".." fails with ErrInvalidInput without a request. The
+// total wait is bounded only by ctx and PollOptions.MaxAttempts; WithTimeout
+// bounds each status request, not the wait. A failed job gives a *JobFailedError, and
 // a job still unfinished after PollOptions.MaxAttempts checks gives
 // ErrMaxAttempts. When ctx ends, the error matches ctx.Err(); the job stops being polled unless another waiter still needs it.
 // Errors of the status requests are returned as they are. A wait that Close
@@ -26,12 +28,9 @@ import (
 //
 // When more than a few jobs are pending, the poller checks them with one list
 // request. A job reported done by the list is completed with whatever the
-// follow-up GET returns, so a completed job may carry no result yet and
-// JobSkin on it may return ErrJobNotCompleted.
+// follow-up GET returns, so a completed job may carry no result yet: its
+// Job.Result is then the zero UUID, which GetSkin rejects.
 func (c *Client) WaitForJob(ctx context.Context, job Job) (*JobResponse, error) {
-	if ctx == nil {
-		return nil, invalidInput("context is nil")
-	}
 	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}

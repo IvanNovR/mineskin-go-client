@@ -137,14 +137,14 @@ func mustReceive(t *testing.T, what string, ch <-chan struct{}) {
 
 func queueCall(c *Client) func() error {
 	return func() error {
-		_, err := c.Queue(context.Background(), FromURL("https://example.com/s.png"), nil)
+		_, err := c.Queue(context.Background(), FromURL("https://example.com/s.png"), GenerateOptions{})
 		return err
 	}
 }
 
 func generateCall(c *Client) func() error {
 	return func() error {
-		_, err := c.Generate(context.Background(), FromURL("https://example.com/s.png"), nil)
+		_, err := c.Generate(context.Background(), FromURL("https://example.com/s.png"), GenerateOptions{})
 		return err
 	}
 }
@@ -153,7 +153,7 @@ func generateCall(c *Client) func() error {
 func getCalls(c *Client) map[string]func() error {
 	ctx := context.Background()
 	return map[string]func() error{
-		keySkin: func() error { _, err := c.GetSkin(ctx, testSkinID); return err },
+		keySkin: func() error { _, err := c.GetSkin(ctx, testSkinUUID); return err },
 		keyUser: func() error { _, err := c.GetUser(ctx); return err },
 		keyJob:  func() error { _, err := c.GetJob(ctx, "job-1"); return err },
 		keyList: func() error { _, err := c.ListJobs(ctx); return err },
@@ -287,7 +287,7 @@ func TestQueuedCallReturnsCtxErr(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cancelled := goCall(func() error { _, err := c.GetSkin(ctx, testSkinID); return err })
+	cancelled := goCall(func() error { _, err := c.GetSkin(ctx, testSkinUUID); return err })
 	waitWaiting(t, c.getGroup, 1)
 	other := goCall(getCalls(c)[keyUser])
 	waitWaiting(t, c.getGroup, 2)
@@ -339,25 +339,12 @@ func TestReleaseOnTransportError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 	for i := range 3 {
-		if _, err := c.GetSkin(ctx, testSkinID); !errors.Is(err, boom) {
+		if _, err := c.GetSkin(ctx, testSkinUUID); !errors.Is(err, boom) {
 			t.Fatalf("call %d error = %v, want the transport error", i, err)
 		}
 	}
 	if got := c.getGroup.Throttle.Stats().InFlight; got != 0 {
 		t.Errorf("in flight = %d, want 0", got)
-	}
-}
-
-func TestExchangeNilContextIsInvalidInput(t *testing.T) {
-	srv := newHitServer(t)
-	c := newTestClient(t, srv.URL)
-	var nilCtx context.Context
-	_, err := c.GetUser(nilCtx)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("error = %v, want ErrInvalidInput", err)
-	}
-	if srv.count(keyUser) != 0 {
-		t.Error("a request was sent for a nil context")
 	}
 }
 

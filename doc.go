@@ -8,14 +8,18 @@
 // Create a Client with NewClient and functional options (WithAPIKey,
 // WithBaseURL, WithUserAgent, WithTimeout, WithTransport, WithLogger,
 // WithJobPolling, WithGenerateThrottle, WithGetThrottle, WithAutoTuning), then
-// call GetSkin or GetSkinByUUID to fetch a skin by its MineSkin skin id, or
+// call GetSkin to fetch a skin by its MineSkin skin id (a UUID, see ParseUUID), or
 // GetUser to read the user and grants of the API key:
 //
 //	c, err := mineskin.NewClient(mineskin.WithAPIKey(key), mineskin.WithUserAgent("my-app/1.0"))
 //	if err != nil {
 //		// handle error
 //	}
-//	res, err := c.GetSkin(ctx, "c1a1982831874868a37f5be375d38d5b")
+//	id, err := mineskin.ParseUUID("c1a1982831874868a37f5be375d38d5b")
+//	if err != nil {
+//		// handle error
+//	}
+//	res, err := c.GetSkin(ctx, id)
 //
 // Every response has a Meta field (a ResponseMeta) with the HTTP status, API
 // warnings and messages, the breadcrumb and the mineskin-* headers.
@@ -23,12 +27,13 @@
 // # Generating skins
 //
 // A skin is generated from a Source: FromURL, FromUser, FromReader, FromFile
-// or FromImage. GenerateOptions (nil for none) sets the name, variant,
+// or FromImage. GenerateOptions (the zero value for none) sets the name,
+// variant,
 // visibility and cape.
 //
 // The queue flow submits a job, waits for it and then reads the skin:
 //
-//	q, err := c.Queue(ctx, mineskin.FromURL("https://example.com/skin.png"), nil)
+//	q, err := c.Queue(ctx, mineskin.FromURL("https://example.com/skin.png"), mineskin.GenerateOptions{})
 //	if err != nil {
 //		// handle error
 //	}
@@ -36,19 +41,20 @@
 //	if err != nil {
 //		// handle error, e.g. *JobFailedError or ErrMaxAttempts
 //	}
-//	skin, err := c.JobSkin(ctx, done)
+//	res, err := c.GetSkin(ctx, done.Job.Result) // or done.Skin when it is not nil
 //
 // Queue returns as soon as the job is accepted. WaitForJob polls the job
 // until it is completed or failed; concurrent waits share one batched poller
 // that is configured with WithJobPolling (maximum attempts, intervals and
-// whether to follow the ETA of the job). JobSkin returns the skin of the
-// finished job, or a *JobFailedError. GetJob and ListJobs inspect jobs
+// whether to follow the ETA of the job). The skin of a finished job is
+// done.Skin when the response embeds it, otherwise GetSkin(ctx,
+// done.Job.Result); a failed job is a *JobFailedError. GetJob and ListJobs inspect jobs
 // without waiting.
 //
 // Generate does the same in a single request and returns the skin directly.
-// The request is bounded by the client timeout, so raise it with WithTimeout
-// (or pass a context with a deadline) for slow generations; for long jobs
-// prefer Queue and WaitForJob.
+// The HTTP request is bounded by the timeout of WithTimeout, so raise it (or
+// pass a context with a deadline) for slow generations; for long jobs prefer
+// Queue and WaitForJob.
 //
 // # Errors
 //
@@ -71,11 +77,11 @@
 //
 // Requests are throttled on the client side and the throttle is on by
 // default. Requests belong to one of two groups. The generate group holds
-// Queue and Generate and starts at most one request per DefaultGenerateInterval
-// (200 ms) with DefaultGenerateConcurrency (1) in flight. The get group holds
-// GetSkin, GetSkinByUUID, GetUser, GetJob and ListJobs, including the calls
-// made while WaitForJob polls, and uses DefaultGetInterval (100 ms) and
-// DefaultGetConcurrency (5). Queued requests start in FIFO order, and a start
+// Queue and Generate and starts at most one request per 200 ms
+// with one in flight. The get group holds
+// GetSkin, GetUser, GetJob and ListJobs, including the calls
+// made while WaitForJob polls, and starts at most one request per 100 ms
+// with five in flight. Queued requests start in FIFO order, and a start
 // needs a free slot, the interval since the previous start and the group's
 // server delay to have passed.
 //
@@ -91,8 +97,8 @@
 // changes nothing.
 //
 // WithAutoTuning makes the generate group follow the limits granted to the
-// API key instead of fixed values (it cannot be combined with
-// WithGenerateThrottle). The grants are loaded lazily by the first Queue or
+// API key instead of fixed values (it replaces WithGenerateThrottle and is
+// replaced by a later one: the last option wins). The grants are loaded lazily by the first Queue or
 // Generate call, never by NewClient, and are refreshed in the background when
 // they are older than five minutes. Until the first load the group runs at one
 // request per second with one in flight. A job that ends FAILED, or a
@@ -100,7 +106,7 @@
 // interval, and the penalty decays over time.
 //
 // A request that the server rejects with HTTP 429 is retried automatically, at
-// most DefaultRateLimitRetries (2) times; WithRateLimitRetries changes that
+// most 2 times; WithRateLimitRetries changes that
 // and 0 turns it off. This applies to every request, including Generate and
 // the poller's checks: a 429 is never processed, so a retry cannot create a
 // duplicate skin or cost an extra credit. MineSkin starts the generate
@@ -116,7 +122,11 @@
 // is retried; for other failures the errors carry APIError.RetryAfter,
 // APIError.RateLimit and IsRetryable(err) so that the caller can decide.
 // Time spent waiting in the throttle is bounded only by the context of the
-// call: WithTimeout covers the HTTP exchange alone.
+// call: WithTimeout covers each HTTP attempt alone, a retry after a 429
+// included, and never the time in the throttle. The total duration of Generate
+// or WaitForJob is bounded by the caller's context (and, for waits, by the
+// poll max attempts). Passing a nil context panics, as in the standard
+// library.
 //
 // # Shutting down
 //

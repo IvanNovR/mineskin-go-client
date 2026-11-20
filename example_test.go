@@ -15,6 +15,8 @@ import (
 
 const exampleSkinID = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
 
+var exampleSkinUUID, _ = mineskin.ParseUUID(exampleSkinID)
+
 // exampleServer fakes the MineSkin API so the examples run without a network.
 func exampleServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +42,7 @@ func ExampleClient_WaitForJob() {
 	}
 	ctx := context.Background()
 
-	q, err := c.Queue(ctx, mineskin.FromURL("https://example.com/skin.png"), nil)
+	q, err := c.Queue(ctx, mineskin.FromURL("https://example.com/skin.png"), mineskin.GenerateOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -48,11 +50,11 @@ func ExampleClient_WaitForJob() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	skin, err := c.JobSkin(ctx, done)
+	res, err := c.GetSkin(ctx, done.Job.Result)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(skin.Name)
+	fmt.Println(res.Skin.Name)
 	// Output: Steve
 }
 
@@ -65,7 +67,7 @@ func ExampleClient_Generate() {
 	}
 
 	res, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/skin.png"),
-		&mineskin.GenerateOptions{Visibility: mineskin.VisibilityUnlisted})
+		mineskin.GenerateOptions{Visibility: mineskin.VisibilityUnlisted})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -85,7 +87,7 @@ func ExampleWithAutoTuning() {
 	}
 	defer func() { _ = c.Close() }()
 
-	res, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/skin.png"), nil)
+	res, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/skin.png"), mineskin.GenerateOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -121,7 +123,7 @@ func ExampleClient_Close() {
 		log.Fatal(err)
 	}
 	// Calls after Close fail immediately.
-	_, err = c.GetSkin(context.Background(), exampleSkinID)
+	_, err = c.GetSkin(context.Background(), exampleSkinUUID)
 	fmt.Println(errors.Is(err, mineskin.ErrClientClosed))
 	// Output: true
 }
@@ -140,14 +142,30 @@ func ExampleWithRateLimitRetries() {
 
 	// The default is two retries; a 429 is retried through the throttle.
 	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL), mineskin.WithUserAgent("example/1.0"),
-		mineskin.WithRateLimitRetries(mineskin.DefaultRateLimitRetries))
+		mineskin.WithRateLimitRetries(2))
 	if err != nil {
 		log.Fatal(err)
 	}
-	skin, err := c.GetSkin(context.Background(), exampleSkinID)
+	skin, err := c.GetSkin(context.Background(), exampleSkinUUID)
 	if err != nil {
 		log.Fatal(err)
 	}
 	fmt.Println(skin.Skin.Name, calls.Load())
 	// Output: Steve 2
+}
+
+func ExampleBackoff() {
+	backoff := mineskin.Backoff{
+		Initial: 200 * time.Millisecond, Max: 2 * time.Second,
+		Multiplier: 2.0, FreeAttempts: 3,
+	}
+	for _, attempt := range []int{1, 3, 4, 5, 7} {
+		fmt.Println(attempt, backoff.Wait(attempt))
+	}
+	// Output:
+	// 1 200ms
+	// 3 200ms
+	// 4 400ms
+	// 5 800ms
+	// 7 2s
 }

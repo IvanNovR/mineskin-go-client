@@ -38,17 +38,14 @@ func TestCallsAfterCloseFailImmediately(t *testing.T) {
 	}
 	ctx := context.Background()
 	src := FromURL("https://example.com/s.png")
-	done := &JobResponse{Job: Job{ID: "job-1", Status: JobStatusCompleted, Result: UUID{1}}}
 	calls := map[string]func() error{
-		"GetSkin":       func() error { _, err := c.GetSkin(ctx, testSkinID); return err },
-		"GetSkinByUUID": func() error { _, err := c.GetSkinByUUID(ctx, UUID{1}); return err },
-		"GetUser":       func() error { _, err := c.GetUser(ctx); return err },
-		"GetJob":        func() error { _, err := c.GetJob(ctx, "job-1"); return err },
-		"ListJobs":      func() error { _, err := c.ListJobs(ctx); return err },
-		"Queue":         func() error { _, err := c.Queue(ctx, src, nil); return err },
-		"Generate":      func() error { _, err := c.Generate(ctx, src, nil); return err },
-		"WaitForJob":    func() error { _, err := c.WaitForJob(ctx, Job{ID: "job-1"}); return err },
-		"JobSkin":       func() error { _, err := c.JobSkin(ctx, done); return err },
+		"GetSkin":    func() error { _, err := c.GetSkin(ctx, testSkinUUID); return err },
+		"GetUser":    func() error { _, err := c.GetUser(ctx); return err },
+		"GetJob":     func() error { _, err := c.GetJob(ctx, "job-1"); return err },
+		"ListJobs":   func() error { _, err := c.ListJobs(ctx); return err },
+		"Queue":      func() error { _, err := c.Queue(ctx, src, GenerateOptions{}); return err },
+		"Generate":   func() error { _, err := c.Generate(ctx, src, GenerateOptions{}); return err },
+		"WaitForJob": func() error { _, err := c.WaitForJob(ctx, Job{ID: "job-1"}); return err },
 	}
 	for name, call := range calls {
 		err := call()
@@ -209,5 +206,101 @@ func TestCallerCancelVsCloseDistinguished(t *testing.T) {
 	err = mustDone(t, "closed GetUser", res)
 	if !errors.Is(err, ErrClientClosed) {
 		t.Errorf("Close error = %v, want ErrClientClosed", err)
+	}
+}
+
+// TestCheckOpenFollowsBaseContext pins that the closed state is derived from
+// the base context: cancelling it is enough, no separate flag exists.
+func TestCheckOpenFollowsBaseContext(t *testing.T) {
+	c, err := NewClient(WithUserAgent("test/1.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if err := c.checkOpen(); err != nil {
+		t.Fatalf("checkOpen() before cancel = %v, want nil", err)
+	}
+	c.cancelBase(ErrClientClosed)
+	if err := c.checkOpen(); !errors.Is(err, ErrClientClosed) {
+		t.Fatalf("checkOpen() after cancel = %v, want ErrClientClosed", err)
+	}
+}
+
+// mustPanic fails the test unless f panics.
+func mustPanic(t *testing.T, name string, f func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Errorf("%s did not panic", name)
+		}
+	}()
+	f()
+}
+
+// TestNilContextPanics pins the documented contract (M4-34): a nil ctx panics,
+// as in the standard library, instead of returning an error.
+func TestNilContextPanics(t *testing.T) {
+	srv := newHitServer(t)
+	c := newTestClient(t, srv.URL, fastPolling())
+	var nilCtx context.Context
+	mustPanic(t, "GetUser(nil)", func() { _, _ = c.GetUser(nilCtx) })
+	mustPanic(t, "WaitForJob(nil)", func() { _, _ = c.WaitForJob(nilCtx, Job{ID: "job-1"}) })
+}
+
+// TestConcurrentCloseWithCallsInFlight closes the client from several
+// goroutines while requests are held in the server: every Close returns, every
+// in-flight call fails with ErrClientClosed and no call made afterwards sends
+// a request.
+func TestConcurrentCloseWithCallsInFlight(t *testing.T) {
+	const inFlight, closers = 4, 8
+	srv := newHitServer(t, keySkin) // the gate is never opened
+	c := newTestClient(t, srv.URL)
+	ctx := context.Background()
+
+	calls := make([]<-chan error, inFlight)
+	for i := range calls {
+		calls[i] = goCall(skinCall(ctx, c))
+	}
+	waitCount(t, srv, keySkin, inFlight)
+
+	closeDone := make(chan error, closers)
+	for range closers {
+		go func() { closeDone <- c.Close() }()
+	}
+	for range closers {
+		select {
+		case err := <-closeDone:
+			if err != nil {
+				t.Errorf("Close() error = %v, want nil", err)
+			}
+		case <-time.After(waitTimeout):
+			t.Fatal("a concurrent Close did not return")
+		}
+	}
+	for i, ch := range calls {
+		if err := mustDone(t, "in-flight call", ch); !errors.Is(err, ErrClientClosed) {
+			t.Errorf("in-flight call %d error = %v, want ErrClientClosed", i, err)
+		}
+	}
+
+	before := map[string]int{}
+	for _, k := range []string{keySkin, keyUser, keyQueue} {
+		before[k] = srv.count(k)
+	}
+	after := map[string]func() error{
+		keySkin: skinCall(ctx, c),
+		keyUser: func() error { _, err := c.GetUser(ctx); return err },
+		keyQueue: func() error {
+			_, err := c.Queue(ctx, FromURL("https://example.com/s.png"), GenerateOptions{})
+			return err
+		},
+	}
+	for k, call := range after {
+		if err := call(); !errors.Is(err, ErrClientClosed) {
+			t.Errorf("call after Close (%s) error = %v, want ErrClientClosed", k, err)
+		}
+		if got := srv.count(k); got != before[k] {
+			t.Errorf("%s hits = %d after Close, want %d (no request)", k, got, before[k])
+		}
 	}
 }

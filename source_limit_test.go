@@ -29,7 +29,7 @@ func assertUploadTooLarge(t *testing.T, err error) {
 
 func TestFromReaderUploadLimit(t *testing.T) {
 	t.Run("exactly the limit passes", func(t *testing.T) {
-		body, err := FromReader(bytes.NewReader(make([]byte, maxUploadBytes))).requestBody(nil)
+		body, err := FromReader(bytes.NewReader(make([]byte, maxUploadBytes))).requestBody(GenerateOptions{})
 		if err != nil {
 			t.Fatalf("requestBody() error = %v", err)
 		}
@@ -38,12 +38,12 @@ func TestFromReaderUploadLimit(t *testing.T) {
 		}
 	})
 	t.Run("one byte over fails", func(t *testing.T) {
-		_, err := FromReader(bytes.NewReader(make([]byte, maxUploadBytes+1))).requestBody(nil)
+		_, err := FromReader(bytes.NewReader(make([]byte, maxUploadBytes+1))).requestBody(GenerateOptions{})
 		assertUploadTooLarge(t, err)
 	})
 	t.Run("endless reader fails after bounded read", func(t *testing.T) {
 		r := &endlessReader{}
-		_, err := FromReader(r).requestBody(nil)
+		_, err := FromReader(r).requestBody(GenerateOptions{})
 		assertUploadTooLarge(t, err)
 		if r.read > 2*maxUploadBytes {
 			t.Errorf("read %d bytes from the reader, want a bounded read", r.read)
@@ -53,7 +53,7 @@ func TestFromReaderUploadLimit(t *testing.T) {
 
 func TestFromFileUploadLimit(t *testing.T) {
 	t.Run("exactly the limit passes", func(t *testing.T) {
-		body, err := FromFile(writeTempSkin(t, make([]byte, maxUploadBytes))).requestBody(nil)
+		body, err := FromFile(writeTempSkin(t, make([]byte, maxUploadBytes))).requestBody(GenerateOptions{})
 		if err != nil {
 			t.Fatalf("requestBody() error = %v", err)
 		}
@@ -62,7 +62,7 @@ func TestFromFileUploadLimit(t *testing.T) {
 		}
 	})
 	t.Run("one byte over fails", func(t *testing.T) {
-		_, err := FromFile(writeTempSkin(t, make([]byte, maxUploadBytes+1))).requestBody(nil)
+		_, err := FromFile(writeTempSkin(t, make([]byte, maxUploadBytes+1))).requestBody(GenerateOptions{})
 		assertUploadTooLarge(t, err)
 	})
 }
@@ -70,6 +70,6 @@ func TestFromFileUploadLimit(t *testing.T) {
 func TestFromImageUploadLimit(t *testing.T) {
 	img := image.NewNRGBA(image.Rect(0, 0, 600, 600))
 	rand.New(rand.NewSource(1)).Read(img.Pix) //nolint:gosec // test noise
-	_, err := FromImage(img).requestBody(nil)
+	_, err := FromImage(img).requestBody(GenerateOptions{})
 	assertUploadTooLarge(t, err)
 }

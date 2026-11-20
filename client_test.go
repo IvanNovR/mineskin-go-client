@@ -599,9 +599,7 @@ func TestClient_ConcurrentUse(t *testing.T) {
 	ctx := waitCtx(t)
 	var wg sync.WaitGroup
 	for i := range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			switch i % 3 {
 			case 0:
 				if _, err := c.GetSkin(ctx, testSkinUUID); err != nil {
@@ -617,7 +615,7 @@ func TestClient_ConcurrentUse(t *testing.T) {
 					t.Errorf("worker %d WaitForJob() = %+v, %v; want a completed job", i, got, err)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 

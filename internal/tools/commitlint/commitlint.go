@@ -126,7 +126,7 @@ func execGit(dir string) gitLog {
 // parseLog parses `git log --format=%H%x00%s` output.
 func parseLog(raw []byte) ([]commit, error) {
 	var commits []commit
-	for _, line := range strings.Split(string(raw), "\n") {
+	for line := range strings.SplitSeq(string(raw), "\n") {
 		if line == "" {
 			continue
 		}

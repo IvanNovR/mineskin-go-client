@@ -167,8 +167,7 @@ func TestHandleResponse_ParseError(t *testing.T) {
 			if errors.Is(err, ErrInvalidInput) {
 				t.Errorf("must not match ErrInvalidInput: %v", err)
 			}
-			var typeErr *json.UnmarshalTypeError
-			if !errors.As(err, &typeErr) {
+			if _, ok := errors.AsType[*json.UnmarshalTypeError](err); !ok {
 				t.Errorf("cause not kept: %v", err)
 			}
 		})
@@ -264,8 +263,7 @@ func TestHandleResponse_APIErrorCarriesHeaders(t *testing.T) {
 func TestHandleResponse_UnexpectedIsClientError(t *testing.T) {
 	t.Parallel()
 	_, err := decodeMeta[struct{}](transport.Response{Status: 530, Body: []byte("error code: 1033")})
-	var ue *UnexpectedResponseError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*UnexpectedResponseError](err); !ok {
 		t.Errorf("want *UnexpectedResponseError: %v", err)
 	}
 }
@@ -279,8 +277,7 @@ func TestHandleResponse_AcceptsUTF8BOM(t *testing.T) {
 	}
 	body = append([]byte("\xef\xbb\xbf"), `{"success":false,"errors":[{"code":"c","message":"m"}]}`...)
 	_, err = decodeMeta[testWire](transport.Response{Status: 400, Body: body})
-	var apiErr *APIError
-	if !errors.As(err, &apiErr) {
+	if _, ok := errors.AsType[*APIError](err); !ok {
 		t.Errorf("err = %v, want *APIError", err)
 	}
 }
@@ -344,7 +341,7 @@ const (
 // malformedLines returns the log lines that report dropped fields.
 func malformedLines(buf *bytes.Buffer) []string {
 	var out []string
-	for _, line := range strings.Split(buf.String(), "\n") {
+	for line := range strings.SplitSeq(buf.String(), "\n") {
 		if strings.Contains(line, malformedMsg) {
 			out = append(out, line)
 		}

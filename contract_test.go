@@ -91,6 +91,7 @@ func apiNotFoundCase() contractCase {
 	return contractCase{
 		name: "API 404",
 		run: func(t *testing.T) error {
+			t.Helper()
 			srv := newTestServer(t, writeJSON(http.StatusNotFound, notFoundJSON))
 			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
 			return err
@@ -98,8 +99,9 @@ func apiNotFoundCase() contractCase {
 		is:    []error{ErrNotFound},
 		isNot: []error{ErrInvalidInput, ErrClientClosed},
 		check: func(t *testing.T, err error) {
-			var apiErr *APIError
-			if !errors.As(err, &apiErr) {
+			t.Helper()
+			apiErr, ok := errors.AsType[*APIError](err)
+			if !ok {
 				t.Fatalf("errors.As(%v, *APIError) = false", err)
 			}
 			if apiErr.Meta.Status != http.StatusNotFound || apiErr.Code != "not_found" || IsRetryable(err) {
@@ -113,6 +115,7 @@ func rateLimitedCase(name, contentType, body string) contractCase {
 	return contractCase{
 		name: name,
 		run: func(t *testing.T) error {
+			t.Helper()
 			srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", contentType)
 				w.WriteHeader(http.StatusTooManyRequests)
@@ -140,6 +143,7 @@ func htmlBadGatewayCase() contractCase {
 	return contractCase{
 		name: "HTML 502",
 		run: func(t *testing.T) error {
+			t.Helper()
 			srv := newTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Type", "text/html")
 				w.WriteHeader(http.StatusBadGateway)
@@ -152,6 +156,7 @@ func htmlBadGatewayCase() contractCase {
 		isNot:     []error{ErrNotFound, ErrRateLimited, ErrInvalidInput},
 		retryable: true,
 		check: func(t *testing.T, err error) {
+			t.Helper()
 			var ue *UnexpectedResponseError
 			if !errors.As(err, &ue) {
 				t.Fatalf("errors.As(%v, *UnexpectedResponseError) = false", err)
@@ -159,8 +164,7 @@ func htmlBadGatewayCase() contractCase {
 			if ue.Status != http.StatusBadGateway || !IsRetryable(err) || ue.Source != SourceNginx {
 				t.Errorf("UnexpectedResponseError = %+v", ue)
 			}
-			var apiErr *APIError
-			if errors.As(err, &apiErr) {
+			if _, ok := errors.AsType[*APIError](err); ok {
 				t.Error("an HTML response must not be an *APIError")
 			}
 		},
@@ -171,6 +175,7 @@ func transportErrorCase() contractCase {
 	return contractCase{
 		name: "transport error",
 		run: func(t *testing.T) error {
+			t.Helper()
 			rt := roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, timeoutNetError{} })
 			_, err := newTestClient(t, "http://127.0.0.1:1", WithTransport(rt)).GetUser(context.Background())
 			return err
@@ -179,6 +184,7 @@ func transportErrorCase() contractCase {
 		isNot:     []error{ErrNotFound, ErrInvalidInput, ErrClientClosed},
 		retryable: true,
 		check: func(t *testing.T, err error) {
+			t.Helper()
 			var ne net.Error
 			if !errors.As(err, &ne) || !ne.Timeout() {
 				t.Errorf("errors.As(%v, net.Error) timeout = false, want a timeout", err)
@@ -197,6 +203,7 @@ func ctxCancelledQueuedCase() contractCase {
 	return contractCase{
 		name: "ctx cancelled while queued",
 		run: func(t *testing.T) error {
+			t.Helper()
 			srv := newHitServer(t, keySkin)
 			c := newTestClient(t, srv.URL, WithGetThrottle(oneSlot()))
 			held := goCall(getCalls(c)[keySkin])
@@ -220,6 +227,7 @@ func ctxCancelledDuring429RetryCase() contractCase {
 	return contractCase{
 		name: "ctx cancelled during a 429 retry",
 		run: func(t *testing.T) error {
+			t.Helper()
 			ctx, cancel := context.WithCancel(context.Background())
 			t.Cleanup(cancel)
 			var sends atomic.Int32
@@ -246,6 +254,7 @@ func ctxCancelledDuring429RetryCase() contractCase {
 		is:    []error{context.Canceled},
 		isNot: []error{ErrClientClosed},
 		check: func(t *testing.T, err error) {
+			t.Helper()
 			var apiErr *APIError
 			if !errors.As(err, &apiErr) || apiErr.Meta.Status != http.StatusTooManyRequests {
 				t.Errorf("errors.As(%v, *APIError) status 429 = false", err)
@@ -258,6 +267,7 @@ func closeQueuedCase() contractCase {
 	return contractCase{
 		name: "Close while queued",
 		run: func(t *testing.T) error {
+			t.Helper()
 			srv := newHitServer(t, keySkin)
 			c := newTestClient(t, srv.URL, WithGetThrottle(oneSlot()))
 			held := goCall(getCalls(c)[keySkin])
@@ -277,6 +287,7 @@ func closeInFlightCase() contractCase {
 	return contractCase{
 		name: "Close while in flight",
 		run: func(t *testing.T) error {
+			t.Helper()
 			started := make(chan struct{})
 			srv := newTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
 				close(started)
@@ -297,6 +308,7 @@ func closeWaitingCase() contractCase {
 	return contractCase{
 		name: "Close while waiting for a job",
 		run: func(t *testing.T) error {
+			t.Helper()
 			srv := newHitServer(t)
 			c := newTestClient(t, srv.URL, WithJobPolling(PollOptions{InitialDelay: time.Hour}))
 			res := goCall(func() error {
@@ -324,6 +336,7 @@ func maxAttemptsCase() contractCase {
 	return contractCase{
 		name: "ErrMaxAttempts",
 		run: func(t *testing.T) error {
+			t.Helper()
 			return waitFor(t, jobJSON("j1", "waiting"), pollOnce(2, func(int) time.Duration { return time.Millisecond }))
 		},
 		is:    []error{ErrMaxAttempts},
@@ -335,12 +348,14 @@ func jobFailedCase() contractCase {
 	return contractCase{
 		name: "JobFailedError",
 		run: func(t *testing.T) error {
+			t.Helper()
 			body := `{"success":true,"job":{"id":"j1","status":"failed"},"errors":[{"code":"bad_image","message":"nope"}]}`
 			return waitFor(t, body, pollOnce(5, func(int) time.Duration { return time.Millisecond }))
 		},
 		is:    []error{},
 		isNot: []error{ErrMaxAttempts, ErrInvalidInput},
 		check: func(t *testing.T, err error) {
+			t.Helper()
 			var jf *JobFailedError
 			if !errors.As(err, &jf) {
 				t.Fatalf("errors.As(%v, *JobFailedError) = false", err)
@@ -356,6 +371,7 @@ func pollIntervalZeroCase() contractCase {
 	return contractCase{
 		name: "PollInterval returns 0",
 		run: func(t *testing.T) error {
+			t.Helper()
 			return waitFor(t, jobJSON("j1", "waiting"), pollOnce(5, func(int) time.Duration { return 0 }))
 		},
 		is:    []error{ErrInvalidInput},
@@ -367,11 +383,13 @@ func pollIntervalPanicCase() contractCase {
 	return contractCase{
 		name: "PollInterval panics",
 		run: func(t *testing.T) error {
+			t.Helper()
 			return waitFor(t, jobJSON("j1", "waiting"), pollOnce(5, func(int) time.Duration { panic("boom") }))
 		},
 		is:    []error{},
 		isNot: []error{ErrInvalidInput, ErrMaxAttempts, ErrClientClosed},
 		check: func(t *testing.T, err error) {
+			t.Helper()
 			if !strings.Contains(err.Error(), "panicked") || !strings.Contains(err.Error(), "boom") {
 				t.Errorf("error text %q lacks the panic", err)
 			}
@@ -392,6 +410,7 @@ func newClientValidationCase() contractCase {
 		is:    []error{ErrInvalidInput},
 		isNot: []error{ErrNotFound, ErrClientClosed},
 		check: func(t *testing.T, err error) {
+			t.Helper()
 			if strings.Contains(err.Error(), "msk_secret_value") {
 				t.Errorf("error text %q leaks the API key", err)
 			}

@@ -57,7 +57,7 @@ func liveClient(t *testing.T) *Client {
 var (
 	genClientOnce sync.Once
 	genClient     *Client
-	genClientErr  error
+	errGenClient  error
 )
 
 // TestMain closes the shared generate client after all live tests ran. It is
@@ -82,12 +82,12 @@ func sharedGenClient(t *testing.T) *Client {
 		t.Skip("MINESKIN_API_KEY not set")
 	}
 	genClientOnce.Do(func() {
-		genClient, genClientErr = NewClient(WithAPIKey(key), WithUserAgent("mineskin-go-client-tests"),
+		genClient, errGenClient = NewClient(WithAPIKey(key), WithUserAgent("mineskin-go-client-tests"),
 			WithTimeout(liveGenHTTPLimit),
 			WithJobPolling(PollOptions{MaxAttempts: liveMaxPollAttempts, UseETA: true}))
 	})
-	if genClientErr != nil {
-		t.Fatalf("NewClient() error = %v", genClientErr)
+	if errGenClient != nil {
+		t.Fatalf("NewClient() error = %v", errGenClient)
 	}
 	return genClient
 }
@@ -170,8 +170,7 @@ func TestLiveGetUser(t *testing.T) {
 
 	res, err := c.GetUser(liveContext(t))
 	if err != nil {
-		var apiErr *APIError
-		if errors.As(err, &apiErr) {
+		if apiErr, ok := errors.AsType[*APIError](err); ok {
 			t.Fatalf("GetUser() failed: HTTP %d, code %q, message %q (the key may lack access to /v2/me; consider gating this test behind MINESKIN_LIVE_PAID): %v",
 				apiErr.Meta.Status, apiErr.Code, apiErr.Message, err)
 		}

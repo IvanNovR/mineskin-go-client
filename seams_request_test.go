@@ -88,8 +88,7 @@ func TestDoInvalidPathIsInvalidInput(t *testing.T) {
 	t.Parallel()
 	c := newTestClient(t, "http://example.invalid")
 	_, err := c.do(context.Background(), http.MethodGet, "/v2/\x7f", nil)
-	var build *transport.BuildError
-	if !errors.As(err, &build) {
+	if _, ok := errors.AsType[*transport.BuildError](err); !ok {
 		t.Fatalf("err = %v, want *transport.BuildError", err)
 	}
 	_, _, err = getResponse[struct{}](context.Background(), c, "/v2/\x7f", nil)
@@ -370,12 +369,10 @@ func TestDoConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 20)
 	for range 20 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, _, err := getResponse[struct{}](context.Background(), c, "/v2/x", nil)
 			errs <- err
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)

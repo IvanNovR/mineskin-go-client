@@ -166,7 +166,7 @@ func TestFromFileReadsOnEverySend(t *testing.T) {
 	t.Parallel()
 	content := []byte("file-content")
 	src := FromFile(writeTempSkin(t, content))
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		body, err := src.requestBody(GenerateOptions{})
 		if err != nil {
 			t.Fatalf("encode %d error = %v", i, err)
@@ -205,8 +205,8 @@ func TestFromImageEncodesPNG(t *testing.T) {
 	if got.Bounds() != img.Bounds() {
 		t.Fatalf("bounds = %v, want %v", got.Bounds(), img.Bounds())
 	}
-	for x := 0; x < 4; x++ {
-		for y := 0; y < 3; y++ {
+	for x := range 4 {
+		for y := range 3 {
 			if color.NRGBAModel.Convert(got.At(x, y)) != img.At(x, y) {
 				t.Errorf("pixel (%d,%d) differs", x, y)
 			}

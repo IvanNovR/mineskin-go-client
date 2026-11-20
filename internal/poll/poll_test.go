@@ -109,6 +109,8 @@ func TestOptions_FirstDelay(t *testing.T) {
 	}{
 		{"UseETA off ignores future ETA", Options{InitialDelay: 2 * time.Second}, now.Add(9 * time.Second), 2 * time.Second},
 		{"future ETA", Options{InitialDelay: 2 * time.Second, UseETA: true}, now.Add(9 * time.Second), 9 * time.Second},
+		{"ETA ten years ahead is capped", Options{InitialDelay: 2 * time.Second, UseETA: true}, now.Add(10 * 365 * 24 * time.Hour), time.Hour},
+		{"ETA just under the cap is kept", Options{InitialDelay: 2 * time.Second, UseETA: true}, now.Add(time.Hour - time.Second), time.Hour - time.Second},
 		{"past ETA", Options{InitialDelay: 2 * time.Second, UseETA: true}, now.Add(-time.Second), 2 * time.Second},
 		{"ETA equal now", Options{InitialDelay: 2 * time.Second, UseETA: true}, now, 2 * time.Second},
 		{"zero ETA", Options{InitialDelay: 2 * time.Second, UseETA: true}, time.Time{}, 2 * time.Second},

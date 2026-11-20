@@ -110,11 +110,9 @@ func TestWaitForJob_DedupSharesResult(t *testing.T) {
 	results := make([]*JobResponse, 2)
 	errs := make([]error, 2)
 	for i := range results {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			results[i], errs[i] = c.WaitForJob(waitCtx(t), Job{ID: "j1"})
-		}()
+		})
 	}
 	eventually(t, "both waiters registered", func() bool {
 		return c.poller.Waiters("j1") == 2
@@ -243,11 +241,9 @@ func TestWaitForJob_BatchedOverHTTP(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, n)
 	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, errs[i] = c.WaitForJob(waitCtx(t), Job{ID: fmt.Sprintf("j%d", i)})
-		}()
+		})
 	}
 	eventually(t, "all jobs registered", func() bool { return c.poller.Pending() == n })
 	allDone := make(chan error, 1)
@@ -288,14 +284,12 @@ func TestWaitForJob_Concurrent(t *testing.T) {
 	var failures atomic.Int32
 	for i := range ids {
 		for range waiters {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				r, err := c.WaitForJob(waitCtx(t), Job{ID: fmt.Sprintf("j%d", i)})
 				if err != nil || r.Job.Status != JobStatusCompleted {
 					failures.Add(1)
 				}
-			}()
+			})
 		}
 	}
 	wg.Wait()
@@ -373,7 +367,7 @@ func TestWaitForJob_FinishedResultWinsOverDoneContext(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, fastPolling())
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		closed := make(chan struct{})
 		close(closed)
 		ctx := &doneAfterIdle{Context: waitCtx(t), p: c.poller, closed: closed}
@@ -420,11 +414,9 @@ func waitTwice(t *testing.T, finalBody string) (resp [2]*JobResponse, errs [2]er
 	c := newTestClient(t, srv.URL, fastPolling())
 	var wg sync.WaitGroup
 	for i := range resp {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			resp[i], errs[i] = c.WaitForJob(waitCtx(t), Job{ID: "j1"})
-		}()
+		})
 	}
 	eventually(t, "both waiters registered", func() bool { return c.poller.Waiters("j1") == 2 })
 	close(release)
@@ -491,10 +483,15 @@ func TestPoller_MaxAttemptsIgnoresThrottleWait(t *testing.T) {
 		}
 		writeJSON(200, jobJSON(id, "waiting"))(w, r)
 	})
-	c := newTestClient(t, srv.URL,
+	// A fake clock keeps the first tick back until every job is registered, so
+	// the first tick checks all four and three of them queue behind the held
+	// request. With a real clock the tick could start with one job alone and
+	// the held request would never see a queued one behind it.
+	fake := clock.NewFake(pollerT0)
+	c := newTestClient(t, srv.URL, withClock(fake),
 		WithGetThrottle(Throttle{Interval: time.Nanosecond, Concurrency: 1}),
 		WithJobPolling(PollOptions{
-			InitialDelay: time.Millisecond, MaxAttempts: 2,
+			InitialDelay: time.Hour, MaxAttempts: 2,
 			Interval: PollIntervalFunc(func(int) time.Duration { return time.Millisecond }),
 		}))
 	t.Cleanup(func() { _ = c.Close() })
@@ -505,11 +502,34 @@ func TestPoller_MaxAttemptsIgnoresThrottleWait(t *testing.T) {
 	for i, id := range ids {
 		wg.Go(func() { _, errs[i] = c.WaitForJob(context.Background(), Job{ID: id}) })
 	}
+	// advanceUntil steps the fake clock past every pending timer until cond
+	// holds, so no timer armed late is missed.
+	advanceUntil := func(what string, cond func() bool) {
+		t.Helper()
+		eventually(t, what, func() bool {
+			if cond() {
+				return true
+			}
+			fake.Advance(time.Hour)
+			return false
+		})
+	}
+	// The clock must not move before every job is registered.
+	eventually(t, "all jobs registered", func() bool { return c.poller.Pending() == len(ids) })
 	// Hold the first request until others are queued behind it, so the
 	// throttle wait is certain rather than a matter of timing.
-	eventually(t, "checks queued in the get throttle", func() bool { return c.getGroup.Throttle.Stats().Waiting > 0 })
+	advanceUntil("checks queued in the get throttle", func() bool { return c.getGroup.Throttle.Stats().Waiting > 0 })
 	close(release)
-	wg.Wait()
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	advanceUntil("all waits finished", func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	})
 	for i, id := range ids {
 		if !errors.Is(errs[i], ErrMaxAttempts) {
 			t.Errorf("%s error = %v, want ErrMaxAttempts", id, errs[i])

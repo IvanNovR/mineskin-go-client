@@ -103,6 +103,8 @@ func (e *UnexpectedResponseError) Error() string {
 		b.WriteString(" from Cloudflare")
 	case SourceNginx:
 		b.WriteString(" from " + e.ServerSoftware)
+	case SourceUnknown:
+		// No source suffix: the origin of the response is not known.
 	}
 	var details []string
 	if e.CloudflareCode != 0 {

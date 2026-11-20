@@ -13,7 +13,7 @@ import (
 // shell code. Malformed lines (no "=" or an empty key) are skipped.
 func parseDotEnv(content string) map[string]string {
 	out := map[string]string{}
-	for _, line := range strings.Split(content, "\n") {
+	for line := range strings.SplitSeq(content, "\n") {
 		line = strings.TrimSpace(strings.TrimSuffix(line, "\r"))
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue

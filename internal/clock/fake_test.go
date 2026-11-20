@@ -179,6 +179,6 @@ func TestFakeTimersCount(t *testing.T) {
 	}
 }
 
-func TestFakeImplementsClock(t *testing.T) {
+func TestFakeImplementsClock(*testing.T) {
 	var _ Clock = NewFake(t0)
 }

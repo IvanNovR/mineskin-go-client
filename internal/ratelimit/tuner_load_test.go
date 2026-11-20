@@ -93,7 +93,7 @@ func TestEnsureLoadedAppliesGrantsAndIsDoneAfterwards(t *testing.T) {
 
 func TestEnsureLoadedConcurrentCallersShareOneLoad(t *testing.T) {
 	gate := make(chan struct{})
-	f := &fakeLoader{fn: func(ctx context.Context, _ int) (Grants, error) {
+	f := &fakeLoader{fn: func(_ context.Context, _ int) (Grants, error) {
 		<-gate
 		return grantsOf(600, 3), nil
 	}}

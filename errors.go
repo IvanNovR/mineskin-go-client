@@ -134,12 +134,10 @@ func IsRetryable(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	var api *APIError
-	if errors.As(err, &api) {
+	if api, ok := errors.AsType[*APIError](err); ok {
 		return transport.IsRetryableStatus(api.Meta.Status)
 	}
-	var unexpected *UnexpectedResponseError
-	if errors.As(err, &unexpected) {
+	if unexpected, ok := errors.AsType[*UnexpectedResponseError](err); ok {
 		return transport.IsRetryableStatus(unexpected.Status)
 	}
 	var netErr net.Error

@@ -93,7 +93,7 @@ func TestCloseCancelsInFlightRequest(t *testing.T) {
 	t.Parallel()
 	started := make(chan struct{})
 	handlerDone := make(chan struct{})
-	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+	srv := newTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
 		close(started)
 		<-r.Context().Done()
 		close(handlerDone)
@@ -139,7 +139,7 @@ func TestCloseFailsWaitForJob(t *testing.T) {
 func TestCloseWaitsForPollerExit(t *testing.T) {
 	t.Parallel()
 	started := make(chan struct{}, 4)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		started <- struct{}{}
 		<-r.Context().Done()
 	}))

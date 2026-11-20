@@ -47,7 +47,7 @@ type result struct {
 	err     error
 }
 
-func acquireAsync(th *Throttle, ctx context.Context) <-chan result {
+func acquireAsync(ctx context.Context, th *Throttle) <-chan result {
 	out := make(chan result, 1)
 	go func() {
 		rel, err := th.Acquire(ctx)
@@ -142,7 +142,7 @@ func TestAcquireRespectsInterval(t *testing.T) {
 	th, fake, _ := newTestThrottle(Limits{Interval: time.Second, Concurrency: 5})
 	mustAcquire(t, th)
 
-	second := acquireAsync(th, context.Background())
+	second := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 	fake.Advance(999 * time.Millisecond)
 	assertStats(t, th, 1, 1)
@@ -155,12 +155,12 @@ func TestAcquireRespectsInterval(t *testing.T) {
 func TestAcquireRespectsConcurrency(t *testing.T) {
 	th, fake, _ := newTestThrottle(Limits{Interval: time.Nanosecond, Concurrency: 2})
 	r1 := mustAcquire(t, th)
-	second := acquireAsync(th, context.Background())
+	second := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 	fake.Advance(time.Nanosecond)
 	mustGrant(t, second)
 
-	third := acquireAsync(th, context.Background())
+	third := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 	fake.Advance(time.Hour) // time alone must never grant (JB-16)
 	assertStats(t, th, 2, 1)
@@ -174,7 +174,7 @@ func TestAcquireRespectsDeadline(t *testing.T) {
 	th, fake, _ := newTestThrottle(Limits{Concurrency: 5})
 	th.Delay(t0.Add(5 * time.Second))
 
-	w := acquireAsync(th, context.Background())
+	w := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 	fake.Advance(4999 * time.Millisecond)
 	assertStats(t, th, 0, 1)
@@ -186,7 +186,7 @@ func TestAcquireRespectsDeadline(t *testing.T) {
 func TestAcquireEarlyTimerFireRearmsWhenDeadlineExtended(t *testing.T) {
 	th, fake, _ := newTestThrottle(Limits{Concurrency: 5})
 	th.Delay(t0.Add(5 * time.Second))
-	w := acquireAsync(th, context.Background())
+	w := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 
 	th.deadline.Extend(t0.Add(8 * time.Second)) // no Kick: the armed timer is now early
@@ -203,7 +203,7 @@ func TestAcquireEarlyTimerFireRearmsWhenDeadlineExtended(t *testing.T) {
 func TestDelayWithKickMovesArmedTimer(t *testing.T) {
 	th, fake, _ := newTestThrottle(Limits{Concurrency: 5})
 	th.Delay(t0.Add(2 * time.Second))
-	w := acquireAsync(th, context.Background())
+	w := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 
 	th.Delay(t0.Add(6 * time.Second))
@@ -225,7 +225,7 @@ func TestDelayEarlierDoesNotShortenDeadline(t *testing.T) {
 	if got, want := th.Stats().NotBefore, t0.Add(5*time.Second); !got.Equal(want) {
 		t.Fatalf("NotBefore = %v, want %v", got, want)
 	}
-	w := acquireAsync(th, context.Background())
+	w := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 	fake.Advance(5 * time.Second)
 	mustGrant(t, w)
@@ -242,6 +242,7 @@ func TestAcquireAllThreeConditions(t *testing.T) {
 			name:   "only the in-flight slot blocks",
 			limits: Limits{Concurrency: 1},
 			setup: func(t *testing.T, th *Throttle) (int, func()) {
+				t.Helper()
 				rel := mustAcquire(t, th)
 				return 1, rel
 			},
@@ -251,6 +252,7 @@ func TestAcquireAllThreeConditions(t *testing.T) {
 			name:   "only the interval blocks",
 			limits: Limits{Interval: time.Second, Concurrency: 5},
 			setup: func(t *testing.T, th *Throttle) (int, func()) {
+				t.Helper()
 				mustAcquire(t, th)()
 				return 0, nil
 			},
@@ -259,7 +261,7 @@ func TestAcquireAllThreeConditions(t *testing.T) {
 		{
 			name:   "only the deadline blocks",
 			limits: Limits{Concurrency: 5},
-			setup: func(t *testing.T, th *Throttle) (int, func()) {
+			setup: func(_ *testing.T, th *Throttle) (int, func()) {
 				th.Delay(t0.Add(3 * time.Second))
 				return 0, nil
 			},
@@ -271,7 +273,7 @@ func TestAcquireAllThreeConditions(t *testing.T) {
 			th, fake, _ := newTestThrottle(tc.limits)
 			held, unblock := tc.setup(t, th)
 
-			w := acquireAsync(th, context.Background())
+			w := acquireAsync(context.Background(), th)
 			waitWaiting(t, th, 1)
 			assertStats(t, th, held, 1)
 			if fake.Timers() != tc.wantTimers {
@@ -321,11 +323,11 @@ func TestAcquireFIFOOrder(t *testing.T) {
 func TestAcquireNewArrivalQueuesBehindWaiters(t *testing.T) {
 	th, _, box := newTestThrottle(Limits{Concurrency: 1})
 	mustAcquire(t, th)
-	first := acquireAsync(th, context.Background())
+	first := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 
 	box.set(Limits{Concurrency: 2}) // a slot is now free, but first is still queued
-	second := acquireAsync(th, context.Background())
+	second := acquireAsync(context.Background(), th)
 
 	mustGrant(t, first)
 	waitWaiting(t, th, 1)
@@ -340,12 +342,12 @@ func TestAcquireNewArrivalQueuesBehindWaiters(t *testing.T) {
 func TestAcquireCtxCancelLeavesQueue(t *testing.T) {
 	th, _, _ := newTestThrottle(Limits{Concurrency: 1})
 	holder := mustAcquire(t, th)
-	w1 := acquireAsync(th, context.Background())
+	w1 := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 	ctx, cancel := context.WithCancel(context.Background())
-	w2 := acquireAsync(th, ctx)
+	w2 := acquireAsync(ctx, th)
 	waitWaiting(t, th, 2)
-	w3 := acquireAsync(th, context.Background())
+	w3 := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 3)
 
 	cancel()
@@ -397,7 +399,7 @@ func TestAbandonAfterGrantReturnsSlotAndDispatchesNext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := acquireAsync(th, context.Background())
+	next := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 2)
 	holder() // grants w
 	cancel()
@@ -417,7 +419,7 @@ func TestAcquireCancelRacingGrantIsExactlyOneOutcome(t *testing.T) {
 		th, _, _ := newTestThrottle(Limits{Concurrency: 1})
 		holder := mustAcquire(t, th)
 		ctx, cancel := context.WithCancel(context.Background())
-		w := acquireAsync(th, ctx)
+		w := acquireAsync(ctx, th)
 		waitWaiting(t, th, 1)
 
 		var wg sync.WaitGroup
@@ -445,7 +447,7 @@ func TestLimitsReadOnEveryDispatch(t *testing.T) {
 	t.Run("interval change re-arms on Kick", func(t *testing.T) {
 		th, fake, box := newTestThrottle(Limits{Interval: time.Second, Concurrency: 5})
 		mustAcquire(t, th)
-		w := acquireAsync(th, context.Background())
+		w := acquireAsync(context.Background(), th)
 		waitWaiting(t, th, 1)
 
 		box.set(Limits{Interval: 100 * time.Millisecond, Concurrency: 5})
@@ -457,7 +459,7 @@ func TestLimitsReadOnEveryDispatch(t *testing.T) {
 	t.Run("raised concurrency dispatches on Kick", func(t *testing.T) {
 		th, _, box := newTestThrottle(Limits{Concurrency: 1})
 		mustAcquire(t, th)
-		w := acquireAsync(th, context.Background())
+		w := acquireAsync(context.Background(), th)
 		waitWaiting(t, th, 1)
 
 		box.set(Limits{Concurrency: 2})
@@ -470,7 +472,7 @@ func TestLimitsReadOnEveryDispatch(t *testing.T) {
 		rels := []func(){mustAcquire(t, th), mustAcquire(t, th), mustAcquire(t, th)}
 		box.set(Limits{Concurrency: 1})
 		th.Kick()
-		w := acquireAsync(th, context.Background())
+		w := acquireAsync(context.Background(), th)
 		waitWaiting(t, th, 1)
 
 		rels[0]()
@@ -486,7 +488,7 @@ func TestLimitsAreNormalized(t *testing.T) {
 	th, _, _ := newTestThrottle(Limits{Interval: -time.Hour, Concurrency: -4})
 
 	r := mustAcquire(t, th) // Concurrency < 1 acts as 1, negative Interval as 0
-	w := acquireAsync(th, context.Background())
+	w := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 1)
 	assertStats(t, th, 1, 1)
 	r()
@@ -497,8 +499,8 @@ func TestLimitsAreNormalized(t *testing.T) {
 func TestCloseFailsWaitersAndFutureAcquires(t *testing.T) {
 	th, fake, _ := newTestThrottle(Limits{Interval: time.Second, Concurrency: 1})
 	rel := mustAcquire(t, th)
-	w1 := acquireAsync(th, context.Background())
-	w2 := acquireAsync(th, context.Background())
+	w1 := acquireAsync(context.Background(), th)
+	w2 := acquireAsync(context.Background(), th)
 	waitWaiting(t, th, 2)
 
 	th.Close()

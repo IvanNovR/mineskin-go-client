@@ -41,7 +41,7 @@ cover:
 	@go tool cover -func=coverage.out | awk -v min="$(COVERAGE_MIN)" '{ print } /^total:/ { gsub("%", "", $$3); found = 1; if ($$3 + 0 < min + 0) { printf "coverage %s%% is below %s%%\n", $$3, min; fail = 1 } } END { if (!found) { print "no total line in coverage output"; exit 1 } exit fail }'
 	@go test -race -shuffle=on ./internal/tools/...
 
-check: vet tidy lint cover
+check: vet tidy lint cover actionlint
 
 # test-live runs the live tests (they consume API credits). The tests read
 # MINESKIN_API_KEY etc. from the environment and, if unset, from a KEY=VALUE

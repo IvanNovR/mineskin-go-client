@@ -7,6 +7,7 @@ import (
 )
 
 func TestJobStatusIsPending(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		status  JobStatus
 		pending bool
@@ -20,6 +21,7 @@ func TestJobStatusIsPending(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.status), func(t *testing.T) {
+			t.Parallel()
 			if got := tt.status.IsPending(); got != tt.pending {
 				t.Errorf("IsPending() = %v, want %v", got, tt.pending)
 			}
@@ -28,6 +30,7 @@ func TestJobStatusIsPending(t *testing.T) {
 }
 
 func TestJobUnmarshalJSON(t *testing.T) {
+	t.Parallel()
 	wantResult := UUID{0x01, 0x23, 0xab, 0xcd, 0x45, 0x67, 0x89, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef}
 	const dashed = "0123abcd-4567-89ef-0123-456789abcdef"
 	const undashed = "0123abcd456789ef0123456789abcdef"
@@ -59,6 +62,7 @@ func TestJobUnmarshalJSON(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var got Job
 			err := json.Unmarshal([]byte(tt.in), &got)
 			if tt.wantErr {
@@ -79,6 +83,7 @@ func TestJobUnmarshalJSON(t *testing.T) {
 }
 
 func TestJobIsTerminal(t *testing.T) {
+	t.Parallel()
 	result := UUID{1}
 	tests := []struct {
 		name string
@@ -93,6 +98,7 @@ func TestJobIsTerminal(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tt.job.IsTerminal(); got != tt.want {
 				t.Errorf("IsTerminal() = %v, want %v", got, tt.want)
 			}
@@ -101,6 +107,7 @@ func TestJobIsTerminal(t *testing.T) {
 }
 
 func TestJobUnmarshalJSONIgnoresPreviousState(t *testing.T) {
+	t.Parallel()
 	prev := Job{ID: "old", Status: JobStatusFailed, Result: UUID{9}, ETA: time.UnixMilli(5)}
 	if err := json.Unmarshal([]byte(`{"id":"new","status":"waiting"}`), &prev); err != nil {
 		t.Fatal(err)

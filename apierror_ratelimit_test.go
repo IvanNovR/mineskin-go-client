@@ -21,6 +21,7 @@ func apiErrorFrom(t *testing.T, raw transport.Response) *APIError {
 }
 
 func TestAPIErrorCarriesRateLimitAndUsage(t *testing.T) {
+	t.Parallel()
 	body := `{"success":false,"errors":[{"code":"too_many_requests","message":"slow down"}],` +
 		`"rateLimit":{"next":{"relative":3000}},"usage":{"credits":{"used":4,"remaining":6}}}`
 	e := apiErrorFrom(t, transport.Response{Status: 429, Body: []byte(body)})
@@ -31,6 +32,7 @@ func TestAPIErrorCarriesRateLimitAndUsage(t *testing.T) {
 }
 
 func TestAPIErrorRateLimitLenient(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		body string
@@ -43,6 +45,7 @@ func TestAPIErrorRateLimitLenient(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			e := apiErrorFrom(t, transport.Response{Status: 429, Body: []byte(tc.body)})
 			if e.Code != "c" || e.Message != "m" {
 				t.Errorf("code/message = %q/%q, want c/m", e.Code, e.Message)
@@ -55,6 +58,7 @@ func TestAPIErrorRateLimitLenient(t *testing.T) {
 }
 
 func TestAPIErrorRetryAfter(t *testing.T) {
+	t.Parallel()
 	received := testNow
 	tests := []struct {
 		name   string
@@ -68,6 +72,7 @@ func TestAPIErrorRetryAfter(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			e := apiErrorFrom(t, transport.Response{Status: 429, Header: tc.header, Received: received, Body: []byte(`{"success":false}`)})
 			if e.RetryAfter != tc.want {
 				t.Errorf("RetryAfter = %v, want %v", e.RetryAfter, tc.want)
@@ -77,6 +82,7 @@ func TestAPIErrorRetryAfter(t *testing.T) {
 }
 
 func TestIsRetryableAPIError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		status int
 		want   bool

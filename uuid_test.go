@@ -12,6 +12,7 @@ const (
 )
 
 func TestParseUUIDValid(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ name, in string }{
 		{"dashed", uuidDashed},
 		{"undashed", uuidUndashed},
@@ -21,6 +22,7 @@ func TestParseUUIDValid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			u, err := ParseUUID(tt.in)
 			if err != nil {
 				t.Fatalf("ParseUUID(%q) error: %v", tt.in, err)
@@ -33,6 +35,7 @@ func TestParseUUIDValid(t *testing.T) {
 }
 
 func TestParseUUIDBytes(t *testing.T) {
+	t.Parallel()
 	u, err := ParseUUID(uuidUndashed)
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +46,7 @@ func TestParseUUIDBytes(t *testing.T) {
 }
 
 func TestParseUUIDInvalid(t *testing.T) {
+	t.Parallel()
 	tests := []struct{ name, in string }{
 		{"empty", ""},
 		{"too short", "0123abcd"},
@@ -67,6 +71,7 @@ func TestParseUUIDInvalid(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			u, err := ParseUUID(tt.in)
 			if err == nil {
 				t.Fatalf("ParseUUID(%q) = %v, want error", tt.in, u)
@@ -88,6 +93,7 @@ func TestParseUUIDInvalid(t *testing.T) {
 }
 
 func TestParseUUIDErrorDoesNotEchoInput(t *testing.T) {
+	t.Parallel()
 	huge := strings.Repeat("secretinput", 100000)
 	_, err := ParseUUID(huge)
 	if err == nil {
@@ -99,6 +105,7 @@ func TestParseUUIDErrorDoesNotEchoInput(t *testing.T) {
 }
 
 func TestUUIDStringRoundTrip(t *testing.T) {
+	t.Parallel()
 	var zero UUID
 	if got := zero.String(); got != "00000000-0000-0000-0000-000000000000" {
 		t.Fatalf("zero String() = %q", got)
@@ -111,6 +118,7 @@ func TestUUIDStringRoundTrip(t *testing.T) {
 }
 
 func TestUUIDTextRoundTrip(t *testing.T) {
+	t.Parallel()
 	const dashed = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
 	var u UUID
 	if err := u.UnmarshalText([]byte("744C993E0E8A4F0B9B6A2F3C7A1B5D11")); err != nil {
@@ -126,6 +134,7 @@ func TestUUIDTextRoundTrip(t *testing.T) {
 }
 
 func TestUUIDIsZero(t *testing.T) {
+	t.Parallel()
 	parsed, err := ParseUUID(uuidDashed)
 	if err != nil {
 		t.Fatal(err)
@@ -142,6 +151,7 @@ func TestUUIDIsZero(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tt.in.IsZero(); got != tt.want {
 				t.Errorf("IsZero() = %v, want %v", got, tt.want)
 			}

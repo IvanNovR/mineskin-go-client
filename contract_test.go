@@ -48,8 +48,10 @@ type contractCase struct {
 }
 
 func TestContractPublicErrors(t *testing.T) {
+	t.Parallel()
 	for _, tt := range contractCases() {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := tt.run(t)
 			if err == nil {
 				t.Fatal("error = nil, want an error")

@@ -11,6 +11,7 @@ import (
 const jobResultID = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
 
 func TestGetJobDecodesJobAndSkin(t *testing.T) {
+	t.Parallel()
 	var method, uri string
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		method, uri = r.Method, r.RequestURI
@@ -45,8 +46,10 @@ func TestGetJobDecodesJobAndSkin(t *testing.T) {
 }
 
 func TestGetJobRejectsInvalidIDWithoutRequest(t *testing.T) {
+	t.Parallel()
 	for name, id := range map[string]string{"empty": "", "dot": ".", "dot dot": ".."} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			var hits atomic.Int32
 			srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
 			got, err := newTestClient(t, srv.URL).GetJob(context.Background(), id)
@@ -61,6 +64,7 @@ func TestGetJobRejectsInvalidIDWithoutRequest(t *testing.T) {
 }
 
 func TestGetJobEscapesIDAsSingleSegment(t *testing.T) {
+	t.Parallel()
 	var uri string
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		uri = r.RequestURI
@@ -75,6 +79,7 @@ func TestGetJobEscapesIDAsSingleSegment(t *testing.T) {
 }
 
 func TestGetJobNotFound(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(404, `{"success":false,"errors":[{"code":"job_not_found","message":"Job not found"}]}`))
 	got, err := newTestClient(t, srv.URL).GetJob(context.Background(), "nope")
 	if got != nil {
@@ -87,6 +92,7 @@ func TestGetJobNotFound(t *testing.T) {
 }
 
 func TestListJobsDecodes(t *testing.T) {
+	t.Parallel()
 	var method, uri string
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		method, uri = r.Method, r.RequestURI
@@ -137,6 +143,7 @@ func TestListJobsDecodes(t *testing.T) {
 }
 
 func TestGetJobMalformedResultIsParseError(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"job":{"id":"j","status":"completed","result":"not-a-uuid"}}`))
 	got, err := newTestClient(t, srv.URL).GetJob(context.Background(), "j")
 	assertParseError(t, err)

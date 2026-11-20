@@ -56,6 +56,7 @@ func viaCloudflare() http.Header {
 }
 
 func TestUnexpectedResponseErrorClassification(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		status      int
@@ -179,6 +180,7 @@ func TestUnexpectedResponseErrorClassification(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			e := newUnexpectedResponseError(tc.status, tc.header, []byte(tc.body), nil, testNow)
 			if e.Status != tc.status {
 				t.Errorf("Status = %d, want %d", e.Status, tc.status)
@@ -220,6 +222,7 @@ const (
 var testNow = time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
 
 func TestUnexpectedResponseErrorRetryAfterHTTPDate(t *testing.T) {
+	t.Parallel()
 	h := http.Header{}
 	h.Set("Retry-After", testNow.Add(45*time.Second).Format(http.TimeFormat))
 	e := newUnexpectedResponseError(503, h, nil, nil, testNow)
@@ -229,6 +232,7 @@ func TestUnexpectedResponseErrorRetryAfterHTTPDate(t *testing.T) {
 }
 
 func TestUnexpectedResponseErrorNilBody(t *testing.T) {
+	t.Parallel()
 	e := newUnexpectedResponseError(502, nil, nil, nil, testNow)
 	if got, want := e.Error(), "mineskin: HTTP 502: empty response body"; got != want {
 		t.Errorf("Error() = %q, want %q", got, want)
@@ -236,6 +240,7 @@ func TestUnexpectedResponseErrorNilBody(t *testing.T) {
 }
 
 func TestUnexpectedResponseErrorRetryAfter(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name  string
 		value string
@@ -256,6 +261,7 @@ func TestUnexpectedResponseErrorRetryAfter(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			h := http.Header{}
 			h.Set("Retry-After", tc.value)
 			e := newUnexpectedResponseError(503, h, []byte("Service Unavailable"), nil, testNow)
@@ -271,6 +277,7 @@ func TestUnexpectedResponseErrorRetryAfter(t *testing.T) {
 }
 
 func TestUnexpectedResponseErrorIsRetryable(t *testing.T) {
+	t.Parallel()
 	tests := map[int]bool{
 		200: false, 400: false, 404: false, 408: true, 409: false, 429: true,
 		499: false, 500: true, 501: false, 502: true, 503: true, 504: true, 505: false, 521: true, 530: true,
@@ -284,6 +291,7 @@ func TestUnexpectedResponseErrorIsRetryable(t *testing.T) {
 }
 
 func TestUnexpectedResponseErrorIs(t *testing.T) {
+	t.Parallel()
 	notFound := newUnexpectedResponseError(404, http.Header{}, []byte("nope"), nil, testNow)
 	if !errors.Is(notFound, ErrNotFound) {
 		t.Error("404 must match ErrNotFound")
@@ -298,6 +306,7 @@ func TestUnexpectedResponseErrorIs(t *testing.T) {
 }
 
 func TestUnexpectedResponseErrorUnwrapAndAs(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("unexpected end of JSON input")
 	e := newUnexpectedResponseError(200, http.Header{}, []byte(`{"success":true,"user":`), cause, testNow)
 	if !errors.Is(e, cause) || !errors.Is(e.Unwrap(), cause) {
@@ -317,6 +326,7 @@ func TestUnexpectedResponseErrorUnwrapAndAs(t *testing.T) {
 }
 
 func TestUnexpectedResponseErrorLargeBodyIsCapped(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		body       string
 		wantSnip   string
@@ -340,6 +350,7 @@ func TestUnexpectedResponseErrorLargeBodyIsCapped(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			e := newUnexpectedResponseError(502, nil, []byte(tc.body), nil, testNow)
 			if e.BodySnippet != tc.wantSnip || e.Source != tc.wantSource {
 				t.Errorf("snippet = %.60q source = %q", e.BodySnippet, e.Source)
@@ -352,6 +363,7 @@ func TestUnexpectedResponseErrorLargeBodyIsCapped(t *testing.T) {
 }
 
 func TestUnexpectedResponseErrorStripsControlCharacters(t *testing.T) {
+	t.Parallel()
 	h := hdr("server", "nginx/1.\x1b[31m28\x07", "cf-ray", "abc\x1b[0m-FRA")
 	e := newUnexpectedResponseError(502, h, []byte("<title>a\x1b[31mred\x00\x7f</title>\r\nx"), nil, testNow)
 	if e.BodySnippet != "a[31mred" {

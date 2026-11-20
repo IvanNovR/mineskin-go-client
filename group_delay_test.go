@@ -93,6 +93,7 @@ func nextRelative(ms int, success bool) string {
 }
 
 func TestServerDelayFromBodySuccess(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyQueue: {200, "", nextRelative(5000, true)}})
 	c, fake := delayClient(t, srv)
 	if err := queueCall(c)(); err != nil {
@@ -107,6 +108,7 @@ func TestServerDelayFromBodySuccess(t *testing.T) {
 }
 
 func TestServerDelayFromBodyOnAPIError(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyQueue: {429, "", nextRelative(3000, false)}})
 	// Retries off: this tests the delay of a single response; retries are in retry_test.go.
 	c, fake := delayClient(t, srv, WithRateLimitRetries(0))
@@ -122,6 +124,7 @@ func TestServerDelayFromBodyOnAPIError(t *testing.T) {
 }
 
 func TestServerDelayOnGetGroup(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keySkin: {200, "", `{"success":true,"skin":{},"rateLimit":{"next":{"relative":4000}}}`}})
 	c, fake := delayClient(t, srv)
 	calls := getCalls(c)
@@ -137,6 +140,7 @@ func TestServerDelayOnGetGroup(t *testing.T) {
 }
 
 func TestRetryAfterOnRetryableJSONAndNonJSON(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		rep  reply
@@ -150,6 +154,7 @@ func TestRetryAfterOnRetryableJSONAndNonJSON(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			srv := replyServer(t, map[string]reply{keyQueue: tt.rep})
 			// Retries off: this tests the delay of a single response; retries are in retry_test.go.
 			c, fake := delayClient(t, srv, WithRateLimitRetries(0))
@@ -160,6 +165,7 @@ func TestRetryAfterOnRetryableJSONAndNonJSON(t *testing.T) {
 }
 
 func TestServerDelayMissingOrInvalidIsNoDelay(t *testing.T) {
+	t.Parallel()
 	const head = `{"success":true,"job":{"id":"job-1","status":"waiting"},`
 	tests := []struct {
 		name    string
@@ -176,6 +182,7 @@ func TestServerDelayMissingOrInvalidIsNoDelay(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			srv := replyServer(t, map[string]reply{keyQueue: tt.rep})
 			// Retries off: this tests the delay of a single response; retries are in retry_test.go.
 			c, fake := delayClient(t, srv, WithRateLimitRetries(0))
@@ -188,6 +195,7 @@ func TestServerDelayMissingOrInvalidIsNoDelay(t *testing.T) {
 }
 
 func TestDeadlineAppliedBeforeRelease(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyQueue: {200, "", nextRelative(5000, true)}}, keyQueue)
 	c, fake := delayClient(t, srv, WithGenerateThrottle(oneSlot()))
 	first := goCall(queueCall(c))
@@ -211,6 +219,7 @@ func TestDeadlineAppliedBeforeRelease(t *testing.T) {
 }
 
 func TestServerDelayIsCappedAtOneHourButAPIErrorKeepsRawRetryAfter(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyQueue: {429, "99999999", nextRelative(3000, false)}})
 	c, fake := delayClient(t, srv, WithRateLimitRetries(0))
 	var apiErr *APIError
@@ -223,6 +232,7 @@ func TestServerDelayIsCappedAtOneHourButAPIErrorKeepsRawRetryAfter(t *testing.T)
 }
 
 func TestServerDelayCapOnHugeNextRelative(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyQueue: {200, "", `{"success":true,"job":{"id":"job-1","status":"waiting"},"rateLimit":{"next":{"relative":9223372036854}}}`}})
 	c, fake := delayClient(t, srv)
 	if err := queueCall(c)(); err != nil {
@@ -234,6 +244,7 @@ func TestServerDelayCapOnHugeNextRelative(t *testing.T) {
 }
 
 func TestOverflowingRetryAfterClampsToOneHourAndAPIErrorKeepsZero(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyQueue: {429, "99999999999999999999", nextRelative(1000, false)}})
 	c, fake := delayClient(t, srv, WithRateLimitRetries(0))
 	var apiErr *APIError

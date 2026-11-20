@@ -58,6 +58,7 @@ func assertParseError(t *testing.T, err error) {
 }
 
 func TestErrorMessageStyle(t *testing.T) {
+	t.Parallel()
 	boom := errors.New("boom")
 	last := transport.Response{Status: 429, Header: http.Header{}, Body: []byte(`{"success":false,"errors":[{"code":"x","message":"Slow Down"}]}`)}
 	htmlLast := transport.Response{Status: 429, Header: http.Header{}, Body: []byte("<html>slow</html>")}
@@ -86,6 +87,7 @@ func TestErrorMessageStyle(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			assertGoStyleMessage(t, tt.err)
 			if tt.want != "" && tt.err.Error() != tt.want {
 				t.Errorf("Error() = %q, want %q", tt.err, tt.want)
@@ -95,6 +97,7 @@ func TestErrorMessageStyle(t *testing.T) {
 }
 
 func TestRetryCancelledMessageHasOnePrefix(t *testing.T) {
+	t.Parallel()
 	last := transport.Response{Status: 429, Header: http.Header{}, Body: []byte(`{"success":false,"errors":[{"code":"x","message":"slow down"}]}`)}
 	err := mapGroupErr("GET /v2/x", &ratelimit.RetryCancelledError{Err: context.Canceled, Last: last})
 	want := "mineskin: GET /v2/x: context canceled (while retrying after API error (HTTP 429, x): slow down)"
@@ -104,6 +107,7 @@ func TestRetryCancelledMessageHasOnePrefix(t *testing.T) {
 }
 
 func TestPanickingPollIntervalWrapsAnErrorPanic(t *testing.T) {
+	t.Parallel()
 	cause := fmt.Errorf("interval bug: %w", context.DeadlineExceeded)
 	got := mapPollErr(&poll.IntervalError{Panic: cause})
 	if !errors.Is(got, cause) || !errors.Is(got, context.DeadlineExceeded) {
@@ -116,6 +120,7 @@ func TestPanickingPollIntervalWrapsAnErrorPanic(t *testing.T) {
 }
 
 func TestEndToEndMessagesHaveOnePrefix(t *testing.T) {
+	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	srv := newTestServer(t, writeJSON(http.StatusOK, jobJSON("j1", "waiting")))
@@ -134,6 +139,7 @@ func TestEndToEndMessagesHaveOnePrefix(t *testing.T) {
 // TestNoInventedDefaults pins that a failure without a server-sent error has
 // no made-up code or message.
 func TestNoInventedDefaults(t *testing.T) {
+	t.Parallel()
 	err := newJobFailedError(&JobResponse{Job: Job{ID: "j1"}})
 	if len(err.Errors) != 0 || err.Error() != "mineskin: job j1 failed" {
 		t.Errorf("job failure = %+v (%q), want no errors and %q", err, err.Error(), "mineskin: job j1 failed")

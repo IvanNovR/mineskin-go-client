@@ -9,6 +9,7 @@ import (
 )
 
 func TestAPIErrorMessageContainsStatusCodeAndMessage(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		err  *APIError
@@ -21,6 +22,7 @@ func TestAPIErrorMessageContainsStatusCodeAndMessage(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := tt.err.Error(); got != tt.want {
 				t.Fatalf("Error() = %q, want %q", got, tt.want)
 			}
@@ -29,6 +31,7 @@ func TestAPIErrorMessageContainsStatusCodeAndMessage(t *testing.T) {
 }
 
 func TestAPIErrorIs(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		status int
@@ -43,6 +46,7 @@ func TestAPIErrorIs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			e := &APIError{Meta: ResponseMeta{Status: tt.status}}
 			if got := errors.Is(e, tt.target); got != tt.want {
 				t.Fatalf("errors.Is(status %d, %v) = %v, want %v", tt.status, tt.target, got, tt.want)
@@ -52,6 +56,7 @@ func TestAPIErrorIs(t *testing.T) {
 }
 
 func TestAPIErrorAsThroughWrapper(t *testing.T) {
+	t.Parallel()
 	orig := &APIError{Code: "x", Message: "y", Meta: ResponseMeta{Status: 429}}
 	wrapped := fmt.Errorf("outer: %w", orig)
 	var got *APIError
@@ -61,6 +66,7 @@ func TestAPIErrorAsThroughWrapper(t *testing.T) {
 }
 
 func TestInvalidInputError(t *testing.T) {
+	t.Parallel()
 	err := invalidInput("id %q must not be empty", "x")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("validation error must match ErrInvalidInput")
@@ -77,6 +83,7 @@ func TestInvalidInputError(t *testing.T) {
 }
 
 func TestSentinelMessagesDoNotLeak(t *testing.T) {
+	t.Parallel()
 	for _, e := range []error{ErrInvalidInput, ErrNotFound} {
 		if !strings.HasPrefix(e.Error(), "mineskin: ") {
 			t.Fatalf("sentinel %q lacks package prefix", e)
@@ -85,6 +92,7 @@ func TestSentinelMessagesDoNotLeak(t *testing.T) {
 }
 
 func TestResponseMetaZeroValue(t *testing.T) {
+	t.Parallel()
 	var m ResponseMeta
 	if m.Status != 0 || m.Header != nil || m.Breadcrumb != "" || m.Warnings != nil || m.Messages != nil || m.Links != nil {
 		t.Fatalf("zero ResponseMeta should be empty: %+v", m)
@@ -95,10 +103,12 @@ func TestResponseMetaZeroValue(t *testing.T) {
 // TestSentinelsArePlainErrors pins that the sentinels are plain errors.New
 // values with no umbrella matching: no custom Is method, no shared target.
 func TestSentinelsArePlainErrors(t *testing.T) {
+	t.Parallel()
 	for name, s := range map[string]error{
 		"ErrMaxAttempts": ErrMaxAttempts, "ErrClientClosed": ErrClientClosed,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if _, ok := s.(interface{ Is(error) bool }); ok {
 				t.Errorf("%T has an Is method, want a plain errors.New value", s)
 			}

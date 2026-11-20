@@ -35,15 +35,19 @@ func TestPollerHTTPBoundedByGetConcurrency(t *testing.T) {
 			}
 		})
 	}
-	// Requests are held, so two in flight is reached for certain. The other two
-	// waits are then provably queued in the throttle (not running), which is
-	// what keeps the peak at two.
-	eventually(t, "two GETs in flight and two queued", func() bool {
-		st := c.getGroup.Throttle.Stats()
-		return st.InFlight == 2 && st.Waiting == 2 && peak() >= 2
-	})
+	// Requests are held, so two in flight is reached for certain. The poller
+	// runs one tick at a time and waits for its checks, so a third request
+	// before release can only come from a throttle that ignores its limit; the
+	// throttle's own count must still read two while the handlers hold them.
+	eventually(t, "two GETs in flight", func() bool { return peak() >= 2 })
+	if got := c.getGroup.Throttle.Stats().InFlight; got > 2 {
+		t.Errorf("throttle InFlight = %d while requests are held, want <= 2", got)
+	}
 	close(release)
 	wg.Wait()
+	if got := c.getGroup.Throttle.Stats().InFlight; got != 0 {
+		t.Errorf("throttle InFlight = %d after all jobs finished, want 0", got)
+	}
 	if got := peak(); got != 2 {
 		t.Errorf("peak in-flight GETs = %d, want exactly 2", got)
 	}

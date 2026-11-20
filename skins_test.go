@@ -30,6 +30,7 @@ const skinFixture = `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1
 "generator":{"timestamp":1700000000123,"duration":1500},"views":7,"duplicate":true}}`
 
 func TestGetSkinDecodesFullSkin(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("MineSkin-Breadcrumb", "crumb1")
 		writeJSON(200, skinFixture)(w, r)
@@ -56,12 +57,14 @@ func TestGetSkinDecodesFullSkin(t *testing.T) {
 }
 
 func TestGetSkinMissingGeneratorIsZero(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"absent": `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1b5d11"}}`,
 		"null":   `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","generator":null}}`,
 		"empty":  `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","generator":{}}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			srv := newTestServer(t, writeJSON(200, body))
 			got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
 			if err != nil {
@@ -75,6 +78,7 @@ func TestGetSkinMissingGeneratorIsZero(t *testing.T) {
 }
 
 func TestGetSkinKeepsUnknownAndEmptyVariant(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"skin":{"variant":"","visibility":"weird"}}`))
 	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
 	if err != nil {
@@ -91,6 +95,7 @@ func TestGetSkinKeepsUnknownAndEmptyVariant(t *testing.T) {
 }
 
 func TestGetSkinRejectsZeroUUIDWithoutRequest(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int32
 	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
 	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), UUID{})
@@ -103,11 +108,13 @@ func TestGetSkinRejectsZeroUUIDWithoutRequest(t *testing.T) {
 }
 
 func TestGetSkinSendsDashedForm(t *testing.T) {
+	t.Parallel()
 	for name, id := range map[string]string{
 		"undashed": "744c993e0e8a4f0b9b6a2f3c7a1b5d11",
 		"upper":    "744C993E-0E8A-4F0B-9B6A-2F3C7A1B5D11",
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			var uri string
 			srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 				uri = r.RequestURI
@@ -124,6 +131,7 @@ func TestGetSkinSendsDashedForm(t *testing.T) {
 }
 
 func TestGetSkinNotFoundIsAPIErrorNotParseError(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(404, `{"success":false,"errors":[{"code":"skin_not_found","message":"Skin not found"}]}`))
 	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
 	if got != nil {
@@ -139,6 +147,7 @@ func TestGetSkinNotFoundIsAPIErrorNotParseError(t *testing.T) {
 }
 
 func TestGetSkinHTMLBadGateway(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(502, `<html>Bad Gateway</html>`))
 	_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
 	var ue *UnexpectedResponseError
@@ -148,6 +157,7 @@ func TestGetSkinHTMLBadGateway(t *testing.T) {
 }
 
 func TestGetSkinWrongTypedFieldsAreParseErrors(t *testing.T) {
+	t.Parallel()
 	for name, body := range map[string]string{
 		"skin string":     `{"success":true,"skin":"x"}`,
 		"views string":    `{"success":true,"skin":{"views":"7"}}`,
@@ -156,6 +166,7 @@ func TestGetSkinWrongTypedFieldsAreParseErrors(t *testing.T) {
 		"numeric uuid":    `{"success":true,"skin":{"uuid":5}}`,
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			srv := newTestServer(t, writeJSON(200, body))
 			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
 			assertParseError(t, err)
@@ -164,6 +175,7 @@ func TestGetSkinWrongTypedFieldsAreParseErrors(t *testing.T) {
 }
 
 func TestGeneratorInfoUnmarshalJSON(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		in      string
 		wantTS  int64
@@ -182,6 +194,7 @@ func TestGeneratorInfoUnmarshalJSON(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			var g GeneratorInfo
 			err := g.UnmarshalJSON([]byte(tc.in))
 			if (err != nil) != tc.wantErr {
@@ -201,6 +214,7 @@ func TestGeneratorInfoUnmarshalJSON(t *testing.T) {
 }
 
 func TestGetSkinWrongTypedPayloadOnErrorResponseIsAPIError(t *testing.T) {
+	t.Parallel()
 	tests := map[string]struct {
 		status int
 		body   string
@@ -211,6 +225,7 @@ func TestGetSkinWrongTypedPayloadOnErrorResponseIsAPIError(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			srv := newTestServer(t, writeJSON(tc.status, tc.body))
 			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
 			var apiErr *APIError
@@ -225,6 +240,7 @@ func TestGetSkinWrongTypedPayloadOnErrorResponseIsAPIError(t *testing.T) {
 }
 
 func TestGeneratorInfoDurationBounds(t *testing.T) {
+	t.Parallel()
 	maxMillis := int64(math.MaxInt64 / int64(time.Millisecond))
 	tests := map[string]struct {
 		in      string
@@ -240,6 +256,7 @@ func TestGeneratorInfoDurationBounds(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			var g GeneratorInfo
 			err := g.UnmarshalJSON([]byte(tc.in))
 			if (err != nil) != tc.wantErr || (!tc.wantErr && g.Duration != tc.want) {

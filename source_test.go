@@ -24,6 +24,7 @@ func fullOptions() GenerateOptions {
 }
 
 func TestSourceJSONBodies(t *testing.T) {
+	t.Parallel()
 	user := UUID{0xde, 0xad, 0xbe, 0xef, 0, 1, 0, 2, 0, 3, 0, 4, 0, 5, 0, 6}
 	tests := []struct {
 		name string
@@ -41,6 +42,7 @@ func TestSourceJSONBodies(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			body, err := tt.src.requestBody(tt.opts)
 			if err != nil {
 				t.Fatalf("requestBody() error = %v", err)
@@ -69,6 +71,7 @@ func writeTempSkin(t *testing.T, content []byte) string {
 }
 
 func TestSourceMultipart(t *testing.T) {
+	t.Parallel()
 	content := []byte("\x89PNG fake bytes \x00\x01\xff")
 	img := testImage()
 	var imgBuf bytes.Buffer
@@ -134,6 +137,7 @@ type closeSpy struct {
 func (c *closeSpy) Close() error { c.closed = true; return nil }
 
 func TestFromReaderNotClosedReadOnce(t *testing.T) {
+	t.Parallel()
 	spy := &closeSpy{Reader: strings.NewReader("skin-data")}
 	src := FromReader(spy)
 	body, err := src.requestBody(GenerateOptions{})
@@ -157,6 +161,7 @@ func TestFromReaderNotClosedReadOnce(t *testing.T) {
 }
 
 func TestFromFileReadsOnEverySend(t *testing.T) {
+	t.Parallel()
 	content := []byte("file-content")
 	src := FromFile(writeTempSkin(t, content))
 	for i := 0; i < 2; i++ {
@@ -172,6 +177,7 @@ func TestFromFileReadsOnEverySend(t *testing.T) {
 }
 
 func TestFromFileMissing(t *testing.T) {
+	t.Parallel()
 	_, err := FromFile(filepath.Join(t.TempDir(), "missing.png")).requestBody(GenerateOptions{})
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Errorf("error = %v, want fs.ErrNotExist", err)
@@ -183,6 +189,7 @@ func TestFromFileMissing(t *testing.T) {
 }
 
 func TestFromImageEncodesPNG(t *testing.T) {
+	t.Parallel()
 	img := testImage()
 	body, err := FromImage(img).requestBody(GenerateOptions{})
 	if err != nil {
@@ -210,6 +217,7 @@ type errReader struct{ err error }
 func (e errReader) Read([]byte) (int, error) { return 0, e.err }
 
 func TestFromReaderError(t *testing.T) {
+	t.Parallel()
 	cause := errors.New("disk on fire")
 	_, err := FromReader(errReader{cause}).requestBody(GenerateOptions{})
 	if !errors.Is(err, cause) {
@@ -222,6 +230,7 @@ func TestFromReaderError(t *testing.T) {
 }
 
 func TestSourceInvalid(t *testing.T) {
+	t.Parallel()
 	invalid := map[string]Source{
 		"nil reader":    FromReader(nil),
 		"nil image":     FromImage(nil),
@@ -234,6 +243,7 @@ func TestSourceInvalid(t *testing.T) {
 	}
 	for name, src := range invalid {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			if _, err := src.requestBody(GenerateOptions{}); !errors.Is(err, ErrInvalidInput) {
 				t.Errorf("error = %v, want ErrInvalidInput", err)
 			}

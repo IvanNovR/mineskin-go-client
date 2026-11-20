@@ -19,6 +19,7 @@ const queueFixture = `{"success":true,"job":{"id":"job-1","status":"waiting","ti
 "usage":{"credits":{"used":2,"remaining":98}}}`
 
 func TestQueueURLSendsJSON(t *testing.T) {
+	t.Parallel()
 	var method, path, ctype string
 	var body []byte
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +58,7 @@ func TestQueueURLSendsJSON(t *testing.T) {
 }
 
 func TestQueueUploadSendsMultipart(t *testing.T) {
+	t.Parallel()
 	var gotFile, gotName, gotVariant string
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseMultipartForm(1 << 20); err != nil {
@@ -84,6 +86,7 @@ func TestQueueUploadSendsMultipart(t *testing.T) {
 }
 
 func TestGenerateDecodesSkin(t *testing.T) {
+	t.Parallel()
 	var method, path string
 	body := strings.Replace(skinFixture, `{"success":true,`,
 		`{"success":true,"rateLimit":{"limit":{"limit":5,"remaining":4}},"usage":{"credits":{"used":1,"remaining":9}},`, 1)
@@ -116,6 +119,7 @@ func TestGenerateDecodesSkin(t *testing.T) {
 }
 
 func TestQueueAbsentRateLimitIsZero(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"job":{"id":"j","status":"waiting"}}`))
 	got, err := newTestClient(t, srv.URL).Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
 	if err != nil {
@@ -127,6 +131,7 @@ func TestQueueAbsentRateLimitIsZero(t *testing.T) {
 }
 
 func TestQueueRejectsInvalidSourceWithoutRequest(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -164,6 +169,7 @@ func TestQueueRejectsInvalidSourceWithoutRequest(t *testing.T) {
 }
 
 func TestQueueAPIError(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(429, `{"success":false,"errors":[{"code":"too_many_requests","message":"slow down"}],"job":"garbage","rateLimit":5}`))
 	got, err := newTestClient(t, srv.URL).Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
 	var apiErr *APIError
@@ -176,6 +182,7 @@ func TestQueueAPIError(t *testing.T) {
 }
 
 func TestGenerateHonoursTimeout(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	srv := newTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
 		select {
@@ -206,6 +213,7 @@ func TestGenerateHonoursTimeout(t *testing.T) {
 }
 
 func TestCallerDeadlineIsNotRetryable(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	srv := newTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
 		select {

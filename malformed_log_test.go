@@ -47,6 +47,7 @@ func assertOneMalformedLine(t *testing.T, buf *bytes.Buffer, wantParts ...string
 }
 
 func TestQueueMalformedUsageIsLoggedOnceWithoutValue(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	body := `{"success":true,"job":{"id":"j","status":"waiting"},"usage":{"credits":{"used":1,"remaining":"` + garbled + `"}}}`
 	srv := newTestServer(t, writeJSON(200, body))
@@ -64,6 +65,7 @@ func TestQueueMalformedUsageIsLoggedOnceWithoutValue(t *testing.T) {
 }
 
 func TestGenerateMalformedRateLimitIsLogged(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	body := `{"success":true,"skin":{"name":"n"},"rateLimit":{"next":{"relative":"` + garbled + `"},"limit":{"limit":5}}}`
 	srv := newTestServer(t, writeJSON(200, body))
@@ -79,6 +81,7 @@ func TestGenerateMalformedRateLimitIsLogged(t *testing.T) {
 }
 
 func TestMalformedAbsentFieldsAreNotLogged(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	bodies := []string{
 		`{"success":true,"job":{"id":"j","status":"waiting"}}`,
@@ -99,6 +102,7 @@ func TestMalformedAbsentFieldsAreNotLogged(t *testing.T) {
 }
 
 func TestAPIErrorMalformedDataAndRetryAfterAreLoggedOnce(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	body := `{"success":false,"errors":[{"code":"c","message":"m"}],"rateLimit":"` + garbled + `","usage":{"credits":5}}`
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +121,7 @@ func TestAPIErrorMalformedDataAndRetryAfterAreLoggedOnce(t *testing.T) {
 }
 
 func TestAPIErrorGarbledRetryAfterIsLogged(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", garbled)
@@ -133,6 +138,7 @@ func TestAPIErrorGarbledRetryAfterIsLogged(t *testing.T) {
 }
 
 func TestAPIErrorValidOrAbsentRetryAfterIsNotLogged(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	for _, header := range []string{"", "7", time.Now().UTC().Add(time.Hour).Format(http.TimeFormat), "-3"} {
 		srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +158,7 @@ func TestAPIErrorValidOrAbsentRetryAfterIsNotLogged(t *testing.T) {
 }
 
 func TestUnexpectedResponseGarbledRetryAfterIsLogged(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", garbled)

@@ -75,6 +75,7 @@ func scribble(m *ResponseMeta) {
 }
 
 func TestWaitForJobResultsAreIndependentOnCompletion(t *testing.T) {
+	t.Parallel()
 	resp, errs := waitTwice(t, richCompleted)
 	if errs[0] != nil || errs[1] != nil {
 		t.Fatalf("errors = %v, %v", errs[0], errs[1])
@@ -111,6 +112,7 @@ func TestWaitForJobResultsAreIndependentOnCompletion(t *testing.T) {
 }
 
 func TestWaitForJobResultsAreIndependentOnFailure(t *testing.T) {
+	t.Parallel()
 	_, errs := waitTwice(t, richFailed)
 	var a, b *JobFailedError
 	if !errors.As(errs[0], &a) || !errors.As(errs[1], &b) {

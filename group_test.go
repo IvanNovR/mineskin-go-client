@@ -160,6 +160,7 @@ func getCalls(c *Client) map[string]func() error {
 func oneSlot() Throttle { return Throttle{Interval: time.Nanosecond, Concurrency: 1} }
 
 func TestGroupMappingGenerateHeldDoesNotBlockGets(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t, keyQueue)
 	c := newTestClient(t, srv.URL, WithGenerateThrottle(oneSlot()))
 	held := goCall(queueCall(c))
@@ -187,6 +188,7 @@ func TestGroupMappingGenerateHeldDoesNotBlockGets(t *testing.T) {
 }
 
 func TestGroupMappingGetHeldBlocksGetsButNotQueue(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t, keySkin)
 	c := newTestClient(t, srv.URL, WithGetThrottle(oneSlot()))
 	held := goCall(getCalls(c)[keySkin])
@@ -218,6 +220,7 @@ func TestGroupMappingGetHeldBlocksGetsButNotQueue(t *testing.T) {
 }
 
 func TestGetConcurrencyIsRealInFlight(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	h, peak := trackConcurrency(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -252,6 +255,7 @@ func TestGetConcurrencyIsRealInFlight(t *testing.T) {
 }
 
 func TestGetIntervalWithFakeClock(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t)
 	fake := clock.NewFake(pollerT0)
 	c := newTestClient(t, srv.URL, withClock(fake),
@@ -282,6 +286,7 @@ func TestGetIntervalWithFakeClock(t *testing.T) {
 }
 
 func TestQueuedCallReturnsCtxErr(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t, keySkin)
 	c := newTestClient(t, srv.URL, WithGetThrottle(oneSlot()))
 	first := goCall(getCalls(c)[keySkin])
@@ -312,6 +317,7 @@ func TestQueuedCallReturnsCtxErr(t *testing.T) {
 }
 
 func TestTimeoutExcludesQueueTime(t *testing.T) {
+	t.Parallel()
 	// The start interval keeps the second request queued for longer than the
 	// timeout (a lower bound the throttle guarantees); the handler answers at
 	// once, so the exchange itself is far inside the timeout.
@@ -335,6 +341,7 @@ func TestTimeoutExcludesQueueTime(t *testing.T) {
 }
 
 func TestReleaseOnTransportError(t *testing.T) {
+	t.Parallel()
 	boom := errors.New("boom")
 	rt := roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, boom })
 	c := newTestClient(t, "http://127.0.0.1:1", WithTransport(rt), WithGetThrottle(oneSlot()))
@@ -351,6 +358,7 @@ func TestReleaseOnTransportError(t *testing.T) {
 }
 
 func TestGroupNames(t *testing.T) {
+	t.Parallel()
 	c := newTestClient(t, "http://127.0.0.1:1")
 	if c.genGroup.Name != "generate" || c.getGroup.Name != "get" {
 		t.Errorf("names = %q, %q", c.genGroup.Name, c.getGroup.Name)

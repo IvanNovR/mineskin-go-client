@@ -31,6 +31,7 @@ func limitsNow(c *Client) (time.Duration, int) {
 }
 
 func TestAutoFirstCallLoadsGrantsBeforeThrottle(t *testing.T) {
+	t.Parallel()
 	var order []string
 	var mu sync.Mutex
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +60,7 @@ func TestAutoFirstCallLoadsGrantsBeforeThrottle(t *testing.T) {
 }
 
 func TestAutoConcurrentFirstCallsShareOneLoad(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyUser: {status: 200, body: grantsFast}, keyQueue: {status: 200, body: plainQueue}}, keyUser)
 	c := newTestClient(t, srv.URL, WithAutoTuning())
 	var chans []<-chan error
@@ -78,6 +80,7 @@ func TestAutoConcurrentFirstCallsShareOneLoad(t *testing.T) {
 }
 
 func TestAutoFirstLoadFailureUsesBaselineAndWarns(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyUser: {status: 401, body: invalidKey}, keyQueue: {status: 200, body: plainQueue}})
 	var logs bytes.Buffer
 	c := newTestClient(t, srv.URL, WithAutoTuning(), WithAPIKey(autoTestKey), WithLogger(captureLogger(&logs)))
@@ -93,6 +96,7 @@ func TestAutoFirstLoadFailureUsesBaselineAndWarns(t *testing.T) {
 }
 
 func TestAutoGrantsRequestUsesGetThrottle(t *testing.T) {
+	t.Parallel()
 	srv := newHitServer(t, keySkin)
 	c := newTestClient(t, srv.URL, WithAutoTuning(), WithGetThrottle(oneSlot()))
 	held := goCall(getCalls(c)[keySkin])
@@ -115,6 +119,7 @@ func TestAutoGrantsRequestUsesGetThrottle(t *testing.T) {
 }
 
 func TestAutoPenaltyOnRetryableUnexpected(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		replies map[string]reply
@@ -130,6 +135,7 @@ func TestAutoPenaltyOnRetryableUnexpected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			srv := replyServer(t, tt.replies)
 			opts := []Option{}
 			if tt.auto {
@@ -159,6 +165,7 @@ func TestAutoPenaltyOnRetryableUnexpected(t *testing.T) {
 }
 
 func TestAutoPenaltyOnFailedJob(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyJob: {status: 200, body: failedJob}})
 	c := newTestClient(t, srv.URL, WithAutoTuning(), fastPolling())
 	if _, err := c.WaitForJob(context.Background(), Job{ID: "job-1"}); err == nil {
@@ -178,6 +185,7 @@ func TestAutoPenaltyOnFailedJob(t *testing.T) {
 }
 
 func TestAutoTuningOnlyAffectsGenerate(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyUser: {status: 200, body: grantsSlow}, keyQueue: {status: 200, body: plainQueue}}, keySkin)
 	c := newTestClient(t, srv.URL, WithAutoTuning(), WithGetThrottle(Throttle{}))
 	if c.getGroup.Tuner != nil {
@@ -200,11 +208,13 @@ func TestAutoTuningOnlyAffectsGenerate(t *testing.T) {
 }
 
 func TestAutoNeverLogsAPIKey(t *testing.T) {
+	t.Parallel()
 	for name, meReply := range map[string]reply{
 		"ok":     {status: 200, body: grantsFast},
 		"failed": {status: 401, body: invalidKey},
 	} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			srv := replyServer(t, map[string]reply{keyUser: meReply, keyQueue: {status: 200, body: plainQueue}})
 			var logs bytes.Buffer
 			c := newTestClient(t, srv.URL, WithAutoTuning(), WithAPIKey(autoTestKey), WithLogger(captureLogger(&logs)))
@@ -222,6 +232,7 @@ func TestAutoNeverLogsAPIKey(t *testing.T) {
 }
 
 func TestAutoFirstLoadCallerCancel(t *testing.T) {
+	t.Parallel()
 	srv := replyServer(t, map[string]reply{keyUser: {status: 200, body: grantsFast}, keyQueue: {status: 200, body: plainQueue}}, keyUser)
 	c := newTestClient(t, srv.URL, WithAutoTuning())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -245,6 +256,7 @@ func TestAutoFirstLoadCallerCancel(t *testing.T) {
 }
 
 func TestCloseCancelsRefreshInFlight(t *testing.T) {
+	t.Parallel()
 	var meHits atomic.Int32
 	refreshCancelled := make(chan struct{})
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {

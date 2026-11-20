@@ -14,6 +14,7 @@ func apiErrorWithStatus(status int) *APIError {
 }
 
 func TestIsRetryable(t *testing.T) {
+	t.Parallel()
 	wrap := func(err error) error { return fmt.Errorf("mineskin: GET /v2/x: %w", err) }
 	tests := []struct {
 		name string
@@ -48,6 +49,7 @@ func TestIsRetryable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			if got := IsRetryable(tt.err); got != tt.want {
 				t.Errorf("IsRetryable(%v) = %v, want %v", tt.err, got, tt.want)
 			}
@@ -56,6 +58,7 @@ func TestIsRetryable(t *testing.T) {
 }
 
 func TestStatusSentinel(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		status int
 		want   error
@@ -68,6 +71,7 @@ func TestStatusSentinel(t *testing.T) {
 }
 
 func TestStatusSentinelsThroughBothErrorTypes(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		status int
 		is     error

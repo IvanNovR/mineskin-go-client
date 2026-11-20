@@ -31,6 +31,7 @@ func decodeMeta[W any](raw transport.Response) (ResponseMeta, error) {
 }
 
 func TestHandleResponseSuccess(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		status int
@@ -43,6 +44,7 @@ func TestHandleResponseSuccess(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			meta, err := decodeMeta[testWire](transport.Response{Status: tt.status, Body: []byte(tt.body)})
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -55,6 +57,7 @@ func TestHandleResponseSuccess(t *testing.T) {
 }
 
 func TestHandleResponseAPIError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name        string
 		status      int
@@ -71,6 +74,7 @@ func TestHandleResponseAPIError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := decodeMeta[struct{}](transport.Response{Status: tt.status, Body: []byte(tt.body)})
 			var apiErr *APIError
 			if !errors.As(err, &apiErr) {
@@ -90,6 +94,7 @@ func TestHandleResponseAPIError(t *testing.T) {
 }
 
 func TestHandleResponseUnexpected(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name      string
 		status    int
@@ -107,6 +112,7 @@ func TestHandleResponseUnexpected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := decodeMeta[testWire](transport.Response{Status: tt.status, Body: []byte(tt.body)})
 			var ue *UnexpectedResponseError
 			if !errors.As(err, &ue) {
@@ -120,6 +126,7 @@ func TestHandleResponseUnexpected(t *testing.T) {
 }
 
 func TestHandleResponseUnexpectedUsesHeaders(t *testing.T) {
+	t.Parallel()
 	raw := transport.Response{
 		Status: 530,
 		Header: hdr("Server", "cloudflare", "CF-Ray", "8f3a-FRA", "Content-Type", "text/plain"),
@@ -133,6 +140,7 @@ func TestHandleResponseUnexpectedUsesHeaders(t *testing.T) {
 }
 
 func TestHandleResponseParseError(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name string
 		body string
@@ -145,6 +153,7 @@ func TestHandleResponseParseError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			_, err := decodeMeta[testWire](transport.Response{Status: 200, Body: []byte(tt.body)})
 			var ue *UnexpectedResponseError
 			var apiErr *APIError
@@ -163,6 +172,7 @@ func TestHandleResponseParseError(t *testing.T) {
 }
 
 func TestDecodeResponseReturnsWire(t *testing.T) {
+	t.Parallel()
 	body := []byte(`{"success":true,"user":"abc"}`)
 	wire, meta, err := decodeResponse[testWire](transport.Response{Status: 200, Body: body}, discardLogger, "/test")
 	if err != nil || wire.User != "abc" || meta.Status != 200 {
@@ -171,6 +181,7 @@ func TestDecodeResponseReturnsWire(t *testing.T) {
 }
 
 func TestDecodeResponsePayloadErrorKeepsCauseAndText(t *testing.T) {
+	t.Parallel()
 	body := `{"success":true,"job":{"id":"x"}}`
 	_, err := decodeMeta[wireWithCause](transport.Response{Status: 200, Body: []byte(body)})
 	assertParseError(t, err)
@@ -180,6 +191,7 @@ func TestDecodeResponsePayloadErrorKeepsCauseAndText(t *testing.T) {
 }
 
 func TestDecodeResponseAPIErrorSkipsPayload(t *testing.T) {
+	t.Parallel()
 	_, err := decodeMeta[wireWithCause](transport.Response{Status: 400, Body: []byte(`{"success":false}`)})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || errors.Is(err, errBadJob) {
@@ -188,12 +200,15 @@ func TestDecodeResponseAPIErrorSkipsPayload(t *testing.T) {
 }
 
 func TestDecodeResponseSuccessWithBadPayloadIsParseError(t *testing.T) {
+	t.Parallel()
 	_, err := decodeMeta[wireWithCause](transport.Response{Status: 200, Body: []byte(`{"success":true}`)})
 	assertParseError(t, err)
 }
 
 func TestHandleResponseListsAndLinks(t *testing.T) {
+	t.Parallel()
 	t.Run("lists default to empty non-nil", func(t *testing.T) {
+		t.Parallel()
 		meta, err := decodeMeta[struct{}](transport.Response{Status: 200, Body: []byte(`{}`)})
 		if err != nil {
 			t.Fatal(err)
@@ -209,12 +224,14 @@ func TestHandleResponseListsAndLinks(t *testing.T) {
 		}
 	})
 	t.Run("null lists are empty", func(t *testing.T) {
+		t.Parallel()
 		meta, err := decodeMeta[struct{}](transport.Response{Status: 200, Body: []byte(`{"errors":null,"warnings":null,"messages":null}`)})
 		if err != nil || meta.Warnings == nil || meta.Messages == nil {
 			t.Errorf("meta=%+v err=%v", meta, err)
 		}
 	})
 	t.Run("lists and links are filled", func(t *testing.T) {
+		t.Parallel()
 		body := `{"success":true,"warnings":[{"code":"w","message":"W"}],"messages":[{"code":"m","message":"M"}],"links":{"self":"/x"}}`
 		meta, err := decodeMeta[struct{}](transport.Response{Status: 200, Body: []byte(body)})
 		if err != nil {
@@ -231,6 +248,7 @@ func TestHandleResponseListsAndLinks(t *testing.T) {
 }
 
 func TestHandleResponseHeaders(t *testing.T) {
+	t.Parallel()
 	raw := transport.Response{
 		Status: 200,
 		Header: hdr("Mineskin-Server", "api-1", "Mineskin-Breadcrumb", "crumb", "X-Mineskin-Foo", "bar", "Content-Type", "application/json"),
@@ -253,6 +271,7 @@ func TestHandleResponseHeaders(t *testing.T) {
 }
 
 func TestHandleResponseAPIErrorCarriesHeaders(t *testing.T) {
+	t.Parallel()
 	raw := transport.Response{Status: 401, Header: hdr("Mineskin-Breadcrumb", "b1"), Body: []byte(`{"success":false}`)}
 	_, err := decodeMeta[struct{}](raw)
 	var apiErr *APIError
@@ -262,6 +281,7 @@ func TestHandleResponseAPIErrorCarriesHeaders(t *testing.T) {
 }
 
 func TestHandleResponseDuplicateHeadersDoNotFail(t *testing.T) {
+	t.Parallel()
 	raw := transport.Response{Status: 200, Header: http.Header{"Mineskin-Server": {"a", "b"}}, Body: []byte(`{}`)}
 	meta, err := decodeMeta[struct{}](raw)
 	if err != nil || !reflect.DeepEqual(meta.Header["Mineskin-Server"], []string{"a", "b"}) {
@@ -270,6 +290,7 @@ func TestHandleResponseDuplicateHeadersDoNotFail(t *testing.T) {
 }
 
 func TestHandleResponseUnexpectedIsClientError(t *testing.T) {
+	t.Parallel()
 	_, err := decodeMeta[struct{}](transport.Response{Status: 530, Body: []byte("error code: 1033")})
 	var ue *UnexpectedResponseError
 	if !errors.As(err, &ue) {
@@ -278,6 +299,7 @@ func TestHandleResponseUnexpectedIsClientError(t *testing.T) {
 }
 
 func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
+	t.Parallel()
 	body := append([]byte("\xef\xbb\xbf"), `{"success":true,"user":"x"}`...)
 	meta, err := decodeMeta[testWire](transport.Response{Status: 200, Body: body})
 	if err != nil || meta.Status != 200 {
@@ -292,6 +314,7 @@ func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
 }
 
 func TestDecodeResponseHeaderIsAClone(t *testing.T) {
+	t.Parallel()
 	src := hdr("Mineskin-Breadcrumb", "crumb", "Set-Cookie", "secret=1")
 	meta, err := decodeMeta[struct{}](transport.Response{Status: 200, Header: src, Body: []byte(`{}`)})
 	if err != nil {
@@ -307,6 +330,7 @@ func TestDecodeResponseHeaderIsAClone(t *testing.T) {
 }
 
 func TestDecodeResponseDuplicateBreadcrumbsAreJoined(t *testing.T) {
+	t.Parallel()
 	raw := transport.Response{Status: 200, Header: http.Header{"Mineskin-Breadcrumb": {"a", "b"}}, Body: []byte(`{}`)}
 	meta, err := decodeMeta[struct{}](raw)
 	if err != nil || meta.Breadcrumb != "a,b" {
@@ -315,6 +339,7 @@ func TestDecodeResponseDuplicateBreadcrumbsAreJoined(t *testing.T) {
 }
 
 func TestDecodeResponseAPIErrorKeepsAllErrors(t *testing.T) {
+	t.Parallel()
 	body := `{"success":false,"errors":[{"code":"a","message":"A"},{"code":"b","message":"B"}],"warnings":[{"code":"w","message":"W"}],"links":{"x":1}}`
 	_, err := decodeMeta[struct{}](transport.Response{Status: 400, Body: []byte(body)})
 	var apiErr *APIError
@@ -330,6 +355,7 @@ func TestDecodeResponseAPIErrorKeepsAllErrors(t *testing.T) {
 }
 
 func TestDecodeResponseAPIErrorWithoutErrorsHasEmptyCode(t *testing.T) {
+	t.Parallel()
 	_, err := decodeMeta[struct{}](transport.Response{Status: 403, Body: []byte(`{}`)})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != "" || apiErr.Message != "" || apiErr.Errors == nil || len(apiErr.Errors) != 0 {

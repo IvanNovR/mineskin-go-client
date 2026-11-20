@@ -62,12 +62,14 @@ func skinCall(ctx context.Context, c *Client) func() error {
 }
 
 func TestRetryDefaultConstant(t *testing.T) {
+	t.Parallel()
 	if defaultRateLimitRetries != 2 {
 		t.Fatalf("defaultRateLimitRetries = %d, want 2", defaultRateLimitRetries)
 	}
 }
 
 func TestRetryRecoversFromJSON429(t *testing.T) {
+	t.Parallel()
 	srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON}, reply{status: 200, body: skinMinimal})
 	c := newTestClient(t, srv.URL)
 	if err := skinCall(context.Background(), c)(); err != nil {
@@ -79,6 +81,7 @@ func TestRetryRecoversFromJSON429(t *testing.T) {
 }
 
 func TestRetryRecoversFromNonJSON429(t *testing.T) {
+	t.Parallel()
 	srv := newSeqServer(t, reply{status: 429, body: "<html>slow down</html>"}, reply{status: 200, body: skinMinimal})
 	c := newTestClient(t, srv.URL)
 	if err := skinCall(context.Background(), c)(); err != nil {
@@ -87,6 +90,7 @@ func TestRetryRecoversFromNonJSON429(t *testing.T) {
 }
 
 func TestRetryGivesUpAfterConfiguredRetries(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		opts     []Option
@@ -98,6 +102,7 @@ func TestRetryGivesUpAfterConfiguredRetries(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON})
 			c := newTestClient(t, srv.URL, tt.opts...)
 			err := queueCall(c)()
@@ -113,6 +118,7 @@ func TestRetryGivesUpAfterConfiguredRetries(t *testing.T) {
 }
 
 func TestRetryExhaustedNonJSON429IsUnexpectedResponse(t *testing.T) {
+	t.Parallel()
 	srv := newSeqServer(t, reply{status: 429, body: "<html>slow down</html>"})
 	c := newTestClient(t, srv.URL)
 	var ue *UnexpectedResponseError
@@ -125,6 +131,7 @@ func TestRetryExhaustedNonJSON429IsUnexpectedResponse(t *testing.T) {
 }
 
 func TestRetryNeverRetriesOtherStatuses(t *testing.T) {
+	t.Parallel()
 	for _, status := range []int{400, 401, 404, 408, 500, 502, 503} {
 		srv := newSeqServer(t, reply{status: status, retryAfter: "0", body: tooSoonJSON})
 		c := newTestClient(t, srv.URL)
@@ -138,6 +145,7 @@ func TestRetryNeverRetriesOtherStatuses(t *testing.T) {
 }
 
 func TestWithRateLimitRetriesRejectsNegative(t *testing.T) {
+	t.Parallel()
 	_, err := NewClient(WithRateLimitRetries(-1))
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("NewClient() error = %v, want ErrInvalidInput", err)
@@ -145,6 +153,7 @@ func TestWithRateLimitRetriesRejectsNegative(t *testing.T) {
 }
 
 func TestRetryReplaysRequestBodies(t *testing.T) {
+	t.Parallel()
 	pngData := testPNG(t)
 	sources := map[string]Source{
 		"image":  FromImage(image.NewNRGBA(image.Rect(0, 0, 64, 64))),
@@ -154,6 +163,7 @@ func TestRetryReplaysRequestBodies(t *testing.T) {
 	}
 	for name, src := range sources {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON}, reply{status: 200, body: skinMinimal})
 			c := newTestClient(t, srv.URL)
 			if _, err := c.Generate(context.Background(), src, GenerateOptions{Name: retryTestName}); err != nil {
@@ -173,6 +183,7 @@ func TestRetryReplaysRequestBodies(t *testing.T) {
 }
 
 func TestRetryWaitsForServerDelayOfItsGroup(t *testing.T) {
+	t.Parallel()
 	srv := newSeqServer(t, reply{status: 429, body: nextRelative(3000, false)}, reply{status: 200, body: skinMinimal})
 	c, fake := delayClient(t, &clientServer{URL: srv.URL})
 	if err := assertDelayed(t, fake, c.getGroup, skinCall(context.Background(), c), 3*time.Second); err != nil {
@@ -184,6 +195,7 @@ func TestRetryWaitsForServerDelayOfItsGroup(t *testing.T) {
 }
 
 func TestRetryWithoutDelayWaitsForThrottleInterval(t *testing.T) {
+	t.Parallel()
 	srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON}, reply{status: 200, body: skinMinimal})
 	c, fake := delayClient(t, &clientServer{URL: srv.URL}, WithGetThrottle(Throttle{Interval: 500 * time.Millisecond, Concurrency: 1}))
 	if err := assertDelayed(t, fake, c.getGroup, skinCall(context.Background(), c), 500*time.Millisecond); err != nil {
@@ -192,6 +204,7 @@ func TestRetryWithoutDelayWaitsForThrottleInterval(t *testing.T) {
 }
 
 func TestRetryReturns429WhenDelayEndsAfterCtxDeadline(t *testing.T) {
+	t.Parallel()
 	srv := newSeqServer(t, reply{status: 429, body: nextRelative(600_000, false)})
 	fake := clock.NewFake(time.Now())
 	c := newTestClient(t, srv.URL, withClock(fake))
@@ -211,6 +224,7 @@ func TestRetryReturns429WhenDelayEndsAfterCtxDeadline(t *testing.T) {
 }
 
 func TestRetryWaitsWhenDelayEndsBeforeCtxDeadline(t *testing.T) {
+	t.Parallel()
 	srv := newSeqServer(t, reply{status: 429, body: nextRelative(1000, false)}, reply{status: 200, body: skinMinimal})
 	fake := clock.NewFake(time.Now())
 	c := newTestClient(t, srv.URL, withClock(fake))
@@ -222,7 +236,9 @@ func TestRetryWaitsWhenDelayEndsBeforeCtxDeadline(t *testing.T) {
 }
 
 func TestRetryWaitEndsOnCloseAndCancel(t *testing.T) {
+	t.Parallel()
 	t.Run("close", func(t *testing.T) {
+		t.Parallel()
 		srv := newSeqServer(t, reply{status: 429, body: nextRelative(3000, false)})
 		c, _ := delayClient(t, &clientServer{URL: srv.URL})
 		res := goCall(skinCall(context.Background(), c))
@@ -233,6 +249,7 @@ func TestRetryWaitEndsOnCloseAndCancel(t *testing.T) {
 		}
 	})
 	t.Run("cancel", func(t *testing.T) {
+		t.Parallel()
 		srv := newSeqServer(t, reply{status: 429, body: nextRelative(3000, false)})
 		c, _ := delayClient(t, &clientServer{URL: srv.URL})
 		ctx, cancel := context.WithCancel(context.Background())
@@ -249,7 +266,9 @@ func TestRetryWaitEndsOnCloseAndCancel(t *testing.T) {
 }
 
 func TestRetryChecksStartGateOnEveryAttempt(t *testing.T) {
+	t.Parallel()
 	t.Run("gate open", func(t *testing.T) {
+		t.Parallel()
 		srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON}, reply{status: 200, body: jobFixture})
 		c := newTestClient(t, srv.URL)
 		var calls int
@@ -261,6 +280,7 @@ func TestRetryChecksStartGateOnEveryAttempt(t *testing.T) {
 		}
 	})
 	t.Run("gate closes before the retry", func(t *testing.T) {
+		t.Parallel()
 		srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON}, reply{status: 200, body: jobFixture})
 		c := newTestClient(t, srv.URL)
 		var calls int
@@ -275,6 +295,7 @@ func TestRetryChecksStartGateOnEveryAttempt(t *testing.T) {
 }
 
 func TestRetryLogsOneDebugLineWithoutKey(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON}, reply{status: 200, body: skinMinimal})
@@ -320,6 +341,7 @@ func runWithFakeTime(t *testing.T, fake *clock.Fake, c *Client, srv *clientServe
 }
 
 func TestRetryPenaltyIsPerResponse(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name         string
 		retries      int
@@ -332,6 +354,7 @@ func TestRetryPenaltyIsPerResponse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			srv := replyServer(t, map[string]reply{keyQueue: {status: 429, body: tt.body}})
 			fake := clock.NewFake(pollerT0)
 			c := newTestClient(t, srv.URL, withClock(fake), WithAutoTuning(), WithRateLimitRetries(tt.retries))
@@ -373,6 +396,7 @@ func assertCtxAnd429(t *testing.T, err, ctxErr error) {
 }
 
 func TestRetryReturns429WhenIntervalEndsAfterCtxDeadline(t *testing.T) {
+	t.Parallel()
 	// A bare 429 (no delay, D30): the retry would wait for the 10 minute
 	// interval, which ends after the ctx deadline.
 	srv := newSeqServer(t, reply{status: 429, body: tooSoonJSON})
@@ -387,6 +411,7 @@ func TestRetryReturns429WhenIntervalEndsAfterCtxDeadline(t *testing.T) {
 }
 
 func TestRetryWaitEndedByCtxDeadlineReturns429(t *testing.T) {
+	t.Parallel()
 	// The delay looks fine at first, then another response pushes the group
 	// deadline past the ctx deadline while the retry waits.
 	srv := replyServer(t, map[string]reply{
@@ -418,6 +443,7 @@ func TestRetryWaitEndedByCtxDeadlineReturns429(t *testing.T) {
 }
 
 func TestRetryWaitEndedByCtxKeepsNonJSON429(t *testing.T) {
+	t.Parallel()
 	srv := newSeqServer(t, reply{status: 429, body: "<html>slow down</html>"})
 	fake := clock.NewFake(time.Now())
 	c := newTestClient(t, srv.URL, withClock(fake), WithGetThrottle(Throttle{Interval: time.Second, Concurrency: 1}))
@@ -434,6 +460,7 @@ func TestRetryWaitEndedByCtxKeepsNonJSON429(t *testing.T) {
 }
 
 func TestRetryCancelledWaitCountsPenaltyOnce(t *testing.T) {
+	t.Parallel()
 	run := func(t *testing.T, retries int, cancelDuringWait bool) time.Duration {
 		t.Helper()
 		srv := replyServer(t, map[string]reply{keyQueue: {status: 429, body: htmlBadGate}})
@@ -471,6 +498,7 @@ func TestRetryCancelledWaitCountsPenaltyOnce(t *testing.T) {
 // a 429, gets its own WithTimeout budget: the two attempts take longer than
 // the timeout together, and the call still succeeds.
 func TestTimeoutIsPerAttempt(t *testing.T) {
+	t.Parallel()
 	const timeout = 150 * time.Millisecond
 	var calls atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {

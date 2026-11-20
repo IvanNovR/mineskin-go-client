@@ -21,6 +21,7 @@ import (
 // internal/ratelimit uses (transport.IsFailure, transport.IsUnexpected) against
 // the root's decodeResponse, which is the truth for the public errors.
 func TestSeamClassifiersAgreeWithDecodeResponse(t *testing.T) {
+	t.Parallel()
 	const bom = "\xef\xbb\xbf"
 	tests := []struct {
 		name   string
@@ -49,6 +50,7 @@ func TestSeamClassifiersAgreeWithDecodeResponse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			r := transport.Response{Status: tt.status, Header: http.Header{}, Body: []byte(tt.body), Received: pollerT0}
 			_, err := decodeMeta[struct{}](r)
 			if got, want := transport.IsFailure(r), err != nil; got != want {
@@ -69,6 +71,7 @@ func TestSeamClassifiersAgreeWithDecodeResponse(t *testing.T) {
 }
 
 func TestSeamServerDelayAgreesWithRateLimitDecoding(t *testing.T) {
+	t.Parallel()
 	bodies := []string{
 		`{"rateLimit":{"next":{"relative":5000}}}`, `{"rateLimit":{"next":{"relative":-1}}}`,
 		`{"rateLimit":{"next":{"relative":"5"}}}`, `{"rateLimit":{"next":{"relative":1.5}}}`,
@@ -92,6 +95,7 @@ func TestSeamServerDelayAgreesWithRateLimitDecoding(t *testing.T) {
 // A relative delay too large for a Duration is not decoded publicly
 // (RateLimit.NextIn stays 0), but it still delays the group by the one-hour cap.
 func TestSeamServerDelayClampsWhatPublicDecodingDrops(t *testing.T) {
+	t.Parallel()
 	r := transport.Response{Status: 200, Header: http.Header{}, Body: []byte(`{"rateLimit":{"next":{"relative":9223372036854775807}}}`)}
 	var wire struct {
 		RateLimit RateLimit `json:"rateLimit"`
@@ -105,6 +109,7 @@ func TestSeamServerDelayClampsWhatPublicDecodingDrops(t *testing.T) {
 }
 
 func TestSeamMapGroupErr(t *testing.T) {
+	t.Parallel()
 	const label = "GET /v2/x"
 	boom := errors.New("boom")
 	build := &transport.BuildError{Err: errors.New("bad url")}
@@ -165,6 +170,7 @@ func mustIs(t *testing.T, got error, targets ...error) {
 }
 
 func TestSeamStartGateDeclinedRequestSendsNothing(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int32
 	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
 	c := newTestClient(t, srv.URL)
@@ -180,6 +186,7 @@ func TestSeamStartGateDeclinedRequestSendsNothing(t *testing.T) {
 }
 
 func TestSeamJobSourceGetMapsSkippedGate(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int32
 	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
 	c := newTestClient(t, srv.URL)
@@ -195,6 +202,7 @@ func TestSeamJobSourceGetMapsSkippedGate(t *testing.T) {
 }
 
 func TestSeamJobSourceGetDerivesState(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		status string
@@ -209,6 +217,7 @@ func TestSeamJobSourceGetDerivesState(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			body := jobJSON("j1", tt.status)
 			if tt.status == "completed-no-result" {
 				body = `{"success":true,"job":{"id":"j1","status":"completed"}}`
@@ -229,6 +238,7 @@ func TestSeamJobSourceGetDerivesState(t *testing.T) {
 }
 
 func TestSeamJobSourceGetErrorPassesThrough(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(404, `{"success":false,"errors":[{"code":"not_found","message":"no"}]}`))
 	c := newTestClient(t, srv.URL)
 
@@ -240,6 +250,7 @@ func TestSeamJobSourceGetErrorPassesThrough(t *testing.T) {
 }
 
 func TestSeamJobSourceList(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"jobs":[{"id":"a","status":"waiting"},{"id":"b","status":"failed"}]}`))
 	c := newTestClient(t, srv.URL)
 
@@ -254,6 +265,7 @@ func TestSeamJobSourceList(t *testing.T) {
 }
 
 func TestSeamJobSourceListError(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(404, `{"success":false,"errors":[{"code":"not_found","message":"no"}]}`))
 	c := newTestClient(t, srv.URL)
 
@@ -263,6 +275,7 @@ func TestSeamJobSourceListError(t *testing.T) {
 }
 
 func TestSeamMapPollErr(t *testing.T) {
+	t.Parallel()
 	plain := errors.New("plain")
 	tests := []struct {
 		name string
@@ -279,6 +292,7 @@ func TestSeamMapPollErr(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := mapPollErr(tt.in)
 			for _, want := range tt.is {
 				if !errors.Is(got, want) {
@@ -295,6 +309,7 @@ func TestSeamMapPollErr(t *testing.T) {
 // TestSeamSourceValuesMatchTransport pins the string values the root casts
 // from transport.Origin.Source to ResponseSource.
 func TestSeamSourceValuesMatchTransport(t *testing.T) {
+	t.Parallel()
 	pairs := []struct {
 		name string
 		raw  string
@@ -314,6 +329,7 @@ func TestSeamSourceValuesMatchTransport(t *testing.T) {
 // TestPollDebugLogsCarryPath pins the "path" attribute of the poller debug
 // logs, which the client passes to internal/poll as opaque attributes.
 func TestPollDebugLogsCarryPath(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)), pollOnce(3, func(int) time.Duration { return time.Millisecond }))

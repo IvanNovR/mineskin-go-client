@@ -21,6 +21,7 @@ func assertNoKey(t *testing.T, what, out string) {
 }
 
 func TestClientAndConfigRedactAPIKeyWhenFormatted(t *testing.T) {
+	t.Parallel()
 	c, err := NewClient(WithAPIKey("  "+redactKey+"\n"), WithUserAgent("A/1"))
 	if err != nil {
 		t.Fatal(err)
@@ -38,6 +39,7 @@ func TestClientAndConfigRedactAPIKeyWhenFormatted(t *testing.T) {
 }
 
 func TestClientRedactsAPIKeyInSlogOutput(t *testing.T) {
+	t.Parallel()
 	c, err := NewClient(WithAPIKey(redactKey), WithUserAgent("A/1"))
 	if err != nil {
 		t.Fatal(err)

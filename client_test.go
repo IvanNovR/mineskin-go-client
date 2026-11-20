@@ -22,6 +22,7 @@ func captureLogger(buf *bytes.Buffer) *slog.Logger {
 }
 
 func TestNewClientDefaults(t *testing.T) {
+	t.Parallel()
 	c, err := NewClient()
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
@@ -45,6 +46,7 @@ func TestNewClientDefaults(t *testing.T) {
 }
 
 func TestNewClientBaseURL(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name, in, want string
 		wantErr        bool
@@ -61,6 +63,7 @@ func TestNewClientBaseURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			c, err := NewClient(WithBaseURL(tt.in))
 			if tt.wantErr {
 				if !errors.Is(err, ErrInvalidInput) {
@@ -79,6 +82,7 @@ func TestNewClientBaseURL(t *testing.T) {
 }
 
 func TestNewClientUserAgent(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		opts     []Option
@@ -92,6 +96,7 @@ func TestNewClientUserAgent(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			c, err := NewClient(append(tt.opts, WithLogger(captureLogger(&buf)), WithAPIKey("k"))...)
 			if err != nil {
@@ -108,6 +113,7 @@ func TestNewClientUserAgent(t *testing.T) {
 }
 
 func TestNewClientAPIKey(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		key      string
@@ -121,6 +127,7 @@ func TestNewClientAPIKey(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			c, err := NewClient(WithAPIKey(tt.key), WithUserAgent("A/1"), WithLogger(captureLogger(&buf)))
 			if err != nil {
@@ -137,6 +144,7 @@ func TestNewClientAPIKey(t *testing.T) {
 }
 
 func TestNewClientNoKeyOptionAtAll(t *testing.T) {
+	t.Parallel()
 	var buf bytes.Buffer
 	if _, err := NewClient(WithUserAgent("A/1"), WithLogger(captureLogger(&buf))); err != nil {
 		t.Fatal(err)
@@ -147,6 +155,7 @@ func TestNewClientNoKeyOptionAtAll(t *testing.T) {
 }
 
 func TestNewClientKeyNeverLogged(t *testing.T) {
+	t.Parallel()
 	const key = "msk_abc123_secretpart"
 	tests := []struct {
 		name   string
@@ -159,6 +168,7 @@ func TestNewClientKeyNeverLogged(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			if _, err := NewClient(WithAPIKey(tt.key), WithUserAgent("A/1"), WithLogger(captureLogger(&buf))); err != nil {
 				t.Fatal(err)
@@ -177,6 +187,7 @@ func TestNewClientKeyNeverLogged(t *testing.T) {
 }
 
 func TestNewClientTimeout(t *testing.T) {
+	t.Parallel()
 	for _, d := range []time.Duration{0, -time.Second} {
 		if _, err := NewClient(WithTimeout(d)); !errors.Is(err, ErrInvalidInput) {
 			t.Errorf("WithTimeout(%v) err = %v, want ErrInvalidInput", d, err)
@@ -193,6 +204,7 @@ type stubTransport struct{}
 func (stubTransport) RoundTrip(*http.Request) (*http.Response, error) { return nil, errors.New("stub") }
 
 func TestOptionNilFallbacks(t *testing.T) {
+	t.Parallel()
 	c, err := NewClient(WithTransport(nil), WithLogger(nil), WithUserAgent("A/1"), WithAPIKey("k"))
 	if err != nil {
 		t.Fatal(err)
@@ -210,12 +222,14 @@ func TestOptionNilFallbacks(t *testing.T) {
 }
 
 func TestNewClientNilOption(t *testing.T) {
+	t.Parallel()
 	if _, err := NewClient(nil); err != nil {
 		t.Errorf("nil option should be ignored: %v", err)
 	}
 }
 
 func TestNewClientErrorNeverContainsKey(t *testing.T) {
+	t.Parallel()
 	_, err := NewClient(WithAPIKey("msk_abc_secretpart"), WithBaseURL("ftp://x"), WithTimeout(0))
 	if err == nil || strings.Contains(err.Error(), "secretpart") {
 		t.Errorf("err = %v", err)
@@ -232,6 +246,7 @@ func redirectReq(t *testing.T, raw string) *http.Request {
 }
 
 func TestCheckRedirect(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		via     []string
@@ -248,6 +263,7 @@ func TestCheckRedirect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			via := make([]*http.Request, len(tt.via))
 			for i, v := range tt.via {
 				via[i] = redirectReq(t, v)
@@ -275,6 +291,7 @@ func hops(n int) []string {
 }
 
 func TestNewClientRejectsUserinfoInBaseURL(t *testing.T) {
+	t.Parallel()
 	for _, raw := range []string{"https://user:hunter2@example.com", "https://user@example.com", "https://:pw@example.com"} {
 		_, err := NewClient(WithBaseURL(raw))
 		if !errors.Is(err, ErrInvalidInput) {
@@ -289,6 +306,7 @@ func TestNewClientRejectsUserinfoInBaseURL(t *testing.T) {
 }
 
 func TestNewClientPlainHTTPWithKey(t *testing.T) {
+	t.Parallel()
 	const key = "msk_abc_secretpart"
 	tests := []struct {
 		name, url, key string
@@ -313,6 +331,7 @@ func TestNewClientPlainHTTPWithKey(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			opts := []Option{WithBaseURL(tt.url), WithAPIKey(tt.key), WithUserAgent("A/1"), WithLogger(captureLogger(&buf))}
 			if tt.insecure {
@@ -348,6 +367,7 @@ func TestNewClientPlainHTTPWithKey(t *testing.T) {
 }
 
 func TestNewClientRejectsControlCharacters(t *testing.T) {
+	t.Parallel()
 	const key = "msk_abc_secretpart"
 	tests := map[string][]Option{
 		"key CR":       {WithAPIKey(key + "\rX-Evil: 1")},
@@ -361,6 +381,7 @@ func TestNewClientRejectsControlCharacters(t *testing.T) {
 	}
 	for name, opts := range tests {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			_, err := NewClient(opts...)
 			if !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("err = %v, want ErrInvalidInput", err)
@@ -373,6 +394,7 @@ func TestNewClientRejectsControlCharacters(t *testing.T) {
 }
 
 func TestRedirectToAnotherHostDropsAuthorization(t *testing.T) {
+	t.Parallel()
 	var seen atomic.Pointer[string]
 	other := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		got := r.Header.Get("Authorization")
@@ -398,6 +420,7 @@ func TestRedirectToAnotherHostDropsAuthorization(t *testing.T) {
 }
 
 func TestCheckRedirectStripsAuthorizationOnHostChange(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		first    string
@@ -411,6 +434,7 @@ func TestCheckRedirectStripsAuthorizationOnHostChange(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			first, next := redirectReq(t, tt.first), redirectReq(t, tt.next)
 			first.Header = http.Header{"Authorization": {"Bearer k"}}
 			next.Header = http.Header{"Authorization": {"Bearer k"}, "User-Agent": {"A/1"}}
@@ -428,6 +452,7 @@ func TestCheckRedirectStripsAuthorizationOnHostChange(t *testing.T) {
 }
 
 func TestNewClientLogsKeyIDOnlyForWellFormedKeys(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name   string
 		key    string
@@ -445,6 +470,7 @@ func TestNewClientLogsKeyIDOnlyForWellFormedKeys(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			var buf bytes.Buffer
 			if _, err := NewClient(WithAPIKey(tt.key), WithUserAgent("A/1"), WithLogger(captureLogger(&buf))); err != nil {
 				t.Fatal(err)
@@ -465,6 +491,7 @@ func TestNewClientLogsKeyIDOnlyForWellFormedKeys(t *testing.T) {
 }
 
 func TestRedirectAwayAndBackRestoresAuthorizationOnTheOriginalHost(t *testing.T) {
+	t.Parallel()
 	var mu sync.Mutex
 	var trail []string // "host-label:authorization" per request
 	record := func(label string, r *http.Request) {

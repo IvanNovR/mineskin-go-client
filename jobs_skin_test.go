@@ -12,6 +12,7 @@ import (
 )
 
 func TestJobFailedError(t *testing.T) {
+	t.Parallel()
 	job := Job{ID: "job-9", Status: JobStatusFailed}
 	errs := []CodeAndMessage{{Code: "invalid_image", Message: "bad image"}, {Code: "other", Message: "second"}}
 	meta := ResponseMeta{Status: 200, Breadcrumb: "bc"}
@@ -26,6 +27,7 @@ func TestJobFailedError(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			err := newJobFailedError(tt.resp)
 			if err.Error() != tt.wantText {
 				t.Errorf("Error() = %q, want %q", err.Error(), tt.wantText)
@@ -48,8 +50,10 @@ func TestJobFailedError(t *testing.T) {
 }
 
 func TestNewSentinelsAreDistinct(t *testing.T) {
+	t.Parallel()
 	for name, s := range map[string]error{"ErrMaxAttempts": ErrMaxAttempts} {
 		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 			wrapped := fmt.Errorf("mineskin: ctx: %w", s)
 			if !errors.Is(wrapped, s) {
 				t.Errorf("wrapped %v does not match %v", wrapped, s)
@@ -67,6 +71,7 @@ func TestNewSentinelsAreDistinct(t *testing.T) {
 // TestGetSkinWithJobResult pins the documented way to read the skin of a
 // finished job whose response does not embed it: GetSkin(ctx, resp.Job.Result).
 func TestGetSkinWithJobResult(t *testing.T) {
+	t.Parallel()
 	resp := &JobResponse{Job: Job{ID: "j", Status: JobStatusCompleted, Result: fixtureUUID(jobResultID)}}
 	var hits atomic.Int32
 	var method, uri string

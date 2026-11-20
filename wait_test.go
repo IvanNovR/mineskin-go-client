@@ -25,6 +25,7 @@ func jobJSON(id, status string) string {
 }
 
 func TestWaitForJobCompletes(t *testing.T) {
+	t.Parallel()
 	var gets atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		status := []string{"waiting", "processing", "completed"}[min(int(gets.Add(1))-1, 2)]
@@ -45,6 +46,7 @@ func TestWaitForJobCompletes(t *testing.T) {
 }
 
 func TestWaitForJobFailed(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"errors":[{"code":"bad_image","message":"Bad image"}],"job":{"id":"j1","status":"failed"}}`))
 	c := newTestClient(t, srv.URL, fastPolling())
 
@@ -59,6 +61,7 @@ func TestWaitForJobFailed(t *testing.T) {
 }
 
 func TestWaitForJobMaxAttempts(t *testing.T) {
+	t.Parallel()
 	var gets atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gets.Add(1)
@@ -79,6 +82,7 @@ func TestWaitForJobMaxAttempts(t *testing.T) {
 }
 
 func TestWaitForJobRejectsInvalidInputWithoutRequest(t *testing.T) {
+	t.Parallel()
 	var hits atomic.Int32
 	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
 	c := newTestClient(t, srv.URL, fastPolling())
@@ -104,6 +108,7 @@ func TestWaitForJobRejectsInvalidInputWithoutRequest(t *testing.T) {
 }
 
 func TestWaitForJobEscapesID(t *testing.T) {
+	t.Parallel()
 	var uri atomic.Value
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		uri.Store(r.RequestURI)
@@ -120,7 +125,8 @@ func TestWaitForJobEscapesID(t *testing.T) {
 }
 
 func TestWaitForJobUsesETA(t *testing.T) {
-	const step = 10 * time.Millisecond
+	t.Parallel()
+	const eta, initialDelay = 50 * time.Millisecond, 600 * time.Millisecond
 	run := func(useETA bool) (time.Duration, error) {
 		fake := clock.NewFake(pollerT0)
 		var firstGet atomic.Int64
@@ -129,15 +135,24 @@ func TestWaitForJobUsesETA(t *testing.T) {
 			writeJSON(200, jobJSON("j1", "completed"))(w, r)
 		})
 		c := newTestClient(t, srv.URL, withClock(fake), WithJobPolling(PollOptions{
-			InitialDelay: 600 * time.Millisecond, UseETA: useETA,
+			InitialDelay: initialDelay, UseETA: useETA,
 		}))
 		start := fake.Now()
 		res := goCall(func() error {
-			_, err := c.WaitForJob(waitCtx(t), Job{ID: "j1", ETA: start.Add(50 * time.Millisecond)})
+			_, err := c.WaitForJob(waitCtx(t), Job{ID: "j1", ETA: start.Add(eta)})
 			return err
 		})
-		eventually(t, "job registered", func() bool { return c.poller.Pending() == 1 })
-		err := driveClock(t, fake, step, func() error { return <-res })
+		eventually(t, "poller timer armed", func() bool { return c.poller.Pending() == 1 && fake.Timers() == 1 })
+		// The clock moves exactly to the ETA, then to the initial delay, so the
+		// first GET time does not depend on how fast the machine is.
+		fake.Advance(eta)
+		if !useETA {
+			if got := firstGet.Load(); got != 0 {
+				t.Errorf("GET sent at %v without UseETA, before the initial delay", time.Unix(0, got).Sub(start))
+			}
+			fake.Advance(initialDelay - eta)
+		}
+		err := mustDone(t, "WaitForJob", res)
 		return time.Unix(0, firstGet.Load()).Sub(start), err
 	}
 
@@ -158,6 +173,7 @@ func TestWaitForJobUsesETA(t *testing.T) {
 }
 
 func TestWaitForJobDedupSharesResult(t *testing.T) {
+	t.Parallel()
 	var gets atomic.Int32
 	release := make(chan struct{})
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -207,6 +223,7 @@ func TestWaitForJobDedupSharesResult(t *testing.T) {
 }
 
 func TestWaitForJobContextCancel(t *testing.T) {
+	t.Parallel()
 	var gets atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gets.Add(1)
@@ -250,6 +267,7 @@ func TestWaitForJobContextCancel(t *testing.T) {
 }
 
 func TestWaitForJobContextDeadline(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "waiting")))
 	c := newTestClient(t, srv.URL, fastPolling())
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
@@ -262,6 +280,7 @@ func TestWaitForJobContextDeadline(t *testing.T) {
 }
 
 func TestWaitForJobCancelKeepsJobForOtherWaiter(t *testing.T) {
+	t.Parallel()
 	release := make(chan struct{})
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -306,6 +325,7 @@ func TestWaitForJobCancelKeepsJobForOtherWaiter(t *testing.T) {
 }
 
 func TestWaitForJobPollerExitsWhenIdle(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, fastPolling())
 	if c.poller.Running() {
@@ -319,6 +339,7 @@ func TestWaitForJobPollerExitsWhenIdle(t *testing.T) {
 }
 
 func TestWaitForJobRestartsPollerAfterIdle(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, fastPolling())
 
@@ -331,6 +352,7 @@ func TestWaitForJobRestartsPollerAfterIdle(t *testing.T) {
 }
 
 func TestWaitForJobBatchedOverHTTP(t *testing.T) {
+	t.Parallel()
 	const n = 6
 	var lists atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -380,6 +402,7 @@ func TestWaitForJobBatchedOverHTTP(t *testing.T) {
 }
 
 func TestWaitForJobConcurrent(t *testing.T) {
+	t.Parallel()
 	const ids, waiters = 20, 2
 	tr := &http.Transport{}
 	var gets sync.Map // ids that were fetched
@@ -432,6 +455,7 @@ func TestWaitForJobConcurrent(t *testing.T) {
 // TestPollerWakesForSoonerJob checks that a job with an earlier check time
 // wakes a poller that is sleeping until a much later one.
 func TestPollerWakesForSoonerJob(t *testing.T) {
+	t.Parallel()
 	var soonGets atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/soon") {
@@ -497,6 +521,7 @@ func (c *doneAfterIdle) Done() <-chan struct{} {
 }
 
 func TestWaitForJobFinishedResultWinsOverDoneContext(t *testing.T) {
+	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, fastPolling())
 	for i := 0; i < 30; i++ {

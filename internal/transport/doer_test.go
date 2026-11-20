@@ -255,7 +255,7 @@ func TestDoTimeoutBoundsTheWholeExchange(t *testing.T) {
 func TestDoTimeoutIsPerCall(t *testing.T) {
 	const timeout = 100 * time.Millisecond
 	d := newDoer(t, func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(60 * time.Millisecond)
+		time.Sleep(60 * time.Millisecond) // real clock: the budget is a context deadline
 		_, _ = io.WriteString(w, `{}`)
 	})
 	d.Timeout = timeout

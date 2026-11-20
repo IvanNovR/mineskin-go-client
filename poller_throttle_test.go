@@ -10,10 +10,6 @@ import (
 	"time"
 )
 
-// settleTime is how long a test lets a forbidden event show up; it is a
-// negative check, so a slow machine can only make it less sensitive.
-const settleTime = 50 * time.Millisecond
-
 func TestPollerHTTPBoundedByGetConcurrency(t *testing.T) {
 	release := make(chan struct{})
 	handler, peak := trackConcurrency(func(w http.ResponseWriter, r *http.Request) {
@@ -39,10 +35,13 @@ func TestPollerHTTPBoundedByGetConcurrency(t *testing.T) {
 			}
 		})
 	}
-	// Requests are held, so two in flight is reached for certain; waiting a
-	// little longer can only expose a third one, never fail a correct client.
-	eventually(t, "two GETs in flight", func() bool { return peak() >= 2 })
-	time.Sleep(settleTime)
+	// Requests are held, so two in flight is reached for certain. The other two
+	// waits are then provably queued in the throttle (not running), which is
+	// what keeps the peak at two.
+	eventually(t, "two GETs in flight and two queued", func() bool {
+		st := c.getGroup.Throttle.Stats()
+		return st.InFlight == 2 && st.Waiting == 2 && peak() >= 2
+	})
 	close(release)
 	wg.Wait()
 	if got := peak(); got != 2 {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -211,14 +212,18 @@ func TestWaitForJobContextCancel(t *testing.T) {
 		gets.Add(1)
 		writeJSON(200, jobJSON("j1", "waiting"))(w, r)
 	})
-	c := newTestClient(t, srv.URL, fastPolling())
+	fake := clock.NewFake(pollerT0)
+	c := newTestClient(t, srv.URL, fastPolling(), withClock(fake))
 	ctx, cancel := context.WithCancel(waitCtx(t))
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := c.WaitForJob(ctx, Job{ID: "j1"})
 		errCh <- err
 	}()
-	eventually(t, "first poll", func() bool { return gets.Load() >= 1 })
+	eventually(t, "first poll", func() bool {
+		fake.Advance(time.Millisecond)
+		return gets.Load() >= 1
+	})
 
 	cancel()
 	err := <-errCh
@@ -230,8 +235,15 @@ func TestWaitForJobContextCancel(t *testing.T) {
 		t.Error("job still pending after cancel")
 	}
 	eventually(t, "poller exit", func() bool { return !c.poller.Running() })
+	// The poller is gone and holds no timer: stepping the clock far past
+	// many poll intervals must not produce another request.
 	after := gets.Load()
-	time.Sleep(50 * time.Millisecond)
+	if got := fake.Timers(); got != 0 {
+		t.Errorf("pending fake timers after cancel = %d, want 0", got)
+	}
+	for range 50 {
+		fake.Advance(time.Second)
+	}
 	if gets.Load() != after {
 		t.Error("requests continued after cancel")
 	}
@@ -479,7 +491,7 @@ func (c *doneAfterIdle) Err() error {
 
 func (c *doneAfterIdle) Done() <-chan struct{} {
 	for c.p.Pending() != 0 {
-		time.Sleep(time.Millisecond)
+		runtime.Gosched()
 	}
 	return c.closed
 }

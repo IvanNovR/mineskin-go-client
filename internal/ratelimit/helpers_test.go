@@ -54,7 +54,7 @@ func eventually(t *testing.T, what string, cond func() bool) {
 		if time.Now().After(deadline) {
 			failTimeout(t, what)
 		}
-		time.Sleep(pollEvery)
+		pause()
 	}
 }
 
@@ -72,8 +72,12 @@ func driveClock(t *testing.T, fake *clock.Fake, step time.Duration, fn func() er
 		default:
 		}
 		fake.Advance(step)
-		time.Sleep(pollEvery)
+		pause()
 	}
 	failTimeout(t, "the call to finish while advancing the fake clock")
 	return nil
 }
+
+// pause waits one poll tick between two checks of shared state. It is the only
+// real-time wait the polling helpers use; no assertion depends on its length.
+func pause() { time.Sleep(pollEvery) }

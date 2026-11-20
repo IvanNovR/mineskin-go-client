@@ -313,9 +313,9 @@ func runWithFakeTime(t *testing.T, fake *clock.Fake, c *Client, srv *clientServe
 			advancedAt = hits
 			fake.Advance(1500 * time.Millisecond)
 		}
-		time.Sleep(time.Millisecond)
+		pause()
 	}
-	t.Fatal("call did not finish")
+	failTimeout(t, "the call to finish")
 	return nil
 }
 
@@ -474,7 +474,7 @@ func TestTimeoutIsPerAttempt(t *testing.T) {
 	const timeout = 150 * time.Millisecond
 	var calls atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(100 * time.Millisecond) // real clock: the budget is a context deadline
 		if calls.Add(1) == 1 {
 			writeJSON(429, tooSoonJSON)(w, r)
 			return

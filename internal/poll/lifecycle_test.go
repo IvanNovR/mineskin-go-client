@@ -3,6 +3,7 @@ package poll
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -88,7 +89,7 @@ func TestPollerRunLoopPollsUntilDoneThenStops(t *testing.T) {
 	}
 	if err := driveClock(t, fake, time.Second, func() error {
 		for !isFinished(w) {
-			time.Sleep(pollEvery)
+			pause()
 		}
 		return nil
 	}); err != nil {
@@ -121,9 +122,11 @@ func TestPollerCloseWaitsForRunLoopAndInFlightGet(t *testing.T) {
 		Options: Options{InitialDelay: time.Second, Interval: func(int) time.Duration { return time.Second }, MaxAttempts: 10},
 	})
 	release := make(chan struct{})
+	var checkFinished atomic.Bool
 	f.getFn = func(id string) (*fakeResp, error) {
 		close(entered)
 		<-release
+		defer checkFinished.Store(true)
 		return waiting(id), nil
 	}
 	w := p.Register("a", time.Time{})
@@ -134,7 +137,7 @@ func TestPollerCloseWaitsForRunLoopAndInFlightGet(t *testing.T) {
 				return
 			default:
 				fake.Advance(time.Second)
-				time.Sleep(time.Millisecond)
+				pause()
 			}
 		}
 	}()
@@ -142,16 +145,14 @@ func TestPollerCloseWaitsForRunLoopAndInFlightGet(t *testing.T) {
 
 	closed := make(chan struct{})
 	go func() { p.Close(errClosed); close(closed) }()
-	select {
-	case <-closed:
-		t.Fatal("Close returned while a check was in flight")
-	case <-time.After(20 * time.Millisecond):
-	}
 	close(release)
 	select {
 	case <-closed:
 	case <-time.After(waitTimeout(t)):
 		t.Fatal("Close did not return")
+	}
+	if !checkFinished.Load() {
+		t.Error("Close returned before the in-flight check finished")
 	}
 	if _, _, err := w.Result(); !errors.Is(err, errClosed) {
 		t.Errorf("err = %v, want the close error", err)

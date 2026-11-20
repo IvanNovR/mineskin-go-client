@@ -235,6 +235,11 @@ func TestGetConcurrencyIsRealInFlight(t *testing.T) {
 		chans = append(chans, goCall(getCalls(c)[keySkin]))
 	}
 	waitWaiting(t, c.getGroup, 3)
+	// Granted is not yet inside the handler: wait until both really are.
+	eventually(t, "two requests inside the handler", func() bool {
+		n := peak()
+		return n >= 2
+	})
 	close(release)
 	for i, ch := range chans {
 		if err := mustDone(t, "GetSkin", ch); err != nil {

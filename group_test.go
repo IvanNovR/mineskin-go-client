@@ -348,19 +348,6 @@ func TestReleaseOnTransportError(t *testing.T) {
 	}
 }
 
-func TestExchangeNilContextIsInvalidInput(t *testing.T) {
-	srv := newHitServer(t)
-	c := newTestClient(t, srv.URL)
-	var nilCtx context.Context
-	_, err := c.GetUser(nilCtx)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("error = %v, want ErrInvalidInput", err)
-	}
-	if srv.count(keyUser) != 0 {
-		t.Error("a request was sent for a nil context")
-	}
-}
-
 func TestGroupNames(t *testing.T) {
 	c := newTestClient(t, "http://127.0.0.1:1")
 	if c.genGroup.Name != "generate" || c.getGroup.Name != "get" {

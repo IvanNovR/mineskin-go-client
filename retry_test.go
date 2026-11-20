@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -473,5 +474,32 @@ func TestRetryCancelledWaitCountsPenaltyOnce(t *testing.T) {
 	}
 	if cancelled != control {
 		t.Errorf("interval after a cancelled retry wait = %v, want %v (the 429 counted once)", cancelled, control)
+	}
+}
+
+// TestTimeoutIsPerAttempt pins that every HTTP attempt, including the retry of
+// a 429, gets its own WithTimeout budget: the two attempts take longer than
+// the timeout together, and the call still succeeds.
+func TestTimeoutIsPerAttempt(t *testing.T) {
+	const timeout = 150 * time.Millisecond
+	var calls atomic.Int32
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		if calls.Add(1) == 1 {
+			writeJSON(429, tooSoonJSON)(w, r)
+			return
+		}
+		writeJSON(200, skinMinimal)(w, r)
+	})
+	c := newTestClient(t, srv.URL, WithTimeout(timeout))
+	start := time.Now()
+	if err := skinCall(context.Background(), c)(); err != nil {
+		t.Fatalf("GetSkin() error = %v, want success after one retry", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Errorf("attempts = %d, want 2", got)
+	}
+	if elapsed := time.Since(start); elapsed <= timeout {
+		t.Errorf("took %v, want more than %v so the test proves a per-attempt budget", elapsed, timeout)
 	}
 }

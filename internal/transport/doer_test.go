@@ -75,10 +75,8 @@ func TestDoWithoutBodyOrKey(t *testing.T) {
 
 func TestDoBuildErrors(t *testing.T) {
 	d := newDoer(t, func(http.ResponseWriter, *http.Request) {})
-	var nilCtx context.Context
 	for name, call := range map[string]func() error{
 		"invalid path": func() error { _, err := d.Do(context.Background(), http.MethodGet, "/v2/\x7f", nil); return err },
-		"nil context":  func() error { _, err := d.Do(nilCtx, http.MethodGet, "/x", nil); return err },
 		"bad method":   func() error { _, err := d.Do(context.Background(), "B AD", "/x", nil); return err },
 	} {
 		var build *BuildError
@@ -221,5 +219,79 @@ func TestDefaultTransportIsPrivateClone(t *testing.T) {
 	}
 	if DefaultTransport() == tr {
 		t.Error("DefaultTransport() returned a shared instance")
+	}
+}
+
+func TestDoTimeoutBoundsTheWholeExchange(t *testing.T) {
+	release := make(chan struct{})
+	d := newDoer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"succ`)
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	t.Cleanup(func() { close(release) })
+	d.Timeout = 50 * time.Millisecond
+	start := time.Now()
+	_, err := d.Do(context.Background(), http.MethodGet, "/x", nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded from the body read", err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Errorf("took %v, the timeout was not enforced", elapsed)
+	}
+}
+
+func TestDoTimeoutIsPerCall(t *testing.T) {
+	const timeout = 100 * time.Millisecond
+	d := newDoer(t, func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(60 * time.Millisecond)
+		_, _ = io.WriteString(w, `{}`)
+	})
+	d.Timeout = timeout
+	start := time.Now()
+	for i := range 2 {
+		if _, err := d.Do(context.Background(), http.MethodGet, "/x", nil); err != nil {
+			t.Fatalf("call %d error = %v, want success: each call has its own budget", i, err)
+		}
+	}
+	if elapsed := time.Since(start); elapsed <= timeout {
+		t.Errorf("two calls took %v, want more than %v so the test proves a per-call budget", elapsed, timeout)
+	}
+}
+
+type deadlineSpy struct {
+	next        http.RoundTripper
+	hasDeadline bool
+}
+
+func (s *deadlineSpy) RoundTrip(r *http.Request) (*http.Response, error) {
+	_, s.hasDeadline = r.Context().Deadline()
+	return s.next.RoundTrip(r)
+}
+
+func TestDoTimeoutDeadlineOnlyWhenSet(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		timeout time.Duration
+		want    bool
+	}{
+		{"timeout set", time.Minute, true},
+		{"no timeout", 0, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			d := newDoer(t, func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{}`) })
+			spy := &deadlineSpy{next: d.HTTP.Transport}
+			d.HTTP = &http.Client{Transport: spy}
+			d.Timeout = tt.timeout
+			if _, err := d.Do(context.Background(), http.MethodGet, "/x", nil); err != nil {
+				t.Fatalf("Do() error = %v", err)
+			}
+			if spy.hasDeadline != tt.want {
+				t.Errorf("request context has a deadline = %v, want %v", spy.hasDeadline, tt.want)
+			}
+		})
 	}
 }

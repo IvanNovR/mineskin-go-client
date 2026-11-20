@@ -26,7 +26,7 @@ const (
 // WithGetThrottle document them);
 // negative fields are invalid and make NewClient return an error matching
 // ErrInvalidInput. Time spent queued is bounded only by the caller's context:
-// WithTimeout covers the HTTP exchange alone. Throttling cannot be turned
+// WithTimeout covers each HTTP attempt alone. Throttling cannot be turned
 // off.
 type Throttle struct {
 	// Interval is the minimum time between two request starts.

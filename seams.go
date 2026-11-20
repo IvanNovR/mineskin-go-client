@@ -76,13 +76,10 @@ func (c *Client) loadGrants(ctx context.Context) (ratelimit.Grants, error) {
 
 // exchange waits for a start slot in g, sends the request and maps the raw
 // errors of the group to the public contract. Time spent queued is bounded
-// only by ctx; the client timeout covers the HTTP exchange alone. A non-nil
+// only by ctx; WithTimeout covers each HTTP attempt alone. A non-nil
 // proceed is the start gate (see ratelimit.Group.Do); when it declines,
 // errCheckSkipped is returned.
 func (c *Client) exchange(ctx context.Context, g *ratelimit.Group, method, path string, body *transport.Body, proceed func() bool) (transport.Response, error) {
-	if ctx == nil {
-		return transport.Response{}, invalidInput("context is nil")
-	}
 	label := method + " " + path
 	merged, cancel := c.requestContext(ctx)
 	defer cancel()
@@ -215,9 +212,9 @@ func panickedIntervalError(r any) error {
 }
 
 // do sends a request through the transport and returns its raw errors: a
-// *transport.BuildError for a nil context or an unbuildable request, otherwise
+// *transport.BuildError for an unbuildable request, otherwise
 // the HTTP client or body read error. mapGroupErr adds the method and path and
-// the public classification. ctx must not be nil.
+// the public classification.
 func (c *Client) do(ctx context.Context, method, path string, body *transport.Body) (transport.Response, error) {
 	return c.doer.Do(ctx, method, path, body)
 }

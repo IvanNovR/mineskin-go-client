@@ -66,10 +66,13 @@ func WithBaseURL(baseURL string) Option {
 	return func(c *config) { c.baseURL = baseURL }
 }
 
-// WithTimeout sets the total timeout of a single HTTP request, including
-// reading the response body. It must be greater than zero. It covers only
-// the HTTP exchange: time spent queued in a request group's throttle is
-// bounded only by the caller's context.
+// WithTimeout sets the timeout of each HTTP request attempt, including reading
+// the response body; the default is 10 seconds. It must be greater than zero.
+// It is applied per attempt with a context deadline, so every automatic retry
+// after a 429 gets its own budget, and time spent queued in a request group's
+// throttle does not count. It is not a limit on a whole call: the total
+// duration of Generate, WaitForJob or a retried request is bounded by the
+// caller's context, and WaitForJob also by the poll max attempts.
 func WithTimeout(d time.Duration) Option {
 	return func(c *config) { c.timeout = d }
 }

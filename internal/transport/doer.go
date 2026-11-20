@@ -50,7 +50,7 @@ type Response struct {
 }
 
 // BuildError reports that the request could not be built, for example because
-// of an invalid method, URL or a nil context. Nothing was sent.
+// of an invalid method or URL. Nothing was sent.
 type BuildError struct {
 	Err error
 }
@@ -70,17 +70,27 @@ type Doer struct {
 	// APIKey, when not empty, is sent as a bearer token. It is never logged.
 	APIKey string
 	HTTP   *http.Client
-	Clock  clock.Clock
-	Logger *slog.Logger
+	// Timeout bounds each call of Do, including reading the response body;
+	// zero or less means no timeout. It is applied per call with a context
+	// deadline, so every attempt of a retried request gets its own budget.
+	Timeout time.Duration
+	Clock   clock.Clock
+	Logger  *slog.Logger
 }
 
 // Do sends a request to the base URL plus path with an optional body (nil
-// sends none) and reads the complete response. ctx must not be nil. The
-// errors are raw: a *BuildError when the request cannot be built, otherwise
+// sends none) and reads the complete response. ctx must not be nil (a nil
+// ctx panics, as in the standard library). The errors are raw: a *BuildError
+// when the request cannot be built, otherwise
 // the HTTP client or body read error, so errors.Is(err, context.Canceled),
 // context.DeadlineExceeded and net.Error timeouts keep working. The caller adds
 // the context text; the errors never contain headers or the API key.
 func (d *Doer) Do(ctx context.Context, method, path string, body *Body) (Response, error) {
+	if d.Timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, d.Timeout)
+		defer cancel()
+	}
 	req, err := http.NewRequestWithContext(ctx, method, d.BaseURL+path, body.reader())
 	if err != nil {
 		return Response{}, &BuildError{Err: err}

@@ -52,9 +52,9 @@
 // without waiting.
 //
 // Generate does the same in a single request and returns the skin directly.
-// The request is bounded by the client timeout, so raise it with WithTimeout
-// (or pass a context with a deadline) for slow generations; for long jobs
-// prefer Queue and WaitForJob.
+// The HTTP request is bounded by the timeout of WithTimeout, so raise it (or
+// pass a context with a deadline) for slow generations; for long jobs prefer
+// Queue and WaitForJob.
 //
 // # Errors
 //
@@ -122,7 +122,11 @@
 // is retried; for other failures the errors carry APIError.RetryAfter,
 // APIError.RateLimit and IsRetryable(err) so that the caller can decide.
 // Time spent waiting in the throttle is bounded only by the context of the
-// call: WithTimeout covers the HTTP exchange alone.
+// call: WithTimeout covers each HTTP attempt alone, a retry after a 429
+// included, and never the time in the throttle. The total duration of Generate
+// or WaitForJob is bounded by the caller's context (and, for waits, by the
+// poll max attempts). Passing a nil context panics, as in the standard
+// library.
 //
 // # Shutting down
 //

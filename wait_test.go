@@ -122,18 +122,14 @@ func TestWaitForJobRejectsInvalidInputWithoutRequest(t *testing.T) {
 	var hits atomic.Int32
 	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
 	c := newTestClient(t, srv.URL, fastPolling())
-	cases := map[string]struct {
-		ctx context.Context
-		job Job
-	}{
-		"empty id": {context.Background(), Job{}},
-		"dot":      {context.Background(), Job{ID: "."}},
-		"dot dot":  {context.Background(), Job{ID: ".."}},
-		"nil ctx":  {nil, Job{ID: "j1"}},
+	cases := map[string]Job{
+		"empty id": {},
+		"dot":      {ID: "."},
+		"dot dot":  {ID: ".."},
 	}
-	for name, tc := range cases {
+	for name, job := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := c.WaitForJob(tc.ctx, tc.job)
+			got, err := c.WaitForJob(context.Background(), job)
 			if !errors.Is(err, ErrInvalidInput) || got != nil {
 				t.Fatalf("got = %+v err = %v, want ErrInvalidInput", got, err)
 			}

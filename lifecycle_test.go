@@ -208,3 +208,20 @@ func TestCallerCancelVsCloseDistinguished(t *testing.T) {
 		t.Errorf("Close error = %v, want ErrClientClosed", err)
 	}
 }
+
+// TestCheckOpenFollowsBaseContext pins that the closed state is derived from
+// the base context: cancelling it is enough, no separate flag exists.
+func TestCheckOpenFollowsBaseContext(t *testing.T) {
+	c, err := NewClient(WithUserAgent("test/1.0"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	if err := c.checkOpen(); err != nil {
+		t.Fatalf("checkOpen() before cancel = %v, want nil", err)
+	}
+	c.cancelBase(ErrClientClosed)
+	if err := c.checkOpen(); !errors.Is(err, ErrClientClosed) {
+		t.Fatalf("checkOpen() after cancel = %v, want ErrClientClosed", err)
+	}
+}

@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 	"github.com/IvanNovR/mineskin-go-client/internal/poll"
@@ -51,10 +50,11 @@ type Client struct {
 	genGroup *ratelimit.Group
 	getGroup *ratelimit.Group
 
-	// baseCtx is cancelled by Close and parents every request context.
+	// baseCtx is cancelled by Close and parents every request context. A done
+	// baseCtx is the closed state. It is handed to the poller and tuner as a
+	// constructor argument only.
 	baseCtx    context.Context
 	cancelBase context.CancelCauseFunc
-	closed     atomic.Bool
 	closeOnce  sync.Once
 	// bg tracks the grants load goroutine, which Close waits for.
 	bg sync.WaitGroup
@@ -94,11 +94,11 @@ func NewClient(opts ...Option) (*Client, error) {
 			APIKey:    cfg.apiKey,
 			HTTP: &http.Client{
 				Transport:     rt,
-				Timeout:       cfg.timeout,
 				CheckRedirect: transport.CheckRedirect,
 			},
-			Clock:  cfg.clock,
-			Logger: cfg.logger,
+			Timeout: cfg.timeout,
+			Clock:   cfg.clock,
+			Logger:  cfg.logger,
 		},
 		logger:     cfg.logger,
 		polling:    cfg.polling,

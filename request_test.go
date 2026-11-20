@@ -82,24 +82,6 @@ func TestDoURLIsBasePlusPath(t *testing.T) {
 	}
 }
 
-func TestDoNilContextIsInvalidInput(t *testing.T) {
-	var hits atomic.Int32
-	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		hits.Add(1)
-		okHandler(w, r)
-	})
-	c := newTestClient(t, srv.URL)
-	var nilCtx context.Context
-	_, err := c.do(nilCtx, http.MethodGet, "/v2/x", nil)
-	var build *transport.BuildError
-	if !errors.As(err, &build) {
-		t.Fatalf("err = %v, want *transport.BuildError", err)
-	}
-	if hits.Load() != 0 {
-		t.Error("a request was sent for a nil context")
-	}
-}
-
 func TestDoInvalidPathIsInvalidInput(t *testing.T) {
 	c := newTestClient(t, "http://example.invalid")
 	_, err := c.do(context.Background(), http.MethodGet, "/v2/\x7f", nil)

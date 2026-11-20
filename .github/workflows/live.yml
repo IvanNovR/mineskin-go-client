@@ -1,0 +1,63 @@
+# Live tests: on demand only, run `make test-live` against the real MineSkin API
+# with the MINESKIN_API_KEY secret of the GitHub Environment `live` (deployment
+# branches dev and main, no required reviewer). The `paid` input sets
+# MINESKIN_LIVE_PAID=1 to also run the tests that need a paid key; leave it off
+# for a free key. The tests use their default skin UUID (no input for it).
+#
+# workflow_dispatch works only once this file is on the default branch (main),
+# so before the first promotion the live tests run locally with
+# `make test-live` (see RELEASING.md "Live tests").
+#
+# Hardening: actions are pinned to full commit SHAs, the workflow token is
+# read-only, credentials are not persisted, the key reaches only the guard and
+# test steps through env: and is never printed (no set -x, no env dumps), and
+# no ${{ }} appears inside run:. Runs are queued, never cancelled, so two runs
+# never spend credits at the same time.
+name: Live tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      paid:
+        description: Also run the tests that need a paid key (MINESKIN_LIVE_PAID=1)
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+env:
+  GOTOOLCHAIN: local
+
+concurrency:
+  group: live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: live
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check that the API key is configured
+        env:
+          MINESKIN_API_KEY: ${{ secrets.MINESKIN_API_KEY }}
+        run: |
+          [ -n "$MINESKIN_API_KEY" ] || {
+            echo "::error::MINESKIN_API_KEY secret not configured in environment live"
+            exit 1
+          }
+      - name: Live tests
+        env:
+          MINESKIN_API_KEY: ${{ secrets.MINESKIN_API_KEY }}
+          MINESKIN_LIVE_PAID: ${{ inputs.paid && '1' || '0' }}
+        run: make test-live

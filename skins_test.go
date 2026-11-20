@@ -29,14 +29,6 @@ const skinFixture = `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1
 "texture":{"data":{"value":"VAL","signature":"SIG"},"hash":{"skin":"sh","cape":"ch"},"url":{"skin":"su","cape":"cu"}},
 "generator":{"timestamp":1700000000123,"duration":1500},"views":7,"duplicate":true}}`
 
-func writeJSON(status int, body string) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body)) //nolint:gosec // G705: test server writes fixed JSON fixtures
-	}
-}
-
 func TestGetSkinDecodesFullSkin(t *testing.T) {
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("MineSkin-Breadcrumb", "crumb1")

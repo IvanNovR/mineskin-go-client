@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"image"
 	"image/color"
 	"image/png"
 	"io"
@@ -67,16 +66,6 @@ func writeTempSkin(t *testing.T, content []byte) string {
 		t.Fatal(err)
 	}
 	return path
-}
-
-func testImage() *image.NRGBA {
-	img := image.NewNRGBA(image.Rect(0, 0, 4, 3))
-	for x := 0; x < 4; x++ {
-		for y := 0; y < 3; y++ {
-			img.Set(x, y, color.NRGBA{R: uint8(x * 40), G: uint8(y * 60), B: 7, A: 255})
-		}
-	}
-	return img
 }
 
 func TestSourceMultipart(t *testing.T) {

@@ -2,12 +2,17 @@ package mineskin
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -121,3 +126,112 @@ func fastPolling() Option {
 
 // pollerT0 is the start of the fake clocks that drive the poller in tests.
 var pollerT0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+const (
+	// fallbackWaitTimeout bounds every blocking wait of a test.
+	fallbackWaitTimeout = 20 * time.Second
+	// deadlineMargin is kept free before the test binary's own deadline so a
+	// stuck wait fails with a goroutine dump instead of a bare panic.
+	deadlineMargin = 2 * time.Second
+	// pollEvery is how often eventually and driveClock re-check.
+	pollEvery = time.Millisecond
+)
+
+// waitTimeout is the single bound for blocking waits: fallbackWaitTimeout,
+// shortened to fit before the test deadline when there is one.
+func waitTimeout(t *testing.T) time.Duration {
+	t.Helper()
+	limit := fallbackWaitTimeout
+	if dl, ok := t.Deadline(); ok {
+		limit = min(limit, time.Until(dl)-deadlineMargin)
+	}
+	return max(limit, time.Millisecond)
+}
+
+// failTimeout fails the test and dumps every goroutine to ease diagnosis.
+func failTimeout(t *testing.T, what string) {
+	t.Helper()
+	buf := make([]byte, 1<<20)
+	buf = buf[:runtime.Stack(buf, true)]
+	t.Fatalf("timed out waiting for %s\n%s", what, buf)
+}
+
+// eventually polls cond until it holds or waitTimeout passes.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(waitTimeout(t))
+	for !cond() {
+		if time.Now().After(deadline) {
+			failTimeout(t, what)
+		}
+		time.Sleep(pollEvery)
+	}
+}
+
+// driveClock runs fn in a goroutine and advances fake by step until fn
+// returns, then returns fn's error. No real delay is waited for beyond one
+// poll tick, so a fake timer is never missed.
+func driveClock(t *testing.T, fake *clock.Fake, step time.Duration, fn func() error) error {
+	t.Helper()
+	res := make(chan error, 1)
+	go func() { res <- fn() }()
+	deadline := time.Now().Add(waitTimeout(t))
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-res:
+			return err
+		default:
+		}
+		fake.Advance(step)
+		time.Sleep(pollEvery)
+	}
+	failTimeout(t, "the call to finish while advancing the fake clock")
+	return nil
+}
+
+// waitCtx returns a context that ends after waitTimeout.
+func waitCtx(t *testing.T) context.Context {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout(t))
+	t.Cleanup(cancel)
+	return ctx
+}
+
+// hdr builds a header from key/value pairs; a repeated key keeps every value.
+func hdr(kv ...string) http.Header {
+	h := http.Header{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		h.Add(kv[i], kv[i+1])
+	}
+	return h
+}
+
+// writeJSON replies with status and the fixed JSON body.
+func writeJSON(status int, body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write([]byte(body)) //nolint:gosec // G705: test server writes fixed JSON fixtures
+	}
+}
+
+// testImage is a small opaque image with distinct pixels.
+func testImage() *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, 4, 3))
+	for x := range uint8(4) {
+		for y := range uint8(3) {
+			img.Set(int(x), int(y), color.NRGBA{R: x * 40, G: y * 60, B: 7, A: 255})
+		}
+	}
+	return img
+}
+
+// testPNG is testImage encoded as PNG.
+func testPNG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, testImage()); err != nil {
+		t.Fatalf("png.Encode() error = %v", err)
+	}
+	return buf.Bytes()
+}

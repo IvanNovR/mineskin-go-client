@@ -106,7 +106,7 @@ func TestCloseCancelsInFlightRequest(t *testing.T) {
 	}
 	select {
 	case <-handlerDone:
-	case <-time.After(waitTimeout):
+	case <-time.After(waitTimeout(t)):
 		t.Fatal("handler did not see its context cancelled")
 	}
 }
@@ -287,7 +287,7 @@ func TestConcurrentCloseWithCallsInFlight(t *testing.T) {
 			if err != nil {
 				t.Errorf("Close() error = %v, want nil", err)
 			}
-		case <-time.After(waitTimeout):
+		case <-time.After(waitTimeout(t)):
 			t.Fatal("a concurrent Close did not return")
 		}
 	}

@@ -51,14 +51,6 @@ const nginx502Page = `<html>
 </html>
 `
 
-func hdr(kv ...string) http.Header {
-	h := http.Header{}
-	for i := 0; i+1 < len(kv); i += 2 {
-		h.Set(kv[i], kv[i+1])
-	}
-	return h
-}
-
 func viaCloudflare() http.Header {
 	return hdr("server", "cloudflare", "cf-ray", "a4da9b2dbeae3a73-FRA", "content-type", "text/html")
 }

@@ -30,14 +30,6 @@ func decodeMeta[W any](raw transport.Response) (ResponseMeta, error) {
 	return meta, err
 }
 
-func mhdr(kv ...string) http.Header {
-	h := http.Header{}
-	for i := 0; i+1 < len(kv); i += 2 {
-		h.Add(kv[i], kv[i+1])
-	}
-	return h
-}
-
 func TestHandleResponseSuccess(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -130,7 +122,7 @@ func TestHandleResponseUnexpected(t *testing.T) {
 func TestHandleResponseUnexpectedUsesHeaders(t *testing.T) {
 	raw := transport.Response{
 		Status: 530,
-		Header: mhdr("Server", "cloudflare", "CF-Ray", "8f3a-FRA", "Content-Type", "text/plain"),
+		Header: hdr("Server", "cloudflare", "CF-Ray", "8f3a-FRA", "Content-Type", "text/plain"),
 		Body:   []byte("error code: 1033"),
 	}
 	_, err := decodeMeta[struct{}](raw)
@@ -241,7 +233,7 @@ func TestHandleResponseListsAndLinks(t *testing.T) {
 func TestHandleResponseHeaders(t *testing.T) {
 	raw := transport.Response{
 		Status: 200,
-		Header: mhdr("Mineskin-Server", "api-1", "Mineskin-Breadcrumb", "crumb", "X-Mineskin-Foo", "bar", "Content-Type", "application/json"),
+		Header: hdr("Mineskin-Server", "api-1", "Mineskin-Breadcrumb", "crumb", "X-Mineskin-Foo", "bar", "Content-Type", "application/json"),
 		Body:   []byte(`{}`),
 	}
 	meta, err := decodeMeta[struct{}](raw)
@@ -261,7 +253,7 @@ func TestHandleResponseHeaders(t *testing.T) {
 }
 
 func TestHandleResponseAPIErrorCarriesHeaders(t *testing.T) {
-	raw := transport.Response{Status: 401, Header: mhdr("Mineskin-Breadcrumb", "b1"), Body: []byte(`{"success":false}`)}
+	raw := transport.Response{Status: 401, Header: hdr("Mineskin-Breadcrumb", "b1"), Body: []byte(`{"success":false}`)}
 	_, err := decodeMeta[struct{}](raw)
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Meta.Breadcrumb != "b1" || apiErr.Meta.Header.Get("Mineskin-Breadcrumb") != "b1" {
@@ -300,7 +292,7 @@ func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
 }
 
 func TestDecodeResponseHeaderIsAClone(t *testing.T) {
-	src := mhdr("Mineskin-Breadcrumb", "crumb", "Set-Cookie", "secret=1")
+	src := hdr("Mineskin-Breadcrumb", "crumb", "Set-Cookie", "secret=1")
 	meta, err := decodeMeta[struct{}](transport.Response{Status: 200, Header: src, Body: []byte(`{}`)})
 	if err != nil {
 		t.Fatal(err)

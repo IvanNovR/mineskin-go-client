@@ -21,7 +21,7 @@ func barrierGet(t *testing.T, parties int32) (fn func(string) (*fakeResp, error)
 		}
 		select {
 		case <-all:
-		case <-time.After(waitTimeout):
+		case <-time.After(waitTimeout(t)):
 			t.Errorf("only %d of %d checks ran at once", arrived.Load(), parties)
 		}
 		done.Add(1)

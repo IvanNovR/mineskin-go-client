@@ -16,51 +16,11 @@ import (
 	"github.com/IvanNovR/mineskin-go-client/internal/poll"
 )
 
-const waitTestTimeout = 20 * time.Second
-
-func waitCtx(t *testing.T) context.Context {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), waitTestTimeout)
-	t.Cleanup(cancel)
-	return ctx
-}
-
-// advanceUntil moves fake forward in step increments until res delivers, and
-// returns that error. A poller timer is never missed and no real delay is
-// waited for.
-func advanceUntil(t *testing.T, fake *clock.Fake, step time.Duration, res <-chan error) error {
-	t.Helper()
-	deadline := time.Now().Add(waitTestTimeout)
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-res:
-			return err
-		default:
-		}
-		fake.Advance(step)
-		time.Sleep(time.Millisecond)
-	}
-	t.Fatal("timed out advancing the fake clock")
-	return nil
-}
-
 func jobJSON(id, status string) string {
 	if status == "completed" {
 		return `{"success":true,"job":{"id":"` + id + `","status":"completed","result":"` + jobResultID + `"}}`
 	}
 	return `{"success":true,"job":{"id":"` + id + `","status":"` + status + `"}}`
-}
-
-// eventually waits up to 10 s for cond.
-func eventually(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(2 * time.Millisecond)
-	}
 }
 
 func TestWaitForJobCompletes(t *testing.T) {
@@ -176,7 +136,7 @@ func TestWaitForJobUsesETA(t *testing.T) {
 			return err
 		})
 		eventually(t, "job registered", func() bool { return c.poller.Pending() == 1 })
-		err := advanceUntil(t, fake, step, res)
+		err := driveClock(t, fake, step, func() error { return <-res })
 		return time.Unix(0, firstGet.Load()).Sub(start), err
 	}
 
@@ -395,7 +355,7 @@ func TestWaitForJobBatchedOverHTTP(t *testing.T) {
 	eventually(t, "all jobs registered", func() bool { return c.poller.Pending() == n })
 	allDone := make(chan error, 1)
 	go func() { wg.Wait(); allDone <- nil }()
-	_ = advanceUntil(t, fake, 50*time.Millisecond, allDone)
+	_ = driveClock(t, fake, 50*time.Millisecond, func() error { return <-allDone })
 
 	for i, err := range errs {
 		if err != nil {
@@ -488,7 +448,7 @@ func TestPollerWakesForSoonerJob(t *testing.T) {
 		return err
 	})
 	eventually(t, "sooner job registered", func() bool { return c.poller.Pending() == 2 })
-	err := advanceUntil(t, fake, 10*time.Millisecond, soon)
+	err := driveClock(t, fake, 10*time.Millisecond, func() error { return <-soon })
 
 	if err != nil {
 		t.Fatal(err)

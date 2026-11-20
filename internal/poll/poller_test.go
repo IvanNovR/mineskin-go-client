@@ -13,9 +13,6 @@ import (
 
 var pollerT0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-// waitTimeout bounds every blocking wait of a test.
-const waitTimeout = 5 * time.Second
-
 // fakeResp is the response type the tests poll for.
 type fakeResp struct{ state State }
 

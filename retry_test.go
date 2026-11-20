@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"image"
-	"image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -143,15 +142,6 @@ func TestWithRateLimitRetriesRejectsNegative(t *testing.T) {
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("NewClient() error = %v, want ErrInvalidInput", err)
 	}
-}
-
-func testPNG(t *testing.T) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, image.NewNRGBA(image.Rect(0, 0, 64, 64))); err != nil {
-		t.Fatalf("png.Encode() error = %v", err)
-	}
-	return buf.Bytes()
 }
 
 func TestRetryReplaysRequestBodies(t *testing.T) {
@@ -312,7 +302,7 @@ func runWithFakeTime(t *testing.T, fake *clock.Fake, c *Client, srv *clientServe
 	t.Helper()
 	res := goCall(call)
 	advancedAt := -1
-	deadline := time.Now().Add(waitTimeout)
+	deadline := time.Now().Add(waitTimeout(t))
 	for time.Now().Before(deadline) {
 		select {
 		case err := <-res:

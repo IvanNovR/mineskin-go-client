@@ -86,20 +86,20 @@ func TestPollerRunLoopPollsUntilDoneThenStops(t *testing.T) {
 	if !p.Running() {
 		t.Fatal("Register did not start the run loop")
 	}
-	deadline := time.Now().Add(waitTimeout)
-	for !isFinished(w) {
-		if time.Now().After(deadline) {
-			t.Fatal("job not finished")
+	if err := driveClock(t, fake, time.Second, func() error {
+		for !isFinished(w) {
+			time.Sleep(pollEvery)
 		}
-		fake.Advance(time.Second)
-		time.Sleep(time.Millisecond)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 
 	r, st, err := w.Result()
 	if err != nil || r == nil || !st.Done {
 		t.Errorf("Result() = %v %+v %v, want the completed response", r, st, err)
 	}
-	eventuallyTrue(t, func() bool { return !p.Running() })
+	eventually(t, "run loop to stop", func() bool { return !p.Running() })
 }
 
 func TestPollerLeaveStopsIdleRunLoop(t *testing.T) {
@@ -109,19 +109,7 @@ func TestPollerLeaveStopsIdleRunLoop(t *testing.T) {
 
 	p.Leave(w)
 
-	eventuallyTrue(t, func() bool { return !p.Running() })
-}
-
-// eventuallyTrue polls cond until it holds or waitTimeout passes.
-func eventuallyTrue(t *testing.T, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(waitTimeout)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatal("condition not reached")
-		}
-		time.Sleep(time.Millisecond)
-	}
+	eventually(t, "run loop to stop", func() bool { return !p.Running() })
 }
 
 func TestPollerCloseWaitsForRunLoopAndInFlightGet(t *testing.T) {
@@ -162,7 +150,7 @@ func TestPollerCloseWaitsForRunLoopAndInFlightGet(t *testing.T) {
 	close(release)
 	select {
 	case <-closed:
-	case <-time.After(waitTimeout):
+	case <-time.After(waitTimeout(t)):
 		t.Fatal("Close did not return")
 	}
 	if _, _, err := w.Result(); !errors.Is(err, errClosed) {

@@ -25,25 +25,6 @@ const (
 	staleRefresh = 5*time.Minute + 2*time.Second
 )
 
-// callAdvancing runs call while advancing the fake clock by 1 ms steps until it
-// returns, so a start slot is never missed.
-func callAdvancing(t *testing.T, fake *clock.Fake, call func() error) error {
-	t.Helper()
-	res := goCall(call)
-	deadline := time.Now().Add(waitTimeout)
-	for time.Now().Before(deadline) {
-		select {
-		case err := <-res:
-			return err
-		default:
-			fake.Advance(delayTick)
-			time.Sleep(waitPoll)
-		}
-	}
-	t.Fatal("call did not finish")
-	return nil
-}
-
 func limitsNow(c *Client) (time.Duration, int) {
 	l := c.genGroup.Tuner.Limits(c.clock.Now())
 	return l.Interval, l.Concurrency
@@ -280,11 +261,11 @@ func TestCloseCancelsRefreshInFlight(t *testing.T) {
 	})
 	fake := clock.NewFake(pollerT0)
 	c := newTestClient(t, srv.URL, withClock(fake), WithAutoTuning())
-	if err := callAdvancing(t, fake, queueCall(c)); err != nil {
+	if err := driveClock(t, fake, delayTick, queueCall(c)); err != nil {
 		t.Fatal(err)
 	}
 	fake.Advance(staleRefresh)
-	if err := callAdvancing(t, fake, queueCall(c)); err != nil {
+	if err := driveClock(t, fake, delayTick, queueCall(c)); err != nil {
 		t.Fatal(err)
 	}
 	eventually(t, "refresh to start", func() bool { return meHits.Load() == 2 })

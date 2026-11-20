@@ -13,9 +13,6 @@ import (
 )
 
 const (
-	waitTimeout = 5 * time.Second
-	waitPoll    = time.Millisecond
-
 	keyQueue    = "POST /v2/queue"
 	keyGenerate = "POST /v2/generate"
 	keySkin     = "GET /v2/skins/" + testSkinID
@@ -119,7 +116,7 @@ func mustDone(t *testing.T, name string, ch <-chan error) error {
 	select {
 	case err := <-ch:
 		return err
-	case <-time.After(waitTimeout):
+	case <-time.After(waitTimeout(t)):
 		t.Fatalf("%s did not finish", name)
 		return nil
 	}
@@ -130,7 +127,7 @@ func mustReceive(t *testing.T, what string, ch <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-ch:
-	case <-time.After(waitTimeout):
+	case <-time.After(waitTimeout(t)):
 		t.Fatalf("timed out waiting for %s", what)
 	}
 }
@@ -336,7 +333,7 @@ func TestReleaseOnTransportError(t *testing.T) {
 	boom := errors.New("boom")
 	rt := roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, boom })
 	c := newTestClient(t, "http://127.0.0.1:1", WithTransport(rt), WithGetThrottle(oneSlot()))
-	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout(t))
 	defer cancel()
 	for i := range 3 {
 		if _, err := c.GetSkin(ctx, testSkinUUID); !errors.Is(err, boom) {

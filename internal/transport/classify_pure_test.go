@@ -10,7 +10,7 @@ import (
 
 var testNow = time.Date(2026, time.November, 19, 12, 0, 0, 0, time.UTC)
 
-func mhdr(kv ...string) http.Header {
+func hdr(kv ...string) http.Header {
 	h := http.Header{}
 	for i := 0; i+1 < len(kv); i += 2 {
 		h.Add(kv[i], kv[i+1])
@@ -69,12 +69,12 @@ func TestFilterHeaders(t *testing.T) {
 	}{
 		{"nil", nil, http.Header{}},
 		{"empty", http.Header{}, http.Header{}},
-		{"unrelated dropped", mhdr("Content-Type", "x", "Server", "nginx", "Set-Cookie", "a=b"), http.Header{}},
-		{"canonical name", mhdr("Mineskin-Server", "a"), http.Header{"Mineskin-Server": {"a"}}},
-		{"x prefix", mhdr("X-MineSkin-Id", "1"), http.Header{"X-Mineskin-Id": {"1"}}},
+		{"unrelated dropped", hdr("Content-Type", "x", "Server", "nginx", "Set-Cookie", "a=b"), http.Header{}},
+		{"canonical name", hdr("Mineskin-Server", "a"), http.Header{"Mineskin-Server": {"a"}}},
+		{"x prefix", hdr("X-MineSkin-Id", "1"), http.Header{"X-Mineskin-Id": {"1"}}},
 		{"repeated values kept (JB-08)", http.Header{"Mineskin-Tag": {"a", "b", "c"}}, http.Header{"Mineskin-Tag": {"a", "b", "c"}}},
 		{"non-canonical map keys merged", http.Header{"mineskin-x": {"1"}, "Mineskin-X": {"2"}}, http.Header{"Mineskin-X": {"2", "1"}}},
-		{"prefix must be followed by dash", mhdr("Mineskinfoo", "a", "X-Mineskinfoo", "b"), http.Header{}},
+		{"prefix must be followed by dash", hdr("Mineskinfoo", "a", "X-Mineskinfoo", "b"), http.Header{}},
 		{"empty value kept", http.Header{"Mineskin-Empty": {""}}, http.Header{"Mineskin-Empty": {""}}},
 		{"no values", http.Header{"Mineskin-None": nil}, http.Header{"Mineskin-None": nil}},
 	}

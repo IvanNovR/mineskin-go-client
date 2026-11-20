@@ -52,13 +52,19 @@ type Options struct {
 	UseETA bool
 }
 
+// maxETADelay caps the first-check wait taken from a server ETA, so a hostile
+// or broken ETA cannot park a waiter for years. It matches the one-hour cap on
+// other server-controlled delays; internal/poll may not import ratelimit, and
+// a package constant is simpler than plumbing the cap through Options.
+const maxETADelay = time.Hour
+
 // firstDelay returns the wait before the first check of a job with the given
-// ETA: eta-now when UseETA is set and the ETA is in the future, else
-// InitialDelay.
+// ETA: eta-now (at most maxETADelay) when UseETA is set and the ETA is in the
+// future, else InitialDelay.
 func (o Options) firstDelay(eta, now time.Time) time.Duration {
 	if o.UseETA && !eta.IsZero() {
 		if d := eta.Sub(now); d > 0 {
-			return d
+			return min(d, maxETADelay)
 		}
 	}
 	return o.InitialDelay

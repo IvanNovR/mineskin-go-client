@@ -120,3 +120,9 @@ gh secret set MINESKIN_API_KEY --env live
 ```
 
 `gh` prompts for the value, so it never lands in shell history. Agents and automation never handle the key. If the secret is missing, the workflow fails at its first check with "MINESKIN_API_KEY secret not configured in environment live"; the key is never printed.
+
+Keeping the key safe:
+
+- Store `MINESKIN_API_KEY` only as a secret of the `live` environment, never as a repository or organisation secret. Any workflow can read a repository secret without the environment.
+- Prefer a free or least-privilege key for the stored secret. A paid key costs money each time someone with dispatch rights runs `paid=true`.
+- Write access means key access: anyone who can push to `dev` can add a test that prints the key and then dispatch `live.yml` on `dev`. Today only the owner has write access. Before anyone else gets it, require pull requests on `dev` as well (the same trust model as releases, see [Trust model](#trust-model)).

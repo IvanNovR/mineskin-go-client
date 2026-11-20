@@ -12,7 +12,7 @@ import (
 
 var errClosed = errors.New("closed")
 
-func TestPollerUsesBaseContext(t *testing.T) {
+func TestPoller_UsesBaseContext(t *testing.T) {
 	type key struct{}
 	base := context.WithValue(context.Background(), key{}, "base")
 	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) { return completed(id), nil }}
@@ -30,7 +30,7 @@ func TestPollerUsesBaseContext(t *testing.T) {
 	}
 }
 
-func TestPollerRegisterAfterCloseIsFinished(t *testing.T) {
+func TestPoller_RegisterAfterCloseIsFinished(t *testing.T) {
 	p := newTestPoller(t, &fakeFetcher{}, Options{})
 	p.Close(errClosed)
 	w := p.Register("j0", time.Time{})
@@ -42,7 +42,7 @@ func TestPollerRegisterAfterCloseIsFinished(t *testing.T) {
 	}
 }
 
-func TestPollerCloseFailsPending(t *testing.T) {
+func TestPoller_CloseFailsPending(t *testing.T) {
 	p := newTestPoller(t, &fakeFetcher{}, Options{})
 	ws := addJobs(p, 3)
 	p.Close(errClosed)
@@ -57,7 +57,7 @@ func TestPollerCloseFailsPending(t *testing.T) {
 	}
 }
 
-func TestPollerCloseIsIdempotent(t *testing.T) {
+func TestPoller_CloseIsIdempotent(t *testing.T) {
 	p := newTestPoller(t, &fakeFetcher{}, Options{})
 	w := p.Register("a", time.Time{})
 	p.Close(errClosed)
@@ -67,7 +67,7 @@ func TestPollerCloseIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestPollerRunLoopPollsUntilDoneThenStops(t *testing.T) {
+func TestPoller_RunLoopPollsUntilDoneThenStops(t *testing.T) {
 	fake := clock.NewFake(pollerT0)
 	var calls int
 	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) {
@@ -103,7 +103,7 @@ func TestPollerRunLoopPollsUntilDoneThenStops(t *testing.T) {
 	eventually(t, "run loop to stop", func() bool { return !p.Running() })
 }
 
-func TestPollerLeaveStopsIdleRunLoop(t *testing.T) {
+func TestPoller_LeaveStopsIdleRunLoop(t *testing.T) {
 	p := newTestPoller(t, &fakeFetcher{}, Options{InitialDelay: time.Hour})
 	t.Cleanup(func() { p.Close(errClosed) })
 	w := p.Register("a", time.Time{})
@@ -113,7 +113,7 @@ func TestPollerLeaveStopsIdleRunLoop(t *testing.T) {
 	eventually(t, "run loop to stop", func() bool { return !p.Running() })
 }
 
-func TestPollerCloseWaitsForRunLoopAndInFlightGet(t *testing.T) {
+func TestPoller_CloseWaitsForRunLoopAndInFlightGet(t *testing.T) {
 	fake := clock.NewFake(pollerT0)
 	entered := make(chan struct{})
 	f := &fakeFetcher{}

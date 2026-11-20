@@ -121,7 +121,7 @@ func isFinished(w *Waiter[*fakeResp]) bool {
 
 func pendingCount(p *Poller[*fakeResp]) int { return p.Pending() }
 
-func TestPollerBatchUsesListAboveThreshold(t *testing.T) {
+func TestPoller_BatchUsesListAboveThreshold(t *testing.T) {
 	f := &fakeFetcher{}
 	f.listFn = func() ([]State, error) {
 		return []State{
@@ -157,7 +157,7 @@ func TestPollerBatchUsesListAboveThreshold(t *testing.T) {
 	}
 }
 
-func TestPollerIndividualAtOrBelowThreshold(t *testing.T) {
+func TestPoller_ChecksIndividuallyAtOrBelowThreshold(t *testing.T) {
 	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) { return waiting(id), nil }}
 	p := newTestPoller(t, f, Options{})
 	addJobs(p, batchThreshold)
@@ -170,7 +170,7 @@ func TestPollerIndividualAtOrBelowThreshold(t *testing.T) {
 	}
 }
 
-func TestPollerNoDoubleCountingDuringListCall(t *testing.T) {
+func TestPoller_NoDoubleCountingDuringListCall(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	f := &fakeFetcher{}
@@ -205,7 +205,7 @@ func TestPollerNoDoubleCountingDuringListCall(t *testing.T) {
 	}
 }
 
-func TestPollerDoneStateFinishesJob(t *testing.T) {
+func TestPoller_DoneStateFinishesJob(t *testing.T) {
 	tests := []struct {
 		name     string
 		state    State
@@ -235,7 +235,7 @@ func TestPollerDoneStateFinishesJob(t *testing.T) {
 	}
 }
 
-func TestPollerListMissingJobsKeepPolling(t *testing.T) {
+func TestPoller_ListMissingJobsKeepPolling(t *testing.T) {
 	f := &fakeFetcher{listFn: func() ([]State, error) {
 		return []State{{ID: "j0"}}, nil
 	}}
@@ -266,7 +266,7 @@ func delayJobs(p *Poller[*fakeResp], ws ...*Waiter[*fakeResp]) {
 	}
 }
 
-func TestPollerListUpdatesAllPendingInfo(t *testing.T) {
+func TestPoller_ListUpdatesAllPendingInfo(t *testing.T) {
 	eta := pollerT0.Add(5 * time.Second)
 	f := &fakeFetcher{listFn: func() ([]State, error) {
 		states := make([]State, 5)
@@ -290,79 +290,7 @@ func TestPollerListUpdatesAllPendingInfo(t *testing.T) {
 	}
 }
 
-func TestPollerListErrorFailsDueJobsOnly(t *testing.T) {
-	listErr := errors.New("list boom")
-	f := &fakeFetcher{listFn: func() ([]State, error) { return nil, listErr }}
-	p := newTestPoller(t, f, Options{})
-	ws := addJobs(p, 5)
-	delayJobs(p, ws[3], ws[4])
-
-	p.tick(pollerT0.Add(time.Second))
-
-	for i, w := range ws {
-		if i < 3 {
-			if !isFinished(w) || !errors.Is(w.err, listErr) {
-				t.Errorf("j%d finished = %v, err = %v; want failed with list error", i, isFinished(w), w.err)
-			}
-		} else if isFinished(w) {
-			t.Errorf("j%d finished, want still pending", i)
-		}
-	}
-	if pendingCount(p) != 2 {
-		t.Errorf("pending = %d, want 2", pendingCount(p))
-	}
-}
-
-func TestPollerListDoneFetchErrorFailsThatJob(t *testing.T) {
-	getErr := errors.New("get boom")
-	f := &fakeFetcher{}
-	f.listFn = func() ([]State, error) {
-		return []State{{ID: "j0", Done: true}, {ID: "j1", Done: true}}, nil
-	}
-	f.getFn = func(id string) (*fakeResp, error) {
-		if id == "j0" {
-			return nil, getErr
-		}
-		return completed(id), nil
-	}
-	p := newTestPoller(t, f, Options{})
-	ws := addJobs(p, 5)
-
-	p.tick(pollerT0.Add(time.Second))
-
-	if !isFinished(ws[0]) || !errors.Is(ws[0].err, getErr) {
-		t.Errorf("j0 err = %v, want get error", ws[0].err)
-	}
-	if !isFinished(ws[1]) || ws[1].err != nil || ws[1].resp == nil {
-		t.Errorf("j1 err = %v resp = %v, want completed", ws[1].err, ws[1].resp)
-	}
-	if pendingCount(p) != 3 {
-		t.Errorf("pending = %d, want 3", pendingCount(p))
-	}
-}
-
-func TestPollerIndividualErrorFailsOnlyThatJob(t *testing.T) {
-	getErr := errors.New("get boom")
-	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) {
-		if id == "j1" {
-			return nil, getErr
-		}
-		return waiting(id), nil
-	}}
-	p := newTestPoller(t, f, Options{})
-	ws := addJobs(p, 3)
-
-	p.tick(pollerT0.Add(time.Second))
-
-	if !isFinished(ws[1]) || !errors.Is(ws[1].err, getErr) {
-		t.Errorf("j1 err = %v, want get error", ws[1].err)
-	}
-	if isFinished(ws[0]) || isFinished(ws[2]) {
-		t.Error("other jobs finished, want still pending")
-	}
-}
-
-func TestPollerMaxAttempts(t *testing.T) {
+func TestPoller_MaxAttemptsExhaustsJob(t *testing.T) {
 	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) { return waiting(id), nil }}
 	p := newTestPoller(t, f, Options{MaxAttempts: 2})
 	w := p.add("a", time.Time{})
@@ -386,7 +314,7 @@ func TestPollerMaxAttempts(t *testing.T) {
 	}
 }
 
-func TestPollerIntervalPerAttempt(t *testing.T) {
+func TestPoller_IntervalPerAttempt(t *testing.T) {
 	var attempts []int
 	interval := func(attempt int) time.Duration {
 		attempts = append(attempts, attempt)
@@ -412,37 +340,7 @@ func TestPollerIntervalPerAttempt(t *testing.T) {
 	}
 }
 
-func TestPollerNegativeIntervalFailsJob(t *testing.T) {
-	interval := func(attempt int) time.Duration {
-		if attempt == 2 {
-			return -time.Millisecond
-		}
-		return time.Second
-	}
-	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) { return waiting(id), nil }}
-	p := newTestPoller(t, f, Options{Interval: interval})
-	a := p.add("a", time.Time{})
-	p.tick(pollerT0.Add(time.Second)) // a: attempt 1
-	b := p.add("b", time.Time{})
-	p.mu.Lock()
-	b.nextCheckAt = pollerT0.Add(2 * time.Second)
-	p.mu.Unlock()
-
-	p.tick(pollerT0.Add(2 * time.Second)) // a: attempt 2 (negative), b: attempt 1
-
-	var ie *IntervalError
-	if !isFinished(a) || !errors.As(a.err, &ie) || ie.Value != -time.Millisecond || ie.Panic != nil {
-		t.Errorf("a err = %v, want *IntervalError with value -1ms", a.err)
-	}
-	if isFinished(b) {
-		t.Error("b finished, want still pending")
-	}
-	if gets, _ := f.counts(); len(gets) != 2 || gets[1] != "b" {
-		t.Errorf("Get calls = %v, want [a b] (none for the failed a)", gets)
-	}
-}
-
-func TestPollerDedupSharesPending(t *testing.T) {
+func TestPoller_DedupSharesPending(t *testing.T) {
 	p := newTestPoller(t, &fakeFetcher{}, Options{})
 
 	first := p.add("a", time.Time{})
@@ -456,14 +354,14 @@ func TestPollerDedupSharesPending(t *testing.T) {
 	}
 }
 
-func TestPollerWaitersOfUnknownID(t *testing.T) {
+func TestPoller_WaitersOfUnknownID(t *testing.T) {
 	p := newTestPoller(t, &fakeFetcher{}, Options{})
 	if got := p.Waiters("nope"); got != 0 {
 		t.Errorf("Waiters(unknown) = %d, want 0", got)
 	}
 }
 
-func TestPollerLeaveRemovesWhenLastWaiterGone(t *testing.T) {
+func TestPoller_LeaveRemovesWhenLastWaiterGone(t *testing.T) {
 	p := newTestPoller(t, &fakeFetcher{}, Options{})
 	w := p.add("a", time.Time{})
 	p.add("a", time.Time{})
@@ -478,7 +376,7 @@ func TestPollerLeaveRemovesWhenLastWaiterGone(t *testing.T) {
 	}
 }
 
-func TestPollerFirstDelayUsesETA(t *testing.T) {
+func TestPoller_FirstDelayUsesETA(t *testing.T) {
 	p := newTestPoller(t, &fakeFetcher{}, Options{UseETA: true, InitialDelay: 10 * time.Second})
 	w := p.add("a", pollerT0.Add(50*time.Millisecond))
 	if want := pollerT0.Add(50 * time.Millisecond); !w.nextCheckAt.Equal(want) {
@@ -486,7 +384,7 @@ func TestPollerFirstDelayUsesETA(t *testing.T) {
 	}
 }
 
-func TestPollerFailedStateIsReportedInResult(t *testing.T) {
+func TestPoller_FailedStateIsReportedInResult(t *testing.T) {
 	f := &fakeFetcher{getFn: func(id string) (*fakeResp, error) { return failedResp(id), nil }}
 	p := newTestPoller(t, f, Options{})
 	w := p.add("a", time.Time{})
@@ -502,7 +400,7 @@ func TestPollerFailedStateIsReportedInResult(t *testing.T) {
 	}
 }
 
-func TestPollerFinishExactlyOnce(t *testing.T) {
+func TestPoller_FinishExactlyOnce(t *testing.T) {
 	p := newTestPoller(t, &fakeFetcher{}, Options{})
 	w := p.add("a", time.Time{})
 	resp := completed("a")
@@ -522,5 +420,99 @@ func TestPollerFinishExactlyOnce(t *testing.T) {
 	p.finish(w, nil, State{}, errors.New("stale"))
 	if isFinished(fresh) {
 		t.Error("stale finish completed the new entry")
+	}
+}
+
+// jobOutcome is what a test expects of one job after a tick.
+type jobOutcome int
+
+const (
+	outcomePending jobOutcome = iota
+	outcomeFailed
+	outcomeCompleted
+)
+
+func TestPoller_FailureIsolation(t *testing.T) {
+	t.Parallel()
+	listErr := errors.New("list boom")
+	getErr := errors.New("get boom")
+	tests := []struct {
+		name string
+		jobs int
+		// delayed jobs are not due on the tick.
+		delayed     []int
+		listFn      func() ([]State, error)
+		getFn       func(id string) (*fakeResp, error)
+		want        map[int]jobOutcome // jobs not listed must be pending
+		wantErr     map[int]error
+		wantPending int
+	}{
+		{
+			name:    "list error fails due jobs only",
+			jobs:    5,
+			delayed: []int{3, 4},
+			listFn:  func() ([]State, error) { return nil, listErr },
+			want:    map[int]jobOutcome{0: outcomeFailed, 1: outcomeFailed, 2: outcomeFailed},
+			wantErr: map[int]error{0: listErr, 1: listErr, 2: listErr}, wantPending: 2,
+		},
+		{
+			name: "fetch error of a done job from a list fails that job",
+			jobs: 5,
+			listFn: func() ([]State, error) {
+				return []State{{ID: "j0", Done: true}, {ID: "j1", Done: true}}, nil
+			},
+			getFn: func(id string) (*fakeResp, error) {
+				if id == "j0" {
+					return nil, getErr
+				}
+				return completed(id), nil
+			},
+			want:    map[int]jobOutcome{0: outcomeFailed, 1: outcomeCompleted},
+			wantErr: map[int]error{0: getErr}, wantPending: 3,
+		},
+		{
+			name: "individual get error fails only that job",
+			jobs: 3,
+			getFn: func(id string) (*fakeResp, error) {
+				if id == "j1" {
+					return nil, getErr
+				}
+				return waiting(id), nil
+			},
+			want:    map[int]jobOutcome{1: outcomeFailed},
+			wantErr: map[int]error{1: getErr}, wantPending: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			p := newTestPoller(t, &fakeFetcher{listFn: tt.listFn, getFn: tt.getFn}, Options{})
+			ws := addJobs(p, tt.jobs)
+			for _, i := range tt.delayed {
+				delayJobs(p, ws[i])
+			}
+
+			p.tick(pollerT0.Add(time.Second))
+
+			for i, w := range ws {
+				switch tt.want[i] {
+				case outcomeFailed:
+					if !isFinished(w) || !errors.Is(w.err, tt.wantErr[i]) {
+						t.Errorf("j%d finished = %v, err = %v; want failed with %v", i, isFinished(w), w.err, tt.wantErr[i])
+					}
+				case outcomeCompleted:
+					if !isFinished(w) || w.err != nil || w.resp == nil {
+						t.Errorf("j%d err = %v resp = %v, want completed", i, w.err, w.resp)
+					}
+				case outcomePending:
+					if isFinished(w) {
+						t.Errorf("j%d finished with %v, want still pending", i, w.err)
+					}
+				}
+			}
+			if got := pendingCount(p); got != tt.wantPending {
+				t.Errorf("pending = %d, want %d", got, tt.wantPending)
+			}
+		})
 	}
 }

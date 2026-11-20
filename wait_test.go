@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"runtime"
 	"strings"
 	"sync"
@@ -24,7 +25,7 @@ func jobJSON(id, status string) string {
 	return `{"success":true,"job":{"id":"` + id + `","status":"` + status + `"}}`
 }
 
-func TestWaitForJobCompletes(t *testing.T) {
+func TestWaitForJob_Completes(t *testing.T) {
 	t.Parallel()
 	var gets atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +46,7 @@ func TestWaitForJobCompletes(t *testing.T) {
 	}
 }
 
-func TestWaitForJobFailed(t *testing.T) {
+func TestWaitForJob_Failed(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"errors":[{"code":"bad_image","message":"Bad image"}],"job":{"id":"j1","status":"failed"}}`))
 	c := newTestClient(t, srv.URL, fastPolling())
@@ -60,7 +61,7 @@ func TestWaitForJobFailed(t *testing.T) {
 	}
 }
 
-func TestWaitForJobMaxAttempts(t *testing.T) {
+func TestWaitForJob_MaxAttempts(t *testing.T) {
 	t.Parallel()
 	var gets atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +82,7 @@ func TestWaitForJobMaxAttempts(t *testing.T) {
 	}
 }
 
-func TestWaitForJobRejectsInvalidInputWithoutRequest(t *testing.T) {
+func TestWaitForJob_RejectsInvalidInputWithoutRequest(t *testing.T) {
 	t.Parallel()
 	var hits atomic.Int32
 	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
@@ -107,7 +108,7 @@ func TestWaitForJobRejectsInvalidInputWithoutRequest(t *testing.T) {
 	}
 }
 
-func TestWaitForJobEscapesID(t *testing.T) {
+func TestWaitForJob_EscapesID(t *testing.T) {
 	t.Parallel()
 	var uri atomic.Value
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +125,7 @@ func TestWaitForJobEscapesID(t *testing.T) {
 	}
 }
 
-func TestWaitForJobUsesETA(t *testing.T) {
+func TestWaitForJob_UsesETA(t *testing.T) {
 	t.Parallel()
 	const eta, initialDelay = 50 * time.Millisecond, 600 * time.Millisecond
 	run := func(useETA bool) (time.Duration, error) {
@@ -172,7 +173,7 @@ func TestWaitForJobUsesETA(t *testing.T) {
 	}
 }
 
-func TestWaitForJobDedupSharesResult(t *testing.T) {
+func TestWaitForJob_DedupSharesResult(t *testing.T) {
 	t.Parallel()
 	var gets atomic.Int32
 	release := make(chan struct{})
@@ -222,64 +223,7 @@ func TestWaitForJobDedupSharesResult(t *testing.T) {
 	}
 }
 
-func TestWaitForJobContextCancel(t *testing.T) {
-	t.Parallel()
-	var gets atomic.Int32
-	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
-		gets.Add(1)
-		writeJSON(200, jobJSON("j1", "waiting"))(w, r)
-	})
-	fake := clock.NewFake(pollerT0)
-	c := newTestClient(t, srv.URL, fastPolling(), withClock(fake))
-	ctx, cancel := context.WithCancel(waitCtx(t))
-	errCh := make(chan error, 1)
-	go func() {
-		_, err := c.WaitForJob(ctx, Job{ID: "j1"})
-		errCh <- err
-	}()
-	eventually(t, "first poll", func() bool {
-		fake.Advance(time.Millisecond)
-		return gets.Load() >= 1
-	})
-
-	cancel()
-	err := <-errCh
-
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("err = %v, want context.Canceled", err)
-	}
-	if c.poller.Pending() != 0 {
-		t.Error("job still pending after cancel")
-	}
-	eventually(t, "poller exit", func() bool { return !c.poller.Running() })
-	// The poller is gone and holds no timer: stepping the clock far past
-	// many poll intervals must not produce another request.
-	after := gets.Load()
-	if got := fake.Timers(); got != 0 {
-		t.Errorf("pending fake timers after cancel = %d, want 0", got)
-	}
-	for range 50 {
-		fake.Advance(time.Second)
-	}
-	if gets.Load() != after {
-		t.Error("requests continued after cancel")
-	}
-}
-
-func TestWaitForJobContextDeadline(t *testing.T) {
-	t.Parallel()
-	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "waiting")))
-	c := newTestClient(t, srv.URL, fastPolling())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-
-	_, err := c.WaitForJob(ctx, Job{ID: "j1"})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("err = %v, want DeadlineExceeded", err)
-	}
-}
-
-func TestWaitForJobCancelKeepsJobForOtherWaiter(t *testing.T) {
+func TestWaitForJob_CancelKeepsJobForOtherWaiter(t *testing.T) {
 	t.Parallel()
 	release := make(chan struct{})
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -324,7 +268,7 @@ func TestWaitForJobCancelKeepsJobForOtherWaiter(t *testing.T) {
 	}
 }
 
-func TestWaitForJobPollerExitsWhenIdle(t *testing.T) {
+func TestWaitForJob_PollerExitsWhenIdle(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, fastPolling())
@@ -338,7 +282,7 @@ func TestWaitForJobPollerExitsWhenIdle(t *testing.T) {
 	eventually(t, "poller exit", func() bool { return !c.poller.Running() })
 }
 
-func TestWaitForJobRestartsPollerAfterIdle(t *testing.T) {
+func TestWaitForJob_RestartsPollerAfterIdle(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, fastPolling())
@@ -351,7 +295,7 @@ func TestWaitForJobRestartsPollerAfterIdle(t *testing.T) {
 	}
 }
 
-func TestWaitForJobBatchedOverHTTP(t *testing.T) {
+func TestWaitForJob_BatchedOverHTTP(t *testing.T) {
 	t.Parallel()
 	const n = 6
 	var lists atomic.Int32
@@ -401,7 +345,7 @@ func TestWaitForJobBatchedOverHTTP(t *testing.T) {
 	}
 }
 
-func TestWaitForJobConcurrent(t *testing.T) {
+func TestWaitForJob_Concurrent(t *testing.T) {
 	t.Parallel()
 	const ids, waiters = 20, 2
 	tr := &http.Transport{}
@@ -454,7 +398,7 @@ func TestWaitForJobConcurrent(t *testing.T) {
 
 // TestPollerWakesForSoonerJob checks that a job with an earlier check time
 // wakes a poller that is sleeping until a much later one.
-func TestPollerWakesForSoonerJob(t *testing.T) {
+func TestPoller_WakesForSoonerJob(t *testing.T) {
 	t.Parallel()
 	var soonGets atomic.Int32
 	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -520,7 +464,7 @@ func (c *doneAfterIdle) Done() <-chan struct{} {
 	return c.closed
 }
 
-func TestWaitForJobFinishedResultWinsOverDoneContext(t *testing.T) {
+func TestWaitForJob_FinishedResultWinsOverDoneContext(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, fastPolling())
@@ -534,5 +478,306 @@ func TestWaitForJobFinishedResultWinsOverDoneContext(t *testing.T) {
 		if err != nil || got.Job.Status != JobStatusCompleted {
 			t.Fatalf("iteration %d: got %v, err %v; want the finished result", i, got, err)
 		}
+	}
+}
+
+const (
+	richCompleted = `{"success":true,` +
+		`"job":{"id":"j1","status":"completed","result":"` + jobResultID + `"},` +
+		`"skin":{"uuid":"` + jobResultID + `","name":"steve","variant":"slim","visibility":"public",` +
+		`"texture":{"data":{"value":"val","signature":"sig"},"hash":{"skin":"hs","cape":"hc"},"url":{"skin":"us","cape":"uc"}}},` +
+		`"warnings":[{"code":"w1","message":"warn one"},{"code":"w2","message":"warn two"}],` +
+		`"messages":[{"code":"m1","message":"msg one"}],` +
+		`"links":{"skin":"https://example.test/s"}}`
+	richFailed = `{"success":true,` +
+		`"job":{"id":"j1","status":"failed"},` +
+		`"errors":[{"code":"e1","message":"err one"},{"code":"e2","message":"err two"}],` +
+		`"warnings":[{"code":"w1","message":"warn one"}],` +
+		`"messages":[{"code":"m1","message":"msg one"}],` +
+		`"links":{"skin":"https://example.test/s"}}`
+)
+
+// waitTwice makes two waiters wait for the same job, answered with finalBody,
+// and returns both outcomes.
+func waitTwice(t *testing.T, finalBody string) (resp [2]*JobResponse, errs [2]error) {
+	t.Helper()
+	release := make(chan struct{})
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		w.Header().Set("MineSkin-Breadcrumb", "crumb")
+		w.Header().Set("X-MineSkin-Extra", "extra")
+		writeJSON(200, finalBody)(w, r)
+	})
+	c := newTestClient(t, srv.URL, fastPolling())
+	var wg sync.WaitGroup
+	for i := range resp {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp[i], errs[i] = c.WaitForJob(waitCtx(t), Job{ID: "j1"})
+		}()
+	}
+	eventually(t, "both waiters registered", func() bool { return c.poller.Waiters("j1") == 2 })
+	close(release)
+	wg.Wait()
+	return resp, errs
+}
+
+// scribble overwrites everything reachable from m, in place.
+func scribble(m *ResponseMeta) {
+	for k := range m.Header {
+		for i := range m.Header[k] {
+			m.Header[k][i] = "mutated"
+		}
+		m.Header[k] = append(m.Header[k], "added")
+	}
+	m.Header.Set("Injected", "yes")
+	for i := range m.Warnings {
+		m.Warnings[i] = CodeAndMessage{Code: "mutated", Message: "mutated"}
+	}
+	for i := range m.Messages {
+		m.Messages[i] = CodeAndMessage{Code: "mutated", Message: "mutated"}
+	}
+	for i := range m.Links {
+		m.Links[i] = 'X'
+	}
+}
+
+func TestWaitForJob_ResultsAreIndependentOnCompletion(t *testing.T) {
+	t.Parallel()
+	resp, errs := waitTwice(t, richCompleted)
+	if errs[0] != nil || errs[1] != nil {
+		t.Fatalf("errors = %v, %v", errs[0], errs[1])
+	}
+	pristine := *resp[1]
+	pristineSkin := *resp[1].Skin
+	pristine.Skin = &pristineSkin
+	pristine.Meta = cloneMetaForTest(resp[1].Meta)
+
+	a := resp[0]
+	scribble(&a.Meta)
+	a.Skin.Name = "mutated"
+	a.Skin.Variant = VariantClassic
+	a.Skin.Texture.Data.Value = "mutated"
+	a.Skin.Texture.URL.Skin = "mutated"
+	a.Job.ID = "mutated"
+
+	b := resp[1]
+	if b.Skin == a.Skin {
+		t.Fatal("waiters share one *Skin")
+	}
+	if !reflect.DeepEqual(*b, pristine) {
+		t.Errorf("second waiter sees the first waiter's changes:\n got  %+v\n want %+v", *b, pristine)
+	}
+	if got := b.Meta.Header.Get("Mineskin-Breadcrumb"); got != "crumb" || b.Meta.Header.Get("Injected") != "" {
+		t.Errorf("header = %v, want the original with no injected key", b.Meta.Header)
+	}
+	if string(b.Meta.Links) != `{"skin":"https://example.test/s"}` || b.Skin.Name != "steve" || b.Skin.Texture.Data.Value != "val" {
+		t.Errorf("links = %s, skin = %+v; want the originals", b.Meta.Links, b.Skin)
+	}
+	if b.Meta.Warnings[1].Code != "w2" || b.Meta.Messages[0].Message != "msg one" {
+		t.Errorf("warnings = %+v, messages = %+v; want the originals", b.Meta.Warnings, b.Meta.Messages)
+	}
+}
+
+func TestWaitForJob_ResultsAreIndependentOnFailure(t *testing.T) {
+	t.Parallel()
+	_, errs := waitTwice(t, richFailed)
+	var a, b *JobFailedError
+	if !errors.As(errs[0], &a) || !errors.As(errs[1], &b) {
+		t.Fatalf("errors = %v, %v; want *JobFailedError twice", errs[0], errs[1])
+	}
+	wantErrs := []CodeAndMessage{{"e1", "err one"}, {"e2", "err two"}}
+	scribble(&a.Meta)
+	a.Errors[0] = CodeAndMessage{Code: "mutated", Message: "mutated"}
+	a.Errors[1].Message = "mutated"
+	if !reflect.DeepEqual(b.Errors, wantErrs) {
+		t.Errorf("Errors = %+v, want %+v", b.Errors, wantErrs)
+	}
+	if b.Meta.Warnings[0].Code != "w1" || b.Meta.Header.Get("Injected") != "" || string(b.Meta.Links) != `{"skin":"https://example.test/s"}` {
+		t.Errorf("meta = %+v, want the originals", b.Meta)
+	}
+}
+
+// cloneMetaForTest deep-copies m with plain loops, independently of the code under test.
+func cloneMetaForTest(m ResponseMeta) ResponseMeta {
+	out := m
+	out.Header = http.Header{}
+	for k, v := range m.Header {
+		out.Header[k] = append([]string(nil), v...)
+	}
+	out.Warnings = append([]CodeAndMessage(nil), m.Warnings...)
+	out.Messages = append([]CodeAndMessage(nil), m.Messages...)
+	out.Links = append([]byte(nil), m.Links...)
+	return out
+}
+
+func TestPoller_HTTPBoundedByGetConcurrency(t *testing.T) {
+	release := make(chan struct{})
+	handler, peak := trackConcurrency(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/v2/queue/")
+		writeJSON(200, jobJSON(id, "completed"))(w, r)
+	})
+	srv := newTestServer(t, handler)
+	c := newTestClient(t, srv.URL,
+		WithGetThrottle(Throttle{Interval: time.Nanosecond, Concurrency: 2}),
+		WithJobPolling(PollOptions{InitialDelay: time.Millisecond}))
+	t.Cleanup(func() { _ = c.Close() })
+
+	var wg sync.WaitGroup
+	for _, id := range []string{"a", "b", "c", "d"} {
+		wg.Go(func() {
+			if _, err := c.WaitForJob(waitCtx(t), Job{ID: id}); err != nil {
+				t.Errorf("WaitForJob(%s) error = %v", id, err)
+			}
+		})
+	}
+	// Requests are held, so two in flight is reached for certain. The poller
+	// runs one tick at a time and waits for its checks, so a third request
+	// before release can only come from a throttle that ignores its limit; the
+	// throttle's own count must still read two while the handlers hold them.
+	eventually(t, "two GETs in flight", func() bool { return peak() >= 2 })
+	if got := c.getGroup.Throttle.Stats().InFlight; got > 2 {
+		t.Errorf("throttle InFlight = %d while requests are held, want <= 2", got)
+	}
+	close(release)
+	wg.Wait()
+	if got := c.getGroup.Throttle.Stats().InFlight; got != 0 {
+		t.Errorf("throttle InFlight = %d after all jobs finished, want 0", got)
+	}
+	if got := peak(); got != 2 {
+		t.Errorf("peak in-flight GETs = %d, want exactly 2", got)
+	}
+}
+
+func TestPoller_MaxAttemptsIgnoresThrottleWait(t *testing.T) {
+	var mu sync.Mutex
+	gets := map[string]int{}
+	release := make(chan struct{})
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/v2/queue/")
+		mu.Lock()
+		gets[id]++
+		mu.Unlock()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+			return
+		}
+		writeJSON(200, jobJSON(id, "waiting"))(w, r)
+	})
+	c := newTestClient(t, srv.URL,
+		WithGetThrottle(Throttle{Interval: time.Nanosecond, Concurrency: 1}),
+		WithJobPolling(PollOptions{
+			InitialDelay: time.Millisecond, MaxAttempts: 2,
+			Interval: PollIntervalFunc(func(int) time.Duration { return time.Millisecond }),
+		}))
+	t.Cleanup(func() { _ = c.Close() })
+
+	ids := []string{"a", "b", "c", "d"}
+	errs := make([]error, len(ids))
+	var wg sync.WaitGroup
+	for i, id := range ids {
+		wg.Go(func() { _, errs[i] = c.WaitForJob(context.Background(), Job{ID: id}) })
+	}
+	// Hold the first request until others are queued behind it, so the
+	// throttle wait is certain rather than a matter of timing.
+	eventually(t, "checks queued in the get throttle", func() bool { return c.getGroup.Throttle.Stats().Waiting > 0 })
+	close(release)
+	wg.Wait()
+	for i, id := range ids {
+		if !errors.Is(errs[i], ErrMaxAttempts) {
+			t.Errorf("%s error = %v, want ErrMaxAttempts", id, errs[i])
+		}
+		mu.Lock()
+		if gets[id] != 2 {
+			t.Errorf("%s GETs = %d, want exactly 2", id, gets[id])
+		}
+		mu.Unlock()
+	}
+}
+
+func TestWaitForJob_ContextEnds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		// newCtx derives the wait context; end, when non-nil, ends it after the
+		// first poll was seen.
+		newCtx  func(parent context.Context) (ctx context.Context, end func())
+		wantErr error
+	}{
+		{
+			name: "cancelled",
+			newCtx: func(parent context.Context) (context.Context, func()) {
+				ctx, cancel := context.WithCancel(parent)
+				return ctx, cancel
+			},
+			wantErr: context.Canceled,
+		},
+		{
+			name: "deadline exceeded",
+			newCtx: func(parent context.Context) (context.Context, func()) {
+				ctx, cancel := context.WithTimeout(parent, 30*time.Millisecond)
+				t.Cleanup(cancel)
+				return ctx, nil
+			},
+			wantErr: context.DeadlineExceeded,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var gets atomic.Int32
+			srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+				gets.Add(1)
+				writeJSON(200, jobJSON("j1", "waiting"))(w, r)
+			})
+			fake := clock.NewFake(pollerT0)
+			c := newTestClient(t, srv.URL, fastPolling(), withClock(fake))
+			ctx, end := tt.newCtx(waitCtx(t))
+			errCh := make(chan error, 1)
+			go func() {
+				_, err := c.WaitForJob(ctx, Job{ID: "j1"})
+				errCh <- err
+			}()
+			if end != nil {
+				eventually(t, "first poll", func() bool {
+					fake.Advance(time.Millisecond)
+					return gets.Load() >= 1
+				})
+				end()
+			}
+
+			err := <-errCh
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("err = %v, want %v", err, tt.wantErr)
+			}
+			if c.poller.Pending() != 0 {
+				t.Error("job still pending after the context ended")
+			}
+			eventually(t, "poller exit", func() bool { return !c.poller.Running() })
+			// The poller is gone and holds no timer: stepping the clock far past
+			// many poll intervals must not produce another request.
+			after := gets.Load()
+			if got := fake.Timers(); got != 0 {
+				t.Errorf("pending fake timers after the context ended = %d, want 0", got)
+			}
+			for range 50 {
+				fake.Advance(time.Second)
+			}
+			if gets.Load() != after {
+				t.Error("requests continued after the context ended")
+			}
+		})
 	}
 }

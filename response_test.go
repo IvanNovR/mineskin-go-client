@@ -1,11 +1,15 @@
 package mineskin
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
@@ -30,7 +34,7 @@ func decodeMeta[W any](raw transport.Response) (ResponseMeta, error) {
 	return meta, err
 }
 
-func TestHandleResponseSuccess(t *testing.T) {
+func TestHandleResponse_Success(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name   string
@@ -56,7 +60,7 @@ func TestHandleResponseSuccess(t *testing.T) {
 	}
 }
 
-func TestHandleResponseAPIError(t *testing.T) {
+func TestHandleResponse_APIError(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name        string
@@ -93,7 +97,7 @@ func TestHandleResponseAPIError(t *testing.T) {
 	}
 }
 
-func TestHandleResponseUnexpected(t *testing.T) {
+func TestHandleResponse_Unexpected(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
@@ -125,7 +129,7 @@ func TestHandleResponseUnexpected(t *testing.T) {
 	}
 }
 
-func TestHandleResponseUnexpectedUsesHeaders(t *testing.T) {
+func TestHandleResponse_UnexpectedUsesHeaders(t *testing.T) {
 	t.Parallel()
 	raw := transport.Response{
 		Status: 530,
@@ -139,7 +143,7 @@ func TestHandleResponseUnexpectedUsesHeaders(t *testing.T) {
 	}
 }
 
-func TestHandleResponseParseError(t *testing.T) {
+func TestHandleResponse_ParseError(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -171,7 +175,7 @@ func TestHandleResponseParseError(t *testing.T) {
 	}
 }
 
-func TestDecodeResponseReturnsWire(t *testing.T) {
+func TestDecodeResponse_ReturnsWire(t *testing.T) {
 	t.Parallel()
 	body := []byte(`{"success":true,"user":"abc"}`)
 	wire, meta, err := decodeResponse[testWire](transport.Response{Status: 200, Body: body}, discardLogger, "/test")
@@ -180,7 +184,7 @@ func TestDecodeResponseReturnsWire(t *testing.T) {
 	}
 }
 
-func TestDecodeResponsePayloadErrorKeepsCauseAndText(t *testing.T) {
+func TestDecodeResponse_PayloadErrorKeepsCauseAndText(t *testing.T) {
 	t.Parallel()
 	body := `{"success":true,"job":{"id":"x"}}`
 	_, err := decodeMeta[wireWithCause](transport.Response{Status: 200, Body: []byte(body)})
@@ -190,7 +194,7 @@ func TestDecodeResponsePayloadErrorKeepsCauseAndText(t *testing.T) {
 	}
 }
 
-func TestDecodeResponseAPIErrorSkipsPayload(t *testing.T) {
+func TestDecodeResponse_APIErrorSkipsPayload(t *testing.T) {
 	t.Parallel()
 	_, err := decodeMeta[wireWithCause](transport.Response{Status: 400, Body: []byte(`{"success":false}`)})
 	var apiErr *APIError
@@ -199,13 +203,13 @@ func TestDecodeResponseAPIErrorSkipsPayload(t *testing.T) {
 	}
 }
 
-func TestDecodeResponseSuccessWithBadPayloadIsParseError(t *testing.T) {
+func TestDecodeResponse_SuccessWithBadPayloadIsParseError(t *testing.T) {
 	t.Parallel()
 	_, err := decodeMeta[wireWithCause](transport.Response{Status: 200, Body: []byte(`{"success":true}`)})
 	assertParseError(t, err)
 }
 
-func TestHandleResponseListsAndLinks(t *testing.T) {
+func TestHandleResponse_ListsAndLinks(t *testing.T) {
 	t.Parallel()
 	t.Run("lists default to empty non-nil", func(t *testing.T) {
 		t.Parallel()
@@ -247,30 +251,7 @@ func TestHandleResponseListsAndLinks(t *testing.T) {
 	})
 }
 
-func TestHandleResponseHeaders(t *testing.T) {
-	t.Parallel()
-	raw := transport.Response{
-		Status: 200,
-		Header: hdr("Mineskin-Server", "api-1", "Mineskin-Breadcrumb", "crumb", "X-Mineskin-Foo", "bar", "Content-Type", "application/json"),
-		Body:   []byte(`{}`),
-	}
-	meta, err := decodeMeta[struct{}](raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if meta.Breadcrumb != "crumb" {
-		t.Errorf("Breadcrumb = %q, want crumb", meta.Breadcrumb)
-	}
-	want := http.Header{"Mineskin-Server": {"api-1"}, "Mineskin-Breadcrumb": {"crumb"}, "X-Mineskin-Foo": {"bar"}}
-	if !reflect.DeepEqual(meta.Header, want) {
-		t.Errorf("Header = %v, want %v", meta.Header, want)
-	}
-	if meta.Status != 200 {
-		t.Errorf("Status = %d, want 200", meta.Status)
-	}
-}
-
-func TestHandleResponseAPIErrorCarriesHeaders(t *testing.T) {
+func TestHandleResponse_APIErrorCarriesHeaders(t *testing.T) {
 	t.Parallel()
 	raw := transport.Response{Status: 401, Header: hdr("Mineskin-Breadcrumb", "b1"), Body: []byte(`{"success":false}`)}
 	_, err := decodeMeta[struct{}](raw)
@@ -280,16 +261,7 @@ func TestHandleResponseAPIErrorCarriesHeaders(t *testing.T) {
 	}
 }
 
-func TestHandleResponseDuplicateHeadersDoNotFail(t *testing.T) {
-	t.Parallel()
-	raw := transport.Response{Status: 200, Header: http.Header{"Mineskin-Server": {"a", "b"}}, Body: []byte(`{}`)}
-	meta, err := decodeMeta[struct{}](raw)
-	if err != nil || !reflect.DeepEqual(meta.Header["Mineskin-Server"], []string{"a", "b"}) {
-		t.Errorf("meta=%+v err=%v", meta, err)
-	}
-}
-
-func TestHandleResponseUnexpectedIsClientError(t *testing.T) {
+func TestHandleResponse_UnexpectedIsClientError(t *testing.T) {
 	t.Parallel()
 	_, err := decodeMeta[struct{}](transport.Response{Status: 530, Body: []byte("error code: 1033")})
 	var ue *UnexpectedResponseError
@@ -298,7 +270,7 @@ func TestHandleResponseUnexpectedIsClientError(t *testing.T) {
 	}
 }
 
-func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
+func TestHandleResponse_AcceptsUTF8BOM(t *testing.T) {
 	t.Parallel()
 	body := append([]byte("\xef\xbb\xbf"), `{"success":true,"user":"x"}`...)
 	meta, err := decodeMeta[testWire](transport.Response{Status: 200, Body: body})
@@ -313,7 +285,7 @@ func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
 	}
 }
 
-func TestDecodeResponseHeaderIsAClone(t *testing.T) {
+func TestDecodeResponse_HeaderIsAClone(t *testing.T) {
 	t.Parallel()
 	src := hdr("Mineskin-Breadcrumb", "crumb", "Set-Cookie", "secret=1")
 	meta, err := decodeMeta[struct{}](transport.Response{Status: 200, Header: src, Body: []byte(`{}`)})
@@ -329,7 +301,7 @@ func TestDecodeResponseHeaderIsAClone(t *testing.T) {
 	}
 }
 
-func TestDecodeResponseDuplicateBreadcrumbsAreJoined(t *testing.T) {
+func TestDecodeResponse_DuplicateBreadcrumbsAreJoined(t *testing.T) {
 	t.Parallel()
 	raw := transport.Response{Status: 200, Header: http.Header{"Mineskin-Breadcrumb": {"a", "b"}}, Body: []byte(`{}`)}
 	meta, err := decodeMeta[struct{}](raw)
@@ -338,7 +310,7 @@ func TestDecodeResponseDuplicateBreadcrumbsAreJoined(t *testing.T) {
 	}
 }
 
-func TestDecodeResponseAPIErrorKeepsAllErrors(t *testing.T) {
+func TestDecodeResponse_APIErrorKeepsAllErrors(t *testing.T) {
 	t.Parallel()
 	body := `{"success":false,"errors":[{"code":"a","message":"A"},{"code":"b","message":"B"}],"warnings":[{"code":"w","message":"W"}],"links":{"x":1}}`
 	_, err := decodeMeta[struct{}](transport.Response{Status: 400, Body: []byte(body)})
@@ -354,11 +326,233 @@ func TestDecodeResponseAPIErrorKeepsAllErrors(t *testing.T) {
 	}
 }
 
-func TestDecodeResponseAPIErrorWithoutErrorsHasEmptyCode(t *testing.T) {
+func TestDecodeResponse_APIErrorWithoutErrorsHasEmptyCode(t *testing.T) {
 	t.Parallel()
 	_, err := decodeMeta[struct{}](transport.Response{Status: 403, Body: []byte(`{}`)})
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != "" || apiErr.Message != "" || apiErr.Errors == nil || len(apiErr.Errors) != 0 {
 		t.Fatalf("apiErr = %+v, want empty Code, Message and an empty non-nil Errors", apiErr)
+	}
+}
+
+const (
+	malformedMsg = "MineSkin response field malformed, ignored"
+	// garbled is a distinctive value that must never appear in a log line.
+	garbled = "ZZgarbledZZ"
+)
+
+// malformedLines returns the log lines that report dropped fields.
+func malformedLines(buf *bytes.Buffer) []string {
+	var out []string
+	for _, line := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(line, malformedMsg) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+func assertOneMalformedLine(t *testing.T, buf *bytes.Buffer, wantParts ...string) {
+	t.Helper()
+	lines := malformedLines(buf)
+	if len(lines) != 1 {
+		t.Fatalf("malformed log lines = %d, want 1:\n%s", len(lines), buf.String())
+	}
+	if !strings.Contains(lines[0], "level=WARN") {
+		t.Errorf("line = %s, want level WARN", lines[0])
+	}
+	for _, part := range wantParts {
+		if !strings.Contains(lines[0], part) {
+			t.Errorf("line = %s, want it to contain %q", lines[0], part)
+		}
+	}
+	if strings.Contains(buf.String(), garbled) {
+		t.Errorf("log contains the malformed value %q:\n%s", garbled, buf.String())
+	}
+}
+
+func TestQueue_MalformedUsageIsLoggedOnceWithoutValue(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	body := `{"success":true,"job":{"id":"j","status":"waiting"},"usage":{"credits":{"used":1,"remaining":"` + garbled + `"}}}`
+	srv := newTestServer(t, writeJSON(200, body))
+	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
+
+	got, err := c.Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
+
+	if err != nil {
+		t.Fatalf("Queue() error = %v", err)
+	}
+	if want := (Usage{CreditsUsed: 1}); got.Usage != want {
+		t.Errorf("Usage = %+v, want %+v", got.Usage, want)
+	}
+	assertOneMalformedLine(t, &buf, "path=/v2/queue", "usage.credits.remaining")
+}
+
+func TestGenerate_MalformedRateLimitIsLogged(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	body := `{"success":true,"skin":{"name":"n"},"rateLimit":{"next":{"relative":"` + garbled + `"},"limit":{"limit":5}}}`
+	srv := newTestServer(t, writeJSON(200, body))
+	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
+
+	got, err := c.Generate(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
+
+	if err != nil {
+		t.Fatalf("Generate() error = %v", err)
+	}
+	assertRateLimit(t, got.RateLimit, RateLimit{Limit: 5})
+	assertOneMalformedLine(t, &buf, "path=/v2/generate", "rateLimit.next.relative")
+}
+
+func TestMalformedFields_AbsentFieldsAreNotLogged(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	bodies := []string{
+		`{"success":true,"job":{"id":"j","status":"waiting"}}`,
+		`{"success":true,"job":{"id":"j","status":"waiting"},"rateLimit":null,"usage":null}`,
+		`{"success":true,"job":{"id":"j","status":"waiting"},"rateLimit":{},"usage":{"credits":{}}}`,
+		`{"success":true,"job":{"id":"j","status":"waiting"},"rateLimit":{"next":{"relative":500}},"usage":{"credits":{"used":1,"remaining":2}}}`,
+	}
+	for _, body := range bodies {
+		srv := newTestServer(t, writeJSON(200, body))
+		c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
+		if _, err := c.Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{}); err != nil {
+			t.Fatalf("Queue(%s) error = %v", body, err)
+		}
+	}
+	if lines := malformedLines(&buf); len(lines) != 0 {
+		t.Errorf("unexpected malformed log lines:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+func TestAPIError_MalformedDataAndRetryAfterAreLoggedOnce(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	body := `{"success":false,"errors":[{"code":"c","message":"m"}],"rateLimit":"` + garbled + `","usage":{"credits":5}}`
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", garbled)
+		writeJSON(400, body)(w, r)
+	})
+	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
+
+	_, err := c.GetSkin(context.Background(), testSkinUUID)
+
+	apiErr := asAPIError(t, err)
+	if apiErr.Code != "c" || apiErr.RetryAfter != 0 || apiErr.RateLimit != (RateLimit{}) || apiErr.Usage != (Usage{}) {
+		t.Errorf("apiErr = %+v, want the original error with dropped data", apiErr)
+	}
+	assertOneMalformedLine(t, &buf, "rateLimit", "usage.credits", "Retry-After")
+}
+
+func TestAPIError_GarbledRetryAfterIsLogged(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", garbled)
+		writeJSON(429, `{"success":false}`)(w, r)
+	})
+	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)), WithRateLimitRetries(0))
+
+	_, err := c.GetSkin(context.Background(), testSkinUUID)
+
+	if apiErr := asAPIError(t, err); apiErr.RetryAfter != 0 {
+		t.Errorf("RetryAfter = %v, want 0", apiErr.RetryAfter)
+	}
+	assertOneMalformedLine(t, &buf, "fields=Retry-After")
+}
+
+func TestAPIError_ValidOrAbsentRetryAfterIsNotLogged(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	for _, header := range []string{"", "7", time.Now().UTC().Add(time.Hour).Format(http.TimeFormat), "-3"} {
+		srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+			if header != "" {
+				w.Header().Set("Retry-After", header)
+			}
+			writeJSON(400, `{"success":false}`)(w, r)
+		})
+		c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
+		if _, err := c.GetSkin(context.Background(), testSkinUUID); err == nil {
+			t.Fatal("GetSkin() error = nil, want an API error")
+		}
+	}
+	if lines := malformedLines(&buf); len(lines) != 0 {
+		t.Errorf("unexpected malformed log lines:\n%s", strings.Join(lines, "\n"))
+	}
+}
+
+func TestUnexpectedResponse_GarbledRetryAfterIsLogged(t *testing.T) {
+	t.Parallel()
+	var buf bytes.Buffer
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", garbled)
+		writeJSON(503, `<html>unavailable</html>`)(w, r)
+	})
+	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
+
+	_, err := c.GetSkin(context.Background(), testSkinUUID)
+
+	var ue *UnexpectedResponseError
+	if !asError(err, &ue) || ue.RetryAfter != 0 {
+		t.Fatalf("err = %v, want *UnexpectedResponseError without RetryAfter", err)
+	}
+	assertOneMalformedLine(t, &buf, "fields=Retry-After")
+}
+
+// asAPIError returns the *APIError in err's chain or fails the test.
+func asAPIError(t *testing.T, err error) *APIError {
+	t.Helper()
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %v, want *APIError", err)
+	}
+	return apiErr
+}
+
+// asError is errors.As with the result only.
+func asError[T error](err error, target *T) bool { return errors.As(err, target) }
+
+func TestDecodeMeta_Headers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		header         http.Header
+		wantBreadcrumb string
+		wantHeader     http.Header
+	}{
+		{
+			name: "keeps only MineSkin headers",
+			header: hdr("Mineskin-Server", "api-1", "Mineskin-Breadcrumb", "crumb",
+				"X-Mineskin-Foo", "bar", "Content-Type", "application/json"),
+			wantBreadcrumb: "crumb",
+			wantHeader:     http.Header{"Mineskin-Server": {"api-1"}, "Mineskin-Breadcrumb": {"crumb"}, "X-Mineskin-Foo": {"bar"}},
+		},
+		{
+			name:       "duplicate headers do not fail",
+			header:     http.Header{"Mineskin-Server": {"a", "b"}},
+			wantHeader: http.Header{"Mineskin-Server": {"a", "b"}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			raw := transport.Response{Status: 200, Header: tt.header, Body: []byte(`{}`)}
+
+			meta, err := decodeMeta[struct{}](raw)
+
+			if err != nil {
+				t.Fatal(err)
+			}
+			if meta.Breadcrumb != tt.wantBreadcrumb {
+				t.Errorf("Breadcrumb = %q, want %q", meta.Breadcrumb, tt.wantBreadcrumb)
+			}
+			if !reflect.DeepEqual(meta.Header, tt.wantHeader) {
+				t.Errorf("Header = %v, want %v", meta.Header, tt.wantHeader)
+			}
+			if meta.Status != 200 {
+				t.Errorf("Status = %d, want 200", meta.Status)
+			}
+		})
 	}
 }

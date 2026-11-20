@@ -2,6 +2,7 @@ package mineskin
 
 import (
 	"context"
+	"errors"
 )
 
 // Close releases the client's resources and always returns nil. It is safe to
@@ -20,12 +21,12 @@ func (c *Client) Close() error {
 	c.closeOnce.Do(func() {
 		c.closed.Store(true)
 		c.cancelBase(ErrClientClosed)
-		if tn := c.genGroup.tuner; tn != nil {
-			tn.shutdown()
+		if tn := c.genGroup.Tuner; tn != nil {
+			tn.Shutdown()
 		}
-		c.genGroup.throttle.Close()
-		c.getGroup.throttle.Close()
-		c.poller.close(ErrClientClosed)
+		c.genGroup.Throttle.Close()
+		c.getGroup.Throttle.Close()
+		c.poller.Close(ErrClientClosed)
 		c.bg.Wait()
 		if c.idleCloser != nil {
 			c.idleCloser()
@@ -52,4 +53,13 @@ func (c *Client) requestContext(ctx context.Context) (context.Context, context.C
 		stop()
 		cancel(context.Canceled)
 	}
+}
+
+// closedOrSame returns err, or an ErrClientClosed error when err happened
+// because Close cancelled merged while the caller's own ctx is still live.
+func closedOrSame(ctx, merged context.Context, label string, err error) error {
+	if ctx.Err() == nil && errors.Is(context.Cause(merged), ErrClientClosed) {
+		return wrapClientError(label, ErrClientClosed)
+	}
+	return err
 }

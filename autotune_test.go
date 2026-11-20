@@ -2,189 +2,296 @@ package mineskin
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
-var tunerT0 = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+const (
+	grantsFast   = `{"user":"744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11","grants":{"per_minute":600,"concurrency":3}}`
+	grantsSlow   = `{"user":"744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11","grants":{"per_minute":60,"concurrency":2}}`
+	invalidKey   = `{"success":false,"errors":[{"code":"invalid_api_key","message":"bad key"}]}`
+	failedJob    = `{"success":true,"job":{"id":"job-1","status":"failed"}}`
+	htmlBadGate  = "<html>bad gateway</html>"
+	rateLimited  = `{"success":false,"errors":[{"code":"too_many_requests","message":"slow down"}]}`
+	autoTestKey  = "msk_id_SECRETPART"
+	staleRefresh = 5*time.Minute + 2*time.Second
+)
 
-func newTestTuner(t *testing.T) (*tuner, *clock.Fake) {
+// callAdvancing runs call while advancing the fake clock by 1 ms steps until it
+// returns, so a start slot is never missed.
+func callAdvancing(t *testing.T, fake *clock.Fake, call func() error) error {
 	t.Helper()
-	fake := clock.NewFake(tunerT0)
-	return newTuner(fake, nil), fake
+	res := goCall(call)
+	deadline := time.Now().Add(waitTimeout)
+	for time.Now().Before(deadline) {
+		select {
+		case err := <-res:
+			return err
+		default:
+			fake.Advance(delayTick)
+			time.Sleep(waitPoll)
+		}
+	}
+	t.Fatal("call did not finish")
+	return nil
 }
 
-func intPtr(n int) *int { return &n }
+func limitsNow(c *Client) (time.Duration, int) {
+	l := c.genGroup.Tuner.Limits(c.clock.Now())
+	return l.Interval, l.Concurrency
+}
 
-func TestTunerBaselineBeforeLoad(t *testing.T) {
-	tn, fake := newTestTuner(t)
-	got := tn.limits(fake.Now())
-	if got.Interval != time.Second || got.Concurrency != 1 {
-		t.Errorf("limits = %+v, want 1s/1 (JB-01)", got)
+func TestAutoFirstCallLoadsGrantsBeforeThrottle(t *testing.T) {
+	var order []string
+	var mu sync.Mutex
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		order = append(order, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		if r.URL.Path == "/v2/me" {
+			writeJSON(200, grantsFast)(w, r)
+			return
+		}
+		writeJSON(200, queueFixture)(w, r)
+	})
+	c := newTestClient(t, srv.URL, WithAutoTuning())
+	if err := queueCall(c)(); err != nil {
+		t.Fatalf("Queue() error = %v", err)
+	}
+	mu.Lock()
+	got := strings.Join(order, ",")
+	mu.Unlock()
+	if got != keyUser+","+keyQueue {
+		t.Errorf("request order = %q, want me then queue", got)
+	}
+	if iv, n := limitsNow(c); iv != 100*time.Millisecond || n != 3 {
+		t.Errorf("limits = %v/%d, want 100ms/3 from the grants", iv, n)
 	}
 }
 
-func TestTunerApplyGrants(t *testing.T) {
+func TestAutoConcurrentFirstCallsShareOneLoad(t *testing.T) {
+	srv := replyServer(t, map[string]reply{keyUser: {status: 200, body: grantsFast}, keyQueue: {status: 200, body: plainQueue}}, keyUser)
+	c := newTestClient(t, srv.URL, WithAutoTuning())
+	var chans []<-chan error
+	for range 5 {
+		chans = append(chans, goCall(queueCall(c)))
+	}
+	waitCount(t, srv, keyUser, 1)
+	srv.open(keyUser)
+	for _, ch := range chans {
+		if err := mustDone(t, "Queue", ch); err != nil {
+			t.Errorf("Queue error = %v", err)
+		}
+	}
+	if got := srv.count(keyUser); got != 1 {
+		t.Errorf("/v2/me hits = %d, want 1", got)
+	}
+}
+
+func TestAutoFirstLoadFailureUsesBaselineAndWarns(t *testing.T) {
+	srv := replyServer(t, map[string]reply{keyUser: {status: 401, body: invalidKey}, keyQueue: {status: 200, body: plainQueue}})
+	var logs bytes.Buffer
+	c := newTestClient(t, srv.URL, WithAutoTuning(), WithAPIKey(autoTestKey), WithLogger(captureLogger(&logs)))
+	if err := queueCall(c)(); err != nil {
+		t.Fatalf("Queue() error = %v", err)
+	}
+	if iv, n := limitsNow(c); iv != time.Second || n != 1 {
+		t.Errorf("limits = %v/%d, want baseline 1s/1", iv, n)
+	}
+	if got := strings.Count(logs.String(), "level=WARN msg=\"Loading MineSkin grants failed"); got != 1 {
+		t.Errorf("load failure warnings = %d, want 1; log:\n%s", got, logs.String())
+	}
+}
+
+func TestAutoGrantsRequestUsesGetThrottle(t *testing.T) {
+	srv := newHitServer(t, keySkin)
+	c := newTestClient(t, srv.URL, WithAutoTuning(), WithGetThrottle(oneSlot()))
+	held := goCall(getCalls(c)[keySkin])
+	waitCount(t, srv, keySkin, 1)
+	queued := goCall(queueCall(c))
+	waitWaiting(t, c.getGroup, 1)
+	if got := srv.count(keyUser); got != 0 {
+		t.Fatalf("/v2/me hits = %d while the get slot was held, want 0", got)
+	}
+	srv.open(keySkin)
+	if err := mustDone(t, "GetSkin", held); err != nil {
+		t.Errorf("GetSkin error = %v", err)
+	}
+	if err := mustDone(t, "Queue", queued); err != nil {
+		t.Errorf("Queue error = %v", err)
+	}
+	if got := srv.count(keyUser); got != 1 {
+		t.Errorf("/v2/me hits = %d, want 1", got)
+	}
+}
+
+func TestAutoPenaltyOnRetryableUnexpected(t *testing.T) {
 	tests := []struct {
-		name         string
-		grants       Grants
-		wantInterval time.Duration
-		wantConc     int
+		name    string
+		replies map[string]reply
+		call    func(c *Client) error
+		auto    bool
+		penalty bool
 	}{
-		{"60 per minute", Grants{PerMinute: intPtr(60)}, time.Second, 1},
-		{"600 per minute", Grants{PerMinute: intPtr(600)}, 100 * time.Millisecond, 1},
-		{"6000 clamps to min", Grants{PerMinute: intPtr(6000)}, 100 * time.Millisecond, 1},
-		{"30 clamps to max", Grants{PerMinute: intPtr(30)}, time.Second, 1},
-		{"70 truncates to ms", Grants{PerMinute: intPtr(70)}, 857 * time.Millisecond, 1},
-		{"per minute missing keeps interval", Grants{}, time.Second, 1},
-		{"per minute zero keeps interval", Grants{PerMinute: intPtr(0)}, time.Second, 1},
-		{"per minute negative keeps interval", Grants{PerMinute: intPtr(-4)}, time.Second, 1},
-		{"concurrency 10", Grants{Concurrency: intPtr(10)}, time.Second, 10},
-		{"concurrency 0 clamps to 1", Grants{Concurrency: intPtr(0)}, time.Second, 1},
-		{"concurrency negative clamps to 1", Grants{Concurrency: intPtr(-5)}, time.Second, 1},
-		{"concurrency 50 clamps to 30", Grants{Concurrency: intPtr(50)}, time.Second, 30},
-		{"concurrency missing keeps value", Grants{PerMinute: intPtr(600)}, 100 * time.Millisecond, 1},
+		{"502 html on queue", map[string]reply{keyQueue: {status: 502, body: htmlBadGate}}, func(c *Client) error { return queueCall(c)() }, true, true},
+		{"409 html on queue", map[string]reply{keyQueue: {status: 409, body: htmlBadGate}}, func(c *Client) error { return queueCall(c)() }, true, false},
+		{"json 429 on queue", map[string]reply{keyQueue: {status: 429, body: rateLimited}}, func(c *Client) error { return queueCall(c)() }, true, false},
+		{"502 html on GetSkin", map[string]reply{keySkin: {status: 502, body: htmlBadGate}}, func(c *Client) error { return getCalls(c)[keySkin]() }, true, false},
+		{"502 html with fixed settings", map[string]reply{keyQueue: {status: 502, body: htmlBadGate}}, func(c *Client) error { return queueCall(c)() }, false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tn, fake := newTestTuner(t)
-			tn.applyGrants(tt.grants)
-			got := tn.limits(fake.Now())
-			if got.Interval != tt.wantInterval || got.Concurrency != tt.wantConc {
-				t.Errorf("limits = %+v, want %v/%d", got, tt.wantInterval, tt.wantConc)
+			srv := replyServer(t, tt.replies)
+			opts := []Option{}
+			if tt.auto {
+				opts = append(opts, WithAutoTuning())
+			}
+			c := newTestClient(t, srv.URL, opts...)
+			_ = tt.call(c) // the error itself is covered by the response tests
+			if !tt.auto {
+				if c.genGroup.Tuner != nil {
+					t.Fatal("tuner exists without auto-tuning")
+				}
+				return
+			}
+			iv, _ := limitsNow(c)
+			want := time.Second
+			if tt.penalty {
+				if iv <= want+400*time.Millisecond || iv > want+500*time.Millisecond {
+					t.Errorf("interval = %v, want about 1.5s", iv)
+				}
+				return
+			}
+			if iv != want {
+				t.Errorf("interval = %v, want %v (no penalty)", iv, want)
 			}
 		})
 	}
 }
 
-func TestTunerApplyGrantsKeepsUnsetFieldsFromEarlierGrants(t *testing.T) {
-	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(600), Concurrency: intPtr(7)})
-	tn.applyGrants(Grants{})
-	got := tn.limits(fake.Now())
-	if got.Interval != 100*time.Millisecond || got.Concurrency != 7 {
-		t.Errorf("limits = %+v, want 100ms/7", got)
+func TestAutoPenaltyOnFailedJob(t *testing.T) {
+	srv := replyServer(t, map[string]reply{keyJob: {status: 200, body: failedJob}})
+	c := newTestClient(t, srv.URL, WithAutoTuning(), fastPolling())
+	if _, err := c.WaitForJob(context.Background(), Job{ID: "job-1"}); err == nil {
+		t.Fatal("WaitForJob() of a failed job returned no error")
+	}
+	if iv, _ := limitsNow(c); iv <= 1400*time.Millisecond || iv > 1500*time.Millisecond {
+		t.Errorf("interval = %v, want one penalty step on 1s", iv)
+	}
+
+	plain := newTestClient(t, srv.URL, fastPolling())
+	if _, err := plain.WaitForJob(context.Background(), Job{ID: "job-1"}); err == nil {
+		t.Fatal("WaitForJob() of a failed job returned no error")
+	}
+	if plain.genGroup.Tuner != nil {
+		t.Error("tuner exists without auto-tuning")
 	}
 }
 
-func TestTunerKeepsLastKnownValuesWithoutNewGrants(t *testing.T) {
-	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(300), Concurrency: intPtr(4)})
-	fake.Advance(time.Hour)
-	got := tn.limits(fake.Now())
-	if got.Interval != 200*time.Millisecond || got.Concurrency != 4 {
-		t.Errorf("limits = %+v, want 200ms/4", got)
+func TestAutoTuningOnlyAffectsGenerate(t *testing.T) {
+	srv := replyServer(t, map[string]reply{keyUser: {status: 200, body: grantsSlow}, keyQueue: {status: 200, body: plainQueue}}, keySkin)
+	c := newTestClient(t, srv.URL, WithAutoTuning(), WithGetThrottle(Throttle{}))
+	if c.getGroup.Tuner != nil {
+		t.Fatal("get group has a tuner")
+	}
+	if err := queueCall(c)(); err != nil {
+		t.Fatal(err)
+	}
+	var chans []<-chan error
+	for range DefaultGetConcurrency {
+		chans = append(chans, goCall(getCalls(c)[keySkin]))
+	}
+	waitCount(t, srv, keySkin, DefaultGetConcurrency)
+	srv.open(keySkin)
+	for _, ch := range chans {
+		if err := mustDone(t, "GetSkin", ch); err != nil {
+			t.Error(err)
+		}
 	}
 }
 
-func TestTunerPenaltyAddsStep(t *testing.T) {
-	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
-	tn.reportFailure()
-	if got := tn.limits(fake.Now()).Interval; got != 1500*time.Millisecond {
-		t.Errorf("after one failure interval = %v, want 1.5s", got)
-	}
-	tn.reportFailure()
-	if got := tn.limits(fake.Now()).Interval; got != 2*time.Second {
-		t.Errorf("after two failures interval = %v, want 2s", got)
-	}
-}
-
-func TestTunerPenaltyDecaysLinearly(t *testing.T) {
-	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
-	tn.reportFailure()
-	fake.Advance(2 * time.Second)
-	if got := tn.limits(fake.Now()).Interval; got != 1300*time.Millisecond {
-		t.Errorf("after 2s interval = %v, want 1.3s", got)
-	}
-	fake.Advance(10 * time.Second)
-	if got := tn.limits(fake.Now()).Interval; got != time.Second {
-		t.Errorf("after 12s interval = %v, want 1s (floored)", got)
+func TestAutoNeverLogsAPIKey(t *testing.T) {
+	for name, meReply := range map[string]reply{
+		"ok":     {status: 200, body: grantsFast},
+		"failed": {status: 401, body: invalidKey},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := replyServer(t, map[string]reply{keyUser: meReply, keyQueue: {status: 200, body: plainQueue}})
+			var logs bytes.Buffer
+			c := newTestClient(t, srv.URL, WithAutoTuning(), WithAPIKey(autoTestKey), WithLogger(captureLogger(&logs)))
+			if err := queueCall(c)(); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(logs.String(), "SECRETPART") {
+				t.Errorf("log contains the key secret:\n%s", logs.String())
+			}
+			if logs.Len() == 0 {
+				t.Error("expected log output")
+			}
+		})
 	}
 }
 
-func TestTunerPenaltyStacksOnDecayed(t *testing.T) {
-	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
-	tn.reportFailure()
-	fake.Advance(3 * time.Second)
-	tn.reportFailure()
-	if got := tn.limits(fake.Now()).Interval; got != 1700*time.Millisecond {
-		t.Errorf("interval = %v, want 1.7s", got)
+func TestAutoFirstLoadCallerCancel(t *testing.T) {
+	srv := replyServer(t, map[string]reply{keyUser: {status: 200, body: grantsFast}, keyQueue: {status: 200, body: plainQueue}}, keyUser)
+	c := newTestClient(t, srv.URL, WithAutoTuning())
+	ctx, cancel := context.WithCancel(context.Background())
+	first := goCall(func() error {
+		_, err := c.Queue(ctx, FromURL("https://example.com/s.png"), nil)
+		return err
+	})
+	waitCount(t, srv, keyUser, 1)
+	cancel()
+	err := mustDone(t, "cancelled Queue", first)
+	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrClient) {
+		t.Errorf("error = %v, want context.Canceled and ErrClient", err)
+	}
+	srv.open(keyUser)
+	if err := queueCall(c)(); err != nil {
+		t.Fatalf("second Queue() error = %v", err)
+	}
+	if got := srv.count(keyUser); got != 1 {
+		t.Errorf("/v2/me hits = %d, want 1 (the load must survive the cancel)", got)
 	}
 }
 
-func TestTunerPenaltyClamp(t *testing.T) {
-	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
-	for range 30 {
-		tn.reportFailure()
-	}
-	if got := tn.limits(fake.Now()).Interval; got != 10*time.Second {
-		t.Errorf("interval = %v, want 10s (capped)", got)
-	}
-	tn.mu.Lock()
-	defer tn.mu.Unlock()
-	if tn.penalty != 10*time.Second {
-		t.Errorf("penalty = %v, want 10s", tn.penalty)
-	}
-}
-
-func TestTunerDecayNoOverflow(t *testing.T) {
-	tn, fake := newTestTuner(t)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
-	tn.reportFailure()
-	fake.Advance(1000 * time.Hour)
-	if got := tn.limits(fake.Now()).Interval; got != time.Second {
-		t.Errorf("interval = %v, want 1s after 1000h", got)
-	}
-	// A clock that went backwards must not yield a larger penalty.
-	if got := tn.limits(fake.Now().Add(-2000 * time.Hour)).Interval; got < time.Second || got > 10*time.Second {
-		t.Errorf("interval = %v with a backwards clock, want within [1s, 10s]", got)
-	}
-}
-
-func TestTunerRealClock(t *testing.T) {
-	tn := newTuner(clock.Real(), nil)
-	tn.applyGrants(Grants{PerMinute: intPtr(60)})
-	tn.reportFailure()
-	got := tn.limits(time.Now()).Interval
-	if got <= time.Second || got > 1500*time.Millisecond {
-		t.Errorf("interval = %v, want in (1s, 1.5s]", got)
-	}
-}
-
-func TestTunerCallsKickOutsideLock(t *testing.T) {
-	tn, _ := newTestTuner(t)
-	kicks := 0
-	tn.kick = func() {
-		if !tn.mu.TryLock() {
-			t.Error("kick called with tuner mutex held")
+func TestCloseCancelsRefreshInFlight(t *testing.T) {
+	var meHits atomic.Int32
+	refreshCancelled := make(chan struct{})
+	srv := newTestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v2/me" {
+			writeJSON(200, queueFixture)(w, r)
 			return
 		}
-		tn.mu.Unlock()
-		kicks++
-	}
-	tn.applyGrants(Grants{PerMinute: intPtr(600)})
-	tn.reportFailure()
-	if kicks != 2 {
-		t.Errorf("kicks = %d, want 2", kicks)
-	}
-}
-
-func TestTunerLogsChangesAtDebug(t *testing.T) {
-	var buf bytes.Buffer
-	tn := newTuner(clock.NewFake(tunerT0), captureLogger(&buf))
-	tn.applyGrants(Grants{PerMinute: intPtr(600), Concurrency: intPtr(3)})
-	tn.reportFailure()
-	out := buf.String()
-	for _, want := range []string{"level=DEBUG", "grants", "penalty"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("log %q does not contain %q", out, want)
+		if meHits.Add(1) == 1 {
+			writeJSON(200, grantsFast)(w, r)
+			return
 		}
+		<-r.Context().Done()
+		close(refreshCancelled)
+	})
+	before := runtimeGoroutines()
+	fake := clock.NewFake(pollerT0)
+	c := newTestClient(t, srv.URL, withClock(fake), WithAutoTuning())
+	if err := callAdvancing(t, fake, queueCall(c)); err != nil {
+		t.Fatal(err)
 	}
+	fake.Advance(staleRefresh)
+	if err := callAdvancing(t, fake, queueCall(c)); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "refresh to start", func() bool { return meHits.Load() == 2 })
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	mustReceive(t, "refresh request cancelled by Close", refreshCancelled)
+	waitGoroutinesSettle(t, before+1)
 }

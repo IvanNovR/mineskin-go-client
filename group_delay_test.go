@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/ratelimit"
 )
 
 const (
@@ -66,7 +67,7 @@ func delayClient(t *testing.T, srv *clientServer, opts ...Option) (*Client, *clo
 
 // assertDelayed checks that call, started now on g, stays queued until the
 // fake clock has advanced by exactly want (any want <= 0 means no delay).
-func assertDelayed(t *testing.T, fake *clock.Fake, g *requestGroup, call func() error, want time.Duration) error {
+func assertDelayed(t *testing.T, fake *clock.Fake, g *ratelimit.Group, call func() error, want time.Duration) error {
 	t.Helper()
 	res := goCall(call)
 	if want <= 0 {
@@ -76,7 +77,7 @@ func assertDelayed(t *testing.T, fake *clock.Fake, g *requestGroup, call func() 
 	waitWaiting(t, g, 1)
 	fake.Advance(delayTick)
 	fake.Advance(want - 2*delayTick)
-	if got := g.throttle.Stats().Waiting; got != 1 {
+	if got := g.Throttle.Stats().Waiting; got != 1 {
 		t.Fatalf("call left the queue before the %v delay elapsed", want)
 	}
 	fake.Advance(delayTick)
@@ -199,23 +200,12 @@ func TestDeadlineAppliedBeforeRelease(t *testing.T) {
 	if err := mustDone(t, "first", first); err != nil {
 		t.Fatalf("first error = %v", err)
 	}
-	st := c.genGroup.throttle.Stats()
+	st := c.genGroup.Throttle.Stats()
 	if st.Waiting != 1 || st.InFlight != 0 {
 		t.Fatalf("after release: waiting=%d inFlight=%d, want 1 and 0 (the delay must be set before release)", st.Waiting, st.InFlight)
 	}
 	fake.Advance(5 * time.Second)
 	if err := mustDone(t, "second", second); err != nil {
 		t.Errorf("second error = %v", err)
-	}
-}
-
-func TestBodyRateLimitHandlesBOMAndGarbage(t *testing.T) {
-	if got := bodyRateLimit([]byte("\xef\xbb\xbf" + nextRelative(7000, true))); got == nil || got.Next == nil || got.Next.Relative != 7*time.Second {
-		t.Errorf("BOM body = %+v, want 7s", got)
-	}
-	for _, body := range []string{"", "<html>", "[]", `{"rateLimit":`, `{"rateLimit":"x"}`, "null"} {
-		if got := bodyRateLimit([]byte(body)); got != nil {
-			t.Errorf("bodyRateLimit(%q) = %+v, want nil", body, got)
-		}
 	}
 }

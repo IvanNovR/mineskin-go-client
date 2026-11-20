@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/poll"
 )
 
 const waitTestTimeout = 20 * time.Second
@@ -141,7 +142,7 @@ func TestWaitForJobRejectsInvalidInputWithoutRequest(t *testing.T) {
 	if hits.Load() != 0 {
 		t.Errorf("%d requests sent", hits.Load())
 	}
-	if c.poller.isRunning() {
+	if c.poller.Running() {
 		t.Error("poller started for invalid input")
 	}
 }
@@ -179,7 +180,7 @@ func TestWaitForJobUsesETA(t *testing.T) {
 			_, err := c.WaitForJob(waitCtx(t), Job{ID: "j1", ETA: start.Add(50 * time.Millisecond)})
 			return err
 		})
-		eventually(t, "job registered", func() bool { return pendingCount(c.poller) == 1 })
+		eventually(t, "job registered", func() bool { return c.poller.Pending() == 1 })
 		err := advanceUntil(t, fake, step, res)
 		return time.Unix(0, firstGet.Load()).Sub(start), err
 	}
@@ -224,10 +225,7 @@ func TestWaitForJobDedupSharesResult(t *testing.T) {
 		}()
 	}
 	eventually(t, "both waiters registered", func() bool {
-		c.poller.mu.Lock()
-		defer c.poller.mu.Unlock()
-		pj := c.poller.pending["j1"]
-		return pj != nil && pj.waiters == 2
+		return c.poller.Waiters("j1") == 2
 	})
 	close(release)
 	wg.Wait()
@@ -273,10 +271,10 @@ func TestWaitForJobContextCancel(t *testing.T) {
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrClient) {
 		t.Fatalf("err = %v, want context.Canceled and ErrClient", err)
 	}
-	if pendingCount(c.poller) != 0 {
+	if c.poller.Pending() != 0 {
 		t.Error("job still pending after cancel")
 	}
-	eventually(t, "poller exit", func() bool { return !c.poller.isRunning() })
+	eventually(t, "poller exit", func() bool { return !c.poller.Running() })
 	after := gets.Load()
 	time.Sleep(50 * time.Millisecond)
 	if gets.Load() != after {
@@ -321,17 +319,14 @@ func TestWaitForJobCancelKeepsJobForOtherWaiter(t *testing.T) {
 		other <- err
 	}()
 	eventually(t, "two waiters", func() bool {
-		c.poller.mu.Lock()
-		defer c.poller.mu.Unlock()
-		pj := c.poller.pending["j1"]
-		return pj != nil && pj.waiters == 2
+		return c.poller.Waiters("j1") == 2
 	})
 
 	cancel()
 	if err := <-cancelled; !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled waiter err = %v", err)
 	}
-	if pendingCount(c.poller) != 1 {
+	if c.poller.Pending() != 1 {
 		t.Fatal("job removed while another waiter remains")
 	}
 	close(release)
@@ -346,14 +341,14 @@ func TestWaitForJobCancelKeepsJobForOtherWaiter(t *testing.T) {
 func TestWaitForJobPollerExitsWhenIdle(t *testing.T) {
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, fastPolling())
-	if c.poller.isRunning() {
+	if c.poller.Running() {
 		t.Fatal("poller running before any wait")
 	}
 
 	if _, err := c.WaitForJob(waitCtx(t), Job{ID: "j1"}); err != nil {
 		t.Fatal(err)
 	}
-	eventually(t, "poller exit", func() bool { return !c.poller.isRunning() })
+	eventually(t, "poller exit", func() bool { return !c.poller.Running() })
 }
 
 func TestWaitForJobRestartsPollerAfterIdle(t *testing.T) {
@@ -364,7 +359,7 @@ func TestWaitForJobRestartsPollerAfterIdle(t *testing.T) {
 		if _, err := c.WaitForJob(waitCtx(t), Job{ID: "j1"}); err != nil {
 			t.Fatalf("wait %d: %v", i, err)
 		}
-		eventually(t, "poller exit", func() bool { return !c.poller.isRunning() })
+		eventually(t, "poller exit", func() bool { return !c.poller.Running() })
 	}
 }
 
@@ -402,7 +397,7 @@ func TestWaitForJobBatchedOverHTTP(t *testing.T) {
 			_, errs[i] = c.WaitForJob(waitCtx(t), Job{ID: fmt.Sprintf("j%d", i)})
 		}()
 	}
-	eventually(t, "all jobs registered", func() bool { return pendingCount(c.poller) == n })
+	eventually(t, "all jobs registered", func() bool { return c.poller.Pending() == n })
 	allDone := make(chan error, 1)
 	go func() { wg.Wait(); allDone <- nil }()
 	_ = advanceUntil(t, fake, 50*time.Millisecond, allDone)
@@ -456,7 +451,7 @@ func TestWaitForJobConcurrent(t *testing.T) {
 	if failures.Load() != 0 {
 		t.Errorf("%d waiters failed", failures.Load())
 	}
-	eventually(t, "poller exit", func() bool { return !c.poller.isRunning() })
+	eventually(t, "poller exit", func() bool { return !c.poller.Running() })
 	srv.Close()
 	tr.CloseIdleConnections()
 	waitGoroutinesSettle(t, before)
@@ -485,14 +480,14 @@ func TestPollerWakesForSoonerJob(t *testing.T) {
 		_, _ = c.WaitForJob(ctx, Job{ID: "slow"})
 	}()
 	eventually(t, "poller sleeping on the slow job", func() bool {
-		return c.poller.isRunning() && pendingCount(c.poller) == 1
+		return c.poller.Running() && c.poller.Pending() == 1
 	})
 
 	soon := goCall(func() error {
 		_, err := c.WaitForJob(waitCtx(t), Job{ID: "soon", ETA: fake.Now().Add(30 * time.Millisecond)})
 		return err
 	})
-	eventually(t, "sooner job registered", func() bool { return pendingCount(c.poller) == 2 })
+	eventually(t, "sooner job registered", func() bool { return c.poller.Pending() == 2 })
 	err := advanceUntil(t, fake, 10*time.Millisecond, soon)
 
 	if err != nil {
@@ -510,7 +505,7 @@ func TestPollerWakesForSoonerJob(t *testing.T) {
 // when WaitForJob selects.
 type doneAfterIdle struct {
 	context.Context
-	p      *jobPoller
+	p      *poll.Poller[*JobResponse]
 	closed chan struct{}
 	calls  atomic.Int32
 }
@@ -523,7 +518,7 @@ func (c *doneAfterIdle) Err() error {
 }
 
 func (c *doneAfterIdle) Done() <-chan struct{} {
-	for pendingCount(c.p) != 0 {
+	for c.p.Pending() != 0 {
 		time.Sleep(time.Millisecond)
 	}
 	return c.closed

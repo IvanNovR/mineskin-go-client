@@ -2,7 +2,6 @@ package mineskin
 
 import (
 	"context"
-	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -12,9 +11,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/poll"
+	"github.com/IvanNovR/mineskin-go-client/internal/ratelimit"
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 const (
@@ -26,9 +27,12 @@ const (
 	// DefaultTimeout is the default timeout of a single HTTP request.
 	DefaultTimeout = 10 * time.Second
 
-	maxRedirects = 10
 	apiKeyPrefix = "msk_"
 )
+
+// DefaultRateLimitRetries is the default number of automatic retries of a
+// request rejected with HTTP 429 (see WithRateLimitRetries).
+const DefaultRateLimitRetries = 2
 
 // Client is a MineSkin API client. It is immutable after NewClient returns and
 // safe for concurrent use by multiple goroutines.
@@ -45,18 +49,14 @@ const (
 // leads to a different host, and this client refuses redirects from https to
 // http and stops after 10 redirects.
 type Client struct {
-	baseURL    string
-	userAgent  string
-	apiKey     string
-	httpClient *http.Client
-	logger     *slog.Logger
-	polling    PollOptions
-	poller     *jobPoller
-	clock      clock.Clock
-	genGroup   *requestGroup
-	getGroup   *requestGroup
-	// rateLimitRetries is the number of automatic retries after an HTTP 429.
-	rateLimitRetries int
+	// doer holds the base URL, User-Agent, API key and HTTP client.
+	doer     *transport.Doer
+	logger   *slog.Logger
+	polling  PollOptions
+	poller   *poll.Poller[*JobResponse]
+	clock    clock.Clock
+	genGroup *ratelimit.Group
+	getGroup *ratelimit.Group
 
 	// baseCtx is cancelled by Close and parents every request context.
 	baseCtx    context.Context
@@ -95,34 +95,40 @@ func NewClient(opts ...Option) (*Client, error) {
 	}
 	logConfig(r.logger, r.baseURL, r.userAgent, r.apiKey)
 	c := &Client{
-		baseURL:   r.baseURL,
-		userAgent: r.userAgent,
-		apiKey:    r.apiKey,
-		httpClient: &http.Client{
-			Transport:     r.transport,
-			Timeout:       r.timeout,
-			CheckRedirect: checkRedirect,
+		doer: &transport.Doer{
+			BaseURL:   r.baseURL,
+			UserAgent: r.userAgent,
+			APIKey:    r.apiKey,
+			HTTP: &http.Client{
+				Transport:     r.transport,
+				Timeout:       r.timeout,
+				CheckRedirect: checkRedirect,
+			},
+			Clock:  r.clock,
+			Logger: r.logger,
 		},
 		logger:  r.logger,
 		polling: r.polling,
 		clock:   r.clock,
-
-		rateLimitRetries: r.rateLimitRetries,
 	}
 	c.baseCtx, c.cancelBase = context.WithCancelCause(context.Background())
 	c.idleCloser = r.idleCloser
 	c.genGroup, c.getGroup = c.newRequestGroups(r)
-	c.poller = newJobPoller(c.baseCtx, c.clock, c, r.polling, r.logger, c.failureHook())
+	c.poller = poll.New(poll.Config[*JobResponse]{
+		Ctx: c.baseCtx, Clock: c.clock, Fetcher: jobSource{c}, Options: toPollOptions(r.polling),
+		Logger: r.logger, OnJobFailure: c.failureHook(),
+		GetLogAttrs: []any{"path", queuePath + "/{id}"}, ListLogAttrs: []any{"path", queuePath},
+	})
 	return c, nil
 }
 
 // failureHook returns the poller's FAILED-job hook: the penalty with
 // auto-tuning, nil (a no-op) otherwise.
 func (c *Client) failureHook() func() {
-	if c.genGroup.tuner == nil {
+	if c.genGroup.Tuner == nil {
 		return nil
 	}
-	return c.genGroup.tuner.reportFailure
+	return c.genGroup.Tuner.ReportFailure
 }
 
 // resolvedConfig is a validated config with defaults applied.
@@ -176,7 +182,7 @@ func (cfg *config) resolve() (*resolvedConfig, error) {
 		apiKey:    strings.TrimSpace(cfg.apiKey),
 	}
 	if r.transport == nil {
-		owned := defaultTransport()
+		owned := transport.DefaultTransport()
 		r.transport, r.idleCloser = owned, owned.CloseIdleConnections
 	}
 	r.clock = cfg.clock
@@ -255,18 +261,13 @@ func logConfig(l *slog.Logger, baseURL, userAgent, apiKey string) {
 // validateHeaderValues rejects a User-Agent or API key with control
 // characters, which could inject headers. The messages never echo the values.
 func validateHeaderValues(userAgent, apiKey string) error {
-	if hasControlChar(userAgent) {
+	if transport.HasControlChar(userAgent) {
 		return newInvalidInputError("User-Agent must not contain control characters")
 	}
-	if hasControlChar(apiKey) {
+	if transport.HasControlChar(apiKey) {
 		return newInvalidInputError("API key must not contain control characters")
 	}
 	return nil
-}
-
-// hasControlChar reports whether s contains a control character.
-func hasControlChar(s string) bool {
-	return strings.IndexFunc(s, unicode.IsControl) >= 0
 }
 
 // sendsKeyOverPlainHTTP reports whether baseURL uses http with a host that is
@@ -284,28 +285,11 @@ func sendsKeyOverPlainHTTP(baseURL string) bool {
 	return ip == nil || !ip.IsLoopback()
 }
 
-// checkRedirect refuses redirects from https to http and stops after
-// maxRedirects redirects.
+// checkRedirect applies the transport's redirect policy and marks its refusals
+// as client errors.
 func checkRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= maxRedirects {
-		return wrapClientError("redirect", errors.New("stopped after 10 redirects"))
-	}
-	if req.URL.Scheme == "http" {
-		for _, prev := range via {
-			if prev.URL.Scheme == "https" {
-				return wrapClientError("redirect", errors.New("refusing redirect from https to http"))
-			}
-		}
+	if err := transport.CheckRedirect(req, via); err != nil {
+		return wrapClientError("redirect", err)
 	}
 	return nil
-}
-
-// defaultTransport returns a private clone of http.DefaultTransport, which the
-// client owns and closes (D20). If the default was replaced by another
-// RoundTripper, a fresh transport with the standard library defaults is used.
-func defaultTransport() *http.Transport {
-	if t, ok := http.DefaultTransport.(*http.Transport); ok {
-		return t.Clone()
-	}
-	return &http.Transport{Proxy: http.ProxyFromEnvironment}
 }

@@ -1,7 +1,6 @@
 package mineskin
 
 import (
-	"fmt"
 	"math"
 	"time"
 )
@@ -102,32 +101,4 @@ func (p PollOptions) withDefaults() (PollOptions, error) {
 		p.Interval = func(int) time.Duration { return DefaultPollInterval }
 	}
 	return p, nil
-}
-
-// firstDelay returns the wait before the first check of a job with the given
-// ETA: eta-now when UseETA is set and the ETA is in the future, else
-// InitialDelay.
-func (p PollOptions) firstDelay(eta, now time.Time) time.Duration {
-	if p.UseETA && !eta.IsZero() {
-		if d := eta.Sub(now); d > 0 {
-			return d
-		}
-	}
-	return p.InitialDelay
-}
-
-// interval returns the wait before the given attempt, or an error if the
-// configured PollInterval returns a value of zero or less (matching
-// ErrInvalidInput) or panics (matching ErrClient).
-func (p PollOptions) interval(attempt int) (d time.Duration, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			d, err = 0, wrapClientError("poll interval panicked", fmt.Errorf("%v", r))
-		}
-	}()
-	d = p.Interval(attempt)
-	if d <= 0 {
-		return 0, newInvalidInputError("poll interval must be greater than zero")
-	}
-	return d, nil
 }

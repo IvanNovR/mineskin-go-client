@@ -318,7 +318,7 @@ func runWithFakeTime(t *testing.T, fake *clock.Fake, c *Client, srv *clientServe
 			return err
 		default:
 		}
-		if hits := srv.count(keyQueue); c.genGroup.throttle.Stats().Waiting == 1 && hits != advancedAt {
+		if hits := srv.count(keyQueue); c.genGroup.Throttle.Stats().Waiting == 1 && hits != advancedAt {
 			advancedAt = hits
 			fake.Advance(1500 * time.Millisecond)
 		}
@@ -414,7 +414,7 @@ func TestRetryWaitEndedByCtxDeadlineReturns429(t *testing.T) {
 	waitWaiting(t, c.getGroup, 1) // the retry, waiting for the 1 s delay
 	srv.open(keyJob)
 	eventually(t, "group deadline pushed", func() bool {
-		return c.getGroup.throttle.Stats().NotBefore.Sub(c.clock.Now()) > time.Hour/2
+		return c.getGroup.Throttle.Stats().NotBefore.Sub(c.clock.Now()) > time.Hour/2
 	})
 	err := mustDone(t, "GetSkin", res)
 	assertCtxAnd429(t, err, context.DeadlineExceeded)
@@ -469,7 +469,7 @@ func TestRetryCancelledWaitCountsPenaltyOnce(t *testing.T) {
 	}
 	control := run(t, 0, false) // one 429 response, one penalty
 	cancelled := run(t, 2, true)
-	if control != time.Second+penaltyStep {
+	if control != time.Second+500*time.Millisecond {
 		t.Fatalf("control interval = %v, want one penalty step on 1s", control)
 	}
 	if cancelled != control {

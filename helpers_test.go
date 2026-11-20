@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // withClock replaces the client's clock; it exists only for tests.
@@ -84,13 +85,13 @@ type multipartPart struct {
 
 // parseMultipart parses b with the boundary from its Content-Type and returns
 // the parts in wire order.
-func parseMultipart(t *testing.T, b *requestBody) []multipartPart {
+func parseMultipart(t *testing.T, b *transport.Body) []multipartPart {
 	t.Helper()
-	mediaType, params, err := mime.ParseMediaType(b.contentType)
+	mediaType, params, err := mime.ParseMediaType(b.ContentType)
 	if err != nil || mediaType != "multipart/form-data" {
-		t.Fatalf("Content-Type = %q, want multipart/form-data (err %v)", b.contentType, err)
+		t.Fatalf("Content-Type = %q, want multipart/form-data (err %v)", b.ContentType, err)
 	}
-	mr := multipart.NewReader(bytes.NewReader(b.data), params["boundary"])
+	mr := multipart.NewReader(bytes.NewReader(b.Data), params["boundary"])
 	var parts []multipartPart
 	for {
 		p, err := mr.NextPart()
@@ -135,3 +136,6 @@ func waitGoroutinesSettle(t *testing.T, before int) {
 
 // runtimeGoroutines returns the current goroutine count.
 func runtimeGoroutines() int { return runtime.NumGoroutine() }
+
+// pollerT0 is the start of the fake clocks that drive the poller in tests.
+var pollerT0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

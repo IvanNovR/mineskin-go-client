@@ -20,16 +20,16 @@ func TestNewClientDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	if c.baseURL != DefaultBaseURL || c.userAgent != DefaultUserAgent || c.apiKey != "" {
-		t.Errorf("defaults wrong: %q %q %q", c.baseURL, c.userAgent, c.apiKey)
+	if c.doer.BaseURL != DefaultBaseURL || c.doer.UserAgent != DefaultUserAgent || c.doer.APIKey != "" {
+		t.Errorf("defaults wrong: %q %q %q", c.doer.BaseURL, c.doer.UserAgent, c.doer.APIKey)
 	}
-	if c.httpClient.Timeout != DefaultTimeout || DefaultTimeout != 10*time.Second {
-		t.Errorf("timeout = %v", c.httpClient.Timeout)
+	if c.doer.HTTP.Timeout != DefaultTimeout || DefaultTimeout != 10*time.Second {
+		t.Errorf("timeout = %v", c.doer.HTTP.Timeout)
 	}
-	if _, ok := c.httpClient.Transport.(*http.Transport); !ok || c.httpClient.Transport == http.DefaultTransport {
+	if _, ok := c.doer.HTTP.Transport.(*http.Transport); !ok || c.doer.HTTP.Transport == http.DefaultTransport {
 		t.Error("transport should default to an owned clone of http.DefaultTransport")
 	}
-	if c.httpClient.CheckRedirect == nil || c.logger == nil {
+	if c.doer.HTTP.CheckRedirect == nil || c.logger == nil {
 		t.Error("redirect policy and logger must be set")
 	}
 	c.logger.Info("silent") // must not panic
@@ -62,8 +62,8 @@ func TestNewClientBaseURL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if c.baseURL != tt.want {
-				t.Errorf("baseURL = %q, want %q", c.baseURL, tt.want)
+			if c.doer.BaseURL != tt.want {
+				t.Errorf("baseURL = %q, want %q", c.doer.BaseURL, tt.want)
 			}
 		})
 	}
@@ -88,8 +88,8 @@ func TestNewClientUserAgent(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.userAgent != tt.wantUA {
-				t.Errorf("userAgent = %q, want %q", c.userAgent, tt.wantUA)
+			if c.doer.UserAgent != tt.wantUA {
+				t.Errorf("userAgent = %q, want %q", c.doer.UserAgent, tt.wantUA)
 			}
 			if got := strings.Contains(buf.String(), "User-Agent"); got != tt.wantWarn {
 				t.Errorf("UA warning = %v, want %v; log: %s", got, tt.wantWarn, buf.String())
@@ -117,8 +117,8 @@ func TestNewClientAPIKey(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.apiKey != tt.wantKey {
-				t.Errorf("apiKey = %q, want %q", c.apiKey, tt.wantKey)
+			if c.doer.APIKey != tt.wantKey {
+				t.Errorf("apiKey = %q, want %q", c.doer.APIKey, tt.wantKey)
 			}
 			if got := strings.Contains(buf.String(), "without API key"); got != tt.wantWarn {
 				t.Errorf("key warning = %v, want %v", got, tt.wantWarn)
@@ -174,7 +174,7 @@ func TestNewClientTimeout(t *testing.T) {
 		}
 	}
 	c, err := NewClient(WithTimeout(3 * time.Second))
-	if err != nil || c.httpClient.Timeout != 3*time.Second {
+	if err != nil || c.doer.HTTP.Timeout != 3*time.Second {
 		t.Errorf("timeout not applied: %v %v", c, err)
 	}
 }
@@ -188,14 +188,14 @@ func TestOptionNilFallbacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := c.httpClient.Transport.(*http.Transport); !ok || c.idleCloser == nil || c.logger == nil {
+	if _, ok := c.doer.HTTP.Transport.(*http.Transport); !ok || c.idleCloser == nil || c.logger == nil {
 		t.Error("nil options must fall back to defaults (owned transport clone)")
 	}
 	c.logger.Warn("must not panic")
 
 	st := stubTransport{}
 	c, err = NewClient(WithTransport(st))
-	if err != nil || c.httpClient.Transport != st {
+	if err != nil || c.doer.HTTP.Transport != st {
 		t.Errorf("custom transport not used: %v", err)
 	}
 }

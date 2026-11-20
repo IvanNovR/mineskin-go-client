@@ -154,37 +154,3 @@ func TestNewClientCustomPolling(t *testing.T) {
 		t.Errorf("polling = %+v", c.polling)
 	}
 }
-
-func TestPollFirstDelay(t *testing.T) {
-	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
-	tests := []struct {
-		name string
-		opts PollOptions
-		eta  time.Time
-		want time.Duration
-	}{
-		{"UseETA off ignores future ETA", PollOptions{InitialDelay: 2 * time.Second}, now.Add(9 * time.Second), 2 * time.Second},
-		{"future ETA", PollOptions{InitialDelay: 2 * time.Second, UseETA: true}, now.Add(9 * time.Second), 9 * time.Second},
-		{"past ETA", PollOptions{InitialDelay: 2 * time.Second, UseETA: true}, now.Add(-time.Second), 2 * time.Second},
-		{"ETA equal now", PollOptions{InitialDelay: 2 * time.Second, UseETA: true}, now, 2 * time.Second},
-		{"zero ETA", PollOptions{InitialDelay: 2 * time.Second, UseETA: true}, time.Time{}, 2 * time.Second},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.opts.firstDelay(tt.eta, now); got != tt.want {
-				t.Errorf("firstDelay = %v, want %v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestPollIntervalNegativeResult(t *testing.T) {
-	neg := PollOptions{Interval: func(int) time.Duration { return -time.Millisecond }}
-	if _, err := neg.interval(1); !errors.Is(err, ErrInvalidInput) {
-		t.Errorf("err = %v, want ErrInvalidInput", err)
-	}
-	ok := PollOptions{Interval: func(a int) time.Duration { return time.Duration(a) * time.Millisecond }}
-	if got, err := ok.interval(3); err != nil || got != 3*time.Millisecond {
-		t.Errorf("got (%v, %v)", got, err)
-	}
-}

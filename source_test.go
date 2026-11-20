@@ -184,9 +184,10 @@ func TestFromFileReadsOnEverySend(t *testing.T) {
 
 func TestFromFileMissing(t *testing.T) {
 	_, err := FromFile(filepath.Join(t.TempDir(), "missing.png")).requestBody(nil)
-	if err == nil || !errors.Is(err, fs.ErrNotExist) {
-		t.Errorf("error = %v, want a error and fs.ErrNotExist", err)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("error = %v, want fs.ErrNotExist", err)
 	}
+	assertGoStyleMessage(t, err)
 	if errors.Is(err, ErrInvalidInput) {
 		t.Error("missing file must not match ErrInvalidInput")
 	}
@@ -222,9 +223,10 @@ func (e errReader) Read([]byte) (int, error) { return 0, e.err }
 func TestFromReaderError(t *testing.T) {
 	cause := errors.New("disk on fire")
 	_, err := FromReader(errReader{cause}).requestBody(nil)
-	if err == nil || !errors.Is(err, cause) {
-		t.Errorf("error = %v, want a wrapping cause error", err)
+	if !errors.Is(err, cause) {
+		t.Errorf("error = %v, want it to wrap the cause", err)
 	}
+	assertGoStyleMessage(t, err)
 	if errors.Is(err, ErrInvalidInput) {
 		t.Error("reader failure must not match ErrInvalidInput")
 	}

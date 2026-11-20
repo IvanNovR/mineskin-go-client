@@ -53,7 +53,7 @@ func TestCallsAfterCloseFailImmediately(t *testing.T) {
 	for name, call := range calls {
 		err := call()
 		if !errors.Is(err, ErrClientClosed) {
-			t.Errorf("%s error = %v, want a errorClosed", name, err)
+			t.Errorf("%s error = %v, want ErrClientClosed", name, err)
 		}
 	}
 	for _, key := range []string{keySkin, keyUser, keyJob, keyList, keyQueue, keyGenerate} {
@@ -79,11 +79,11 @@ func TestCloseFailsQueuedWaiters(t *testing.T) {
 	}
 	for i, ch := range queued {
 		if err := mustDone(t, "queued", ch); !errors.Is(err, ErrClientClosed) {
-			t.Errorf("queued[%d] error = %v, want a errorClosed", i, err)
+			t.Errorf("queued[%d] error = %v, want ErrClientClosed", i, err)
 		}
 	}
 	if err := mustDone(t, "held", held); !errors.Is(err, ErrClientClosed) {
-		t.Errorf("held error = %v, want a errorClosed", err)
+		t.Errorf("held error = %v, want ErrClientClosed", err)
 	}
 }
 
@@ -103,7 +103,7 @@ func TestCloseCancelsInFlightRequest(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 	if err := mustDone(t, "GetUser", res); !errors.Is(err, ErrClientClosed) {
-		t.Errorf("GetUser error = %v, want a errorClosed", err)
+		t.Errorf("GetUser error = %v, want ErrClientClosed", err)
 	}
 	select {
 	case <-handlerDone:
@@ -125,7 +125,7 @@ func TestCloseFailsWaitForJob(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 	if err := mustDone(t, "WaitForJob", res); !errors.Is(err, ErrClientClosed) {
-		t.Errorf("WaitForJob error = %v, want a errorClosed", err)
+		t.Errorf("WaitForJob error = %v, want ErrClientClosed", err)
 	}
 	if c.poller.Running() {
 		t.Error("poller still running after Close")
@@ -153,7 +153,7 @@ func TestCloseWaitsForPollerExit(t *testing.T) {
 		t.Fatal("poller goroutine still running after Close returned")
 	}
 	if err := mustDone(t, "WaitForJob", res); !errors.Is(err, ErrClientClosed) {
-		t.Errorf("WaitForJob error = %v, want a errorClosed", err)
+		t.Errorf("WaitForJob error = %v, want ErrClientClosed", err)
 	}
 	srv.Close()
 	waitGoroutinesSettle(t, before)
@@ -208,6 +208,6 @@ func TestCallerCancelVsCloseDistinguished(t *testing.T) {
 	_ = c.Close()
 	err = mustDone(t, "closed GetUser", res)
 	if !errors.Is(err, ErrClientClosed) {
-		t.Errorf("Close error = %v, want a errorClosed", err)
+		t.Errorf("Close error = %v, want ErrClientClosed", err)
 	}
 }

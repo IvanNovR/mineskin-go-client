@@ -39,6 +39,24 @@ func assertGoStyleMessage(t *testing.T, err error) {
 	}
 }
 
+// assertParseError checks a plain client-side parse failure: not an API or
+// unexpected-response error, not a classification sentinel, Go-style text.
+func assertParseError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("error = nil, want a parse error")
+	}
+	var apiErr *APIError
+	var ue *UnexpectedResponseError
+	if errors.As(err, &apiErr) || errors.As(err, &ue) {
+		t.Errorf("error %v is an API or unexpected-response error, want a plain parse error", err)
+	}
+	if errors.Is(err, ErrInvalidInput) || errors.Is(err, ErrNotFound) {
+		t.Errorf("error %v matches ErrInvalidInput or ErrNotFound", err)
+	}
+	assertGoStyleMessage(t, err)
+}
+
 func TestErrorMessageStyle(t *testing.T) {
 	boom := errors.New("boom")
 	last := transport.Response{Status: 429, Header: http.Header{}, Body: []byte(`{"success":false,"errors":[{"code":"x","message":"Slow Down"}]}`)}

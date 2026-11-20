@@ -2,8 +2,10 @@ package mineskin
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/transport"
@@ -70,17 +72,29 @@ func handleResponse(raw transport.Response, decodeBody func(obj map[string]json.
 	}
 	meta, err := decodeEnvelope(raw, obj)
 	if err != nil {
-		return ResponseMeta{}, fmt.Errorf("mineskin: "+parseFailureMessage+": %w", err)
+		return ResponseMeta{}, parseFailure(err)
 	}
 	if !meta.Success {
 		return ResponseMeta{}, newAPIError(meta, obj, raw.Header, raw.Received)
 	}
 	if decodeBody != nil {
 		if err := decodeBody(obj, body); err != nil {
-			return ResponseMeta{}, fmt.Errorf("mineskin: "+parseFailureMessage+": %w", err)
+			return ResponseMeta{}, parseFailure(err)
 		}
 	}
 	return meta, nil
+}
+
+// parseFailure wraps a payload decoding error. A malformed value in a server
+// response (for example a UUID that ParseUUID rejects) is a parse failure, not
+// bad caller input, so the ErrInvalidInput classification and its prefix are
+// dropped from the text and the chain.
+func parseFailure(err error) error {
+	if errors.Is(err, ErrInvalidInput) {
+		plain := strings.Replace(err.Error(), errorPrefix+"invalid input: ", "", 1)
+		return fmt.Errorf("%s%s: %s", errorPrefix, parseFailureMessage, plain)
+	}
+	return fmt.Errorf("%s%s: %w", errorPrefix, parseFailureMessage, err)
 }
 
 // decodeEnvelope reads the common fields of a response object.

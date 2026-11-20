@@ -181,9 +181,6 @@ func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
 	c := newTestClient(t, tlsSrv.URL, WithTransport(tlsSrv.Client().Transport), WithAPIKey(testAPIKey))
 	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
 	assertGoStyleMessage(t, err)
-	if err == nil {
-		t.Fatalf("err = %v, want a error", err)
-	}
 	if plainHits.Load() != 0 {
 		t.Error("plain http server was contacted after an https->http redirect")
 	}
@@ -258,9 +255,7 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 			opts := append([]Option{WithAPIKey(testAPIKey), WithLogger(captureLogger(&logs))}, tt.opts...)
 			c := newTestClient(t, closedURL, opts...)
 			_, err := c.get(context.Background(), "/v2/skins/abc", noopDecoder)
-			if err == nil {
-				t.Fatalf("err = %v, want a error", err)
-			}
+			assertGoStyleMessage(t, err)
 			if strings.Contains(err.Error(), testAPIKey) || strings.Contains(err.Error(), "Bearer") {
 				t.Errorf("error leaks credentials: %v", err)
 			}
@@ -293,8 +288,10 @@ func TestDoBodySizeLimit(t *testing.T) {
 			raw, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
 			if tt.wantErr {
 				if err == nil {
-					t.Fatalf("err = %v, want a error", err)
+					t.Fatal("do() error = nil, want an error")
 				}
+				_, getErr := c.get(context.Background(), "/v2/x", noopDecoder)
+				assertGoStyleMessage(t, getErr)
 				return
 			}
 			if err != nil || len(raw.Body) != tt.size {
@@ -360,12 +357,17 @@ func TestGetAPIError(t *testing.T) {
 }
 
 func TestGetPropagatesTransportError(t *testing.T) {
+	boom := errors.New("boom")
 	c := newTestClient(t, "http://example.invalid", WithTransport(roundTripFunc(
-		func(*http.Request) (*http.Response, error) { return nil, errors.New("boom") })))
+		func(*http.Request) (*http.Response, error) { return nil, boom })))
 	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
-	if err == nil {
-		t.Fatalf("err = %v, want a error", err)
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want it to wrap boom", err)
 	}
+	if !strings.HasPrefix(err.Error(), "mineskin: GET /v2/x:") {
+		t.Errorf("err = %q, want the method and path label", err)
+	}
+	assertGoStyleMessage(t, err)
 }
 
 func TestDoConcurrent(t *testing.T) {

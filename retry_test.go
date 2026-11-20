@@ -238,7 +238,7 @@ func TestRetryWaitEndsOnCloseAndCancel(t *testing.T) {
 		waitWaiting(t, c.getGroup, 1)
 		_ = c.Close()
 		if err := mustDone(t, "GetSkin", res); !errors.Is(err, ErrClientClosed) {
-			t.Errorf("error = %v, want a errorClosed", err)
+			t.Errorf("error = %v, want ErrClientClosed", err)
 		}
 	})
 	t.Run("cancel", func(t *testing.T) {

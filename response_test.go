@@ -81,8 +81,11 @@ func TestHandleResponseAPIError(t *testing.T) {
 			if apiErr.Code != tt.wantCode || apiErr.Message != tt.wantMessage || apiErr.Status != tt.status || apiErr.Success {
 				t.Errorf("apiErr = %+v", apiErr)
 			}
-			if err == nil || errors.Is(err, ErrNotFound) != tt.wantNotFnd {
-				t.Errorf("Is mismatch for %v", err)
+			if errors.Is(err, ErrNotFound) != tt.wantNotFnd {
+				t.Errorf("Is(ErrNotFound) mismatch for %v", err)
+			}
+			if errors.Is(err, ErrRateLimited) != (tt.status == http.StatusTooManyRequests) {
+				t.Errorf("Is(ErrRateLimited) mismatch for %v", err)
 			}
 		})
 	}
@@ -176,6 +179,7 @@ func TestHandleResponseDecodeBodyReceivesInputs(t *testing.T) {
 	}
 	cause := errors.New("bad job")
 	_, err = handleResponse(transport.Response{Status: 200, Body: body}, func(map[string]json.RawMessage, []byte) error { return cause })
+	assertParseError(t, err)
 	if !errors.Is(err, cause) || err.Error() != "mineskin: failed to parse response: bad job" {
 		t.Errorf("err = %v", err)
 	}
@@ -194,10 +198,7 @@ func TestHandleResponseAPIErrorSkipsDecodeBody(t *testing.T) {
 func TestHandleResponseSuccessWithBadPayloadIsParseError(t *testing.T) {
 	_, err := handleResponse(transport.Response{Status: 200, Body: []byte(`{"success":true}`)},
 		func(map[string]json.RawMessage, []byte) error { return errors.New("boom") })
-	var apiErr *APIError
-	if err == nil || errors.As(err, &apiErr) {
-		t.Errorf("want parse error, got %v", err)
-	}
+	assertParseError(t, err)
 }
 
 func TestHandleResponseListsAndLinks(t *testing.T) {
@@ -294,5 +295,14 @@ func TestHandleResponseAcceptsUTF8BOM(t *testing.T) {
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
 		t.Errorf("err = %v, want *APIError", err)
+	}
+}
+
+func TestMalformedServerUUIDIsPlainParseError(t *testing.T) {
+	body := []byte(`{"success":true,"user":"not-a-uuid"}`)
+	_, err := handleResponse(transport.Response{Status: 200, Body: body}, userDecoder)
+	assertParseError(t, err)
+	if want := "mineskin: failed to parse response: invalid UUID: unrecognised format (length 10)"; err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err, want)
 	}
 }

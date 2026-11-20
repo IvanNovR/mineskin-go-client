@@ -314,3 +314,25 @@ func TestDoCallerDeadlineIsNotARequestTimeout(t *testing.T) {
 		t.Fatalf("error = %v, want the caller's deadline and not a request timeout", err)
 	}
 }
+
+func TestDoMeasuresElapsedWithTheInjectedClock(t *testing.T) {
+	fake := clock.NewFake(epoch)
+	d := newDoer(t, func(w http.ResponseWriter, _ *http.Request) {
+		fake.Advance(250 * time.Millisecond) // the "request" takes 250 ms on the fake clock
+		_, _ = io.WriteString(w, `{}`)
+	})
+	d.Clock = fake
+	var logs bytes.Buffer
+	d.Logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	resp, err := d.Do(context.Background(), http.MethodGet, "/x", nil)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	if want := epoch.Add(250 * time.Millisecond); !resp.Received.Equal(want) {
+		t.Errorf("Received = %v, want %v", resp.Received, want)
+	}
+	if !strings.Contains(logs.String(), "elapsed=250ms") {
+		t.Errorf("log = %s, want elapsed=250ms measured on the injected clock", logs.String())
+	}
+}

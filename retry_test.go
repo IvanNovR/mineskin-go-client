@@ -419,8 +419,7 @@ func TestRetryWaitEndedByCtxDeadlineReturns429(t *testing.T) {
 	err := mustDone(t, "GetSkin", res)
 	assertCtxAnd429(t, err, context.DeadlineExceeded)
 	var apiErr *APIError
-	if errors.As(err, &apiErr) && (apiErr.RateLimit == nil || apiErr.RateLimit.Next == nil ||
-		apiErr.RateLimit.Next.Relative != time.Second || apiErr.RetryAfter != time.Second) {
+	if errors.As(err, &apiErr) && (apiErr.RateLimit.NextIn != time.Second || apiErr.RetryAfter != time.Second) {
 		t.Errorf("429 lost its rate limit data: RateLimit=%+v RetryAfter=%v", apiErr.RateLimit, apiErr.RetryAfter)
 	}
 	_ = c.Close() // ends the other call, which is retrying too

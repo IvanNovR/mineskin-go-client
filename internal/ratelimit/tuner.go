@@ -16,7 +16,6 @@ const (
 	autoBaselineConcurrency = 1
 	autoMinInterval         = 100 * time.Millisecond
 	autoMaxInterval         = time.Second
-	autoMinConcurrency      = 1
 	autoMaxConcurrency      = 30
 	grantsRefreshAge        = 5 * time.Minute
 	penaltyStep             = 500 * time.Millisecond
@@ -51,11 +50,11 @@ type Tuner struct {
 	grants grantsLoad
 }
 
-// Grants are the limits the API key is granted. A nil field means the API did
-// not send a usable value.
+// Grants are the limits the API key is granted. A field of zero or less means
+// the API did not send a usable value.
 type Grants struct {
-	PerMinute   *int
-	Concurrency *int
+	PerMinute   int
+	Concurrency int
 }
 
 // TunerConfig is everything a Tuner needs, except the throttle kick, which is
@@ -104,17 +103,17 @@ func (t *Tuner) Limits(now time.Time) throttle.Limits {
 	}
 }
 
-// applyGrants maps grants onto the limits. A missing, zero or negative
-// per-minute value keeps the current interval and a missing concurrency keeps
-// the current concurrency.
+// applyGrants maps grants onto the limits. A per-minute value of zero or less
+// keeps the current interval and a concurrency of zero or less keeps the
+// current concurrency.
 func (t *Tuner) applyGrants(g Grants) {
 	t.mu.Lock()
-	if g.PerMinute != nil && *g.PerMinute > 0 {
-		t.interval = clampDuration((time.Minute / time.Duration(*g.PerMinute)).Truncate(time.Millisecond),
+	if g.PerMinute > 0 {
+		t.interval = clampDuration((time.Minute / time.Duration(g.PerMinute)).Truncate(time.Millisecond),
 			autoMinInterval, autoMaxInterval)
 	}
-	if g.Concurrency != nil {
-		t.concurrency = min(max(*g.Concurrency, autoMinConcurrency), autoMaxConcurrency)
+	if g.Concurrency > 0 {
+		t.concurrency = min(g.Concurrency, autoMaxConcurrency)
 	}
 	interval, concurrency := t.interval, t.concurrency
 	t.mu.Unlock()

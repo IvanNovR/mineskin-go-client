@@ -79,10 +79,10 @@ func TestSeamServerDelayAgreesWithRateLimitDecoding(t *testing.T) {
 		r := transport.Response{Status: 200, Header: http.Header{}, Body: []byte(body)}
 		var want time.Duration
 		var wire struct {
-			RateLimit *RateLimitInfo `json:"rateLimit"`
+			RateLimit RateLimit `json:"rateLimit"`
 		}
-		if err := json.Unmarshal(transport.TrimBOM(r.Body), &wire); err == nil && wire.RateLimit != nil && wire.RateLimit.Next != nil {
-			want = wire.RateLimit.Next.Relative
+		if err := json.Unmarshal(transport.TrimBOM(r.Body), &wire); err == nil {
+			want = wire.RateLimit.NextIn
 		}
 		if got := ratelimit.ServerDelay(r); got != want {
 			t.Errorf("ServerDelay(%q) = %v, public decoding = %v", body, got, want)

@@ -24,11 +24,9 @@ func TestAPIErrorCarriesRateLimitAndUsage(t *testing.T) {
 	body := `{"success":false,"errors":[{"code":"too_many_requests","message":"slow down"}],` +
 		`"rateLimit":{"next":{"relative":3000}},"usage":{"credits":{"used":4,"remaining":6}}}`
 	e := apiErrorFrom(t, transport.Response{Status: 429, Body: []byte(body)})
-	if e.RateLimit == nil || e.RateLimit.Next == nil || e.RateLimit.Next.Relative != 3*time.Second {
-		t.Errorf("RateLimit = %+v, want Next.Relative 3s", e.RateLimit)
-	}
-	if e.Usage == nil || e.Usage.Credits == nil || e.Usage.Credits.Used != 4 {
-		t.Errorf("Usage = %+v, want credits used 4", e.Usage)
+	assertRateLimit(t, e.RateLimit, RateLimit{NextIn: 3 * time.Second})
+	if want := (Usage{CreditsUsed: 4, CreditsRemaining: 6}); e.Usage != want {
+		t.Errorf("Usage = %+v, want %+v", e.Usage, want)
 	}
 }
 
@@ -49,8 +47,8 @@ func TestAPIErrorRateLimitLenient(t *testing.T) {
 			if e.Code != "c" || e.Message != "m" {
 				t.Errorf("code/message = %q/%q, want c/m", e.Code, e.Message)
 			}
-			if e.RateLimit != nil && e.RateLimit.Next != nil && e.RateLimit.Next.Relative != 0 {
-				t.Errorf("Relative = %v, want 0", e.RateLimit.Next.Relative)
+			if e.RateLimit != (RateLimit{}) || e.Usage != (Usage{}) {
+				t.Errorf("RateLimit = %+v Usage = %+v, want zero values", e.RateLimit, e.Usage)
 			}
 		})
 	}

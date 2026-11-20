@@ -66,12 +66,11 @@ type APIError struct {
 	// Errors lists every error reported by the API; empty, never nil, when
 	// there were none.
 	Errors []CodeAndMessage
-	// RateLimit is the rateLimit field of the response, or nil when absent or
+	// RateLimit is the rateLimit field of the response; zero when absent or
 	// malformed.
-	RateLimit *RateLimitInfo
-	// Usage is the usage field of the response, or nil when absent or
-	// malformed.
-	Usage *UsageInfo
+	RateLimit RateLimit
+	// Usage is the usage field of the response; zero when absent or malformed.
+	Usage Usage
 	// RetryAfter is the Retry-After header (RFC 9110, delta-seconds or
 	// HTTP-date), or 0 when absent or invalid.
 	RetryAfter time.Duration

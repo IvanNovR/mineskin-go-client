@@ -13,10 +13,10 @@ type QueueResponse struct {
 	Meta ResponseMeta
 	// Job is the queued job.
 	Job Job
-	// RateLimit is the rate limit state, or nil when absent.
-	RateLimit *RateLimitInfo
-	// Usage is the usage state, or nil when absent.
-	Usage *UsageInfo
+	// RateLimit is the rate limit state; zero when absent.
+	RateLimit RateLimit
+	// Usage is the usage state; zero when absent.
+	Usage Usage
 }
 
 // GenerateResponse is the response to a synchronous generation request.
@@ -25,10 +25,10 @@ type GenerateResponse struct {
 	Meta ResponseMeta
 	// Skin is the generated skin.
 	Skin Skin
-	// RateLimit is the rate limit state, or nil when absent.
-	RateLimit *RateLimitInfo
-	// Usage is the usage state, or nil when absent.
-	Usage *UsageInfo
+	// RateLimit is the rate limit state; zero when absent.
+	RateLimit RateLimit
+	// Usage is the usage state; zero when absent.
+	Usage Usage
 }
 
 // Queue submits a skin generation job and returns it without waiting for the
@@ -64,16 +64,16 @@ func (c *Client) Generate(ctx context.Context, src Source, opts *GenerateOptions
 
 // queueWire is the wire shape of a queued generation response.
 type queueWire struct {
-	Job       Job            `json:"job"`
-	RateLimit *RateLimitInfo `json:"rateLimit"`
-	Usage     *UsageInfo     `json:"usage"`
+	Job       Job       `json:"job"`
+	RateLimit RateLimit `json:"rateLimit"`
+	Usage     Usage     `json:"usage"`
 }
 
 // generateWire is the wire shape of a synchronous generation response.
 type generateWire struct {
-	Skin      Skin           `json:"skin"`
-	RateLimit *RateLimitInfo `json:"rateLimit"`
-	Usage     *UsageInfo     `json:"usage"`
+	Skin      Skin      `json:"skin"`
+	RateLimit RateLimit `json:"rateLimit"`
+	Usage     Usage     `json:"usage"`
 }
 
 // submit encodes src, posts it to path and decodes the response into W.

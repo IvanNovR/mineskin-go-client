@@ -12,41 +12,47 @@ const (
 	maxDurationSeconds = maxDurationMillis / millisPerSecond
 )
 
-// RateLimitInfo is the informational rate limit state sent with a response.
-// It is decoded leniently (see UnmarshalJSON): missing or malformed parts are
-// left zero or nil.
-type RateLimitInfo struct {
-	// Next describes when the next request may be sent, or nil when absent.
-	Next *NextRequest
+// RateLimit is the informational rate limit state sent with a response. It is
+// decoded leniently (see UnmarshalJSON): a missing or malformed part is left
+// zero, and a zero value means the API did not send it.
+type RateLimit struct {
+	// NextAt is the point in time the next request may be sent.
+	NextAt time.Time
+	// NextIn is the time from now until the next request may be sent.
+	NextIn time.Duration
 	// Delay is the delay requested by the API, read from delay.millis and
-	// falling back to delay.seconds; zero when absent.
+	// falling back to delay.seconds.
 	Delay time.Duration
-	// Limit is the request limit state, or nil when absent.
-	Limit *LimitInfo
-}
-
-// NextRequest tells when the next request may be sent.
-type NextRequest struct {
-	// Absolute is the point in time, zero when absent.
-	Absolute time.Time
-	// Relative is the time from now, zero when absent.
-	Relative time.Duration
-}
-
-// LimitInfo is the request limit and the requests remaining.
-type LimitInfo struct {
+	// Limit and Remaining are the deprecated flat request limit and the
+	// requests remaining. Prefer Minute and Hour where the API sends them.
 	Limit, Remaining int
+	// Minute is the per-minute window.
+	Minute WindowLimit
+	// Hour is the per-hour window.
+	Hour WindowLimit
 }
 
-// UsageInfo is the usage state sent with a response.
-type UsageInfo struct {
-	// Credits is the credit usage, or nil when absent.
-	Credits *CreditsUsage
+// WindowLimit is the state of one rate limit window. The zero value means the
+// API sent no such window; a single zero field means that field was absent.
+type WindowLimit struct {
+	// Limit is the number of requests the window allows.
+	Limit int
+	// Remaining is the number of requests left in the window.
+	Remaining int
+	// Used is the number of requests used in the window.
+	Used int
+	// Reset is when the window resets. The API sends epoch milliseconds, like
+	// next.absolute.
+	Reset time.Time
 }
 
-// CreditsUsage is the credit usage of the API key.
-type CreditsUsage struct {
-	Used, Remaining int
+// Usage is the usage state sent with a response. A zero field means the API
+// did not send a usable value.
+type Usage struct {
+	// CreditsUsed is the number of credits the API key has used.
+	CreditsUsed int
+	// CreditsRemaining is the number of credits left.
+	CreditsRemaining int
 }
 
 // rateLimitWire is the wire shape of the rateLimit field. The parts stay raw
@@ -70,22 +76,41 @@ type delayWire struct {
 type limitWire struct {
 	Limit     json.RawMessage `json:"limit"`
 	Remaining json.RawMessage `json:"remaining"`
+	Minute    json.RawMessage `json:"minute"`
+	Hour      json.RawMessage `json:"hour"`
+}
+
+type windowWire struct {
+	Limit     json.RawMessage `json:"limit"`
+	Remaining json.RawMessage `json:"remaining"`
+	Used      json.RawMessage `json:"used"`
+	Reset     json.RawMessage `json:"reset"`
+}
+
+// lenientWindow decodes a window object; anything else gives the zero value.
+func lenientWindow(v json.RawMessage) WindowLimit {
+	var w windowWire
+	if !unmarshalObject(v, &w) {
+		return WindowLimit{}
+	}
+	return WindowLimit{
+		Limit: lenientInt(w.Limit), Remaining: lenientInt(w.Remaining),
+		Used: lenientInt(w.Used), Reset: lenientTime(w.Reset),
+	}
 }
 
 // UnmarshalJSON decodes the rateLimit field. It never fails: a value that is
-// not an object, and any malformed part, is left zero or nil (JB-13).
-func (r *RateLimitInfo) UnmarshalJSON(b []byte) error {
-	*r = RateLimitInfo{}
+// not an object, and any malformed part, is left zero (JB-13).
+func (r *RateLimit) UnmarshalJSON(b []byte) error {
+	*r = RateLimit{}
 	var wire rateLimitWire
 	if json.Unmarshal(b, &wire) != nil {
 		return nil
 	}
 	var next nextWire
 	if unmarshalObject(wire.Next, &next) {
-		r.Next = &NextRequest{
-			Absolute: lenientTime(next.Absolute),
-			Relative: lenientDuration(next.Relative, maxDurationMillis, time.Millisecond),
-		}
+		r.NextAt = lenientTime(next.Absolute)
+		r.NextIn = lenientDuration(next.Relative, maxDurationMillis, time.Millisecond)
 	}
 	var delay delayWire
 	if unmarshalObject(wire.Delay, &delay) {
@@ -96,7 +121,8 @@ func (r *RateLimitInfo) UnmarshalJSON(b []byte) error {
 	}
 	var limit limitWire
 	if unmarshalObject(wire.Limit, &limit) {
-		r.Limit = &LimitInfo{Limit: lenientInt(limit.Limit), Remaining: lenientInt(limit.Remaining)}
+		r.Limit, r.Remaining = lenientInt(limit.Limit), lenientInt(limit.Remaining)
+		r.Minute, r.Hour = lenientWindow(limit.Minute), lenientWindow(limit.Hour)
 	}
 	return nil
 }
@@ -112,16 +138,16 @@ type creditsWire struct {
 }
 
 // UnmarshalJSON decodes the usage field with the same leniency as
-// RateLimitInfo.UnmarshalJSON: it never fails.
-func (u *UsageInfo) UnmarshalJSON(b []byte) error {
-	*u = UsageInfo{}
+// RateLimit.UnmarshalJSON: it never fails.
+func (u *Usage) UnmarshalJSON(b []byte) error {
+	*u = Usage{}
 	var wire usageWire
 	if json.Unmarshal(b, &wire) != nil {
 		return nil
 	}
 	var credits creditsWire
 	if unmarshalObject(wire.Credits, &credits) {
-		u.Credits = &CreditsUsage{Used: lenientInt(credits.Used), Remaining: lenientInt(credits.Remaining)}
+		u.CreditsUsed, u.CreditsRemaining = lenientInt(credits.Used), lenientInt(credits.Remaining)
 	}
 	return nil
 }

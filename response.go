@@ -31,8 +31,8 @@ type envelope struct {
 // carry, decoded before the endpoint specific payload.
 type failureWire struct {
 	envelope
-	RateLimit *RateLimitInfo `json:"rateLimit"`
-	Usage     *UsageInfo     `json:"usage"`
+	RateLimit RateLimit `json:"rateLimit"`
+	Usage     Usage     `json:"usage"`
 }
 
 // ResponseMeta describes the envelope of a MineSkin API response. Every

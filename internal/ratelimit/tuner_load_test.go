@@ -39,7 +39,7 @@ func (f *fakeLoader) count() int {
 }
 
 func grantsOf(perMinute, concurrency int) Grants {
-	return Grants{PerMinute: &perMinute, Concurrency: &concurrency}
+	return Grants{PerMinute: perMinute, Concurrency: concurrency}
 }
 
 type loaderEnv struct {

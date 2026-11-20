@@ -15,7 +15,7 @@ const (
 	skinsPathPrefix = "/v2/skins/"
 
 	// maxDurationMillis is the largest millisecond count a time.Duration holds.
-	maxDurationMillis = int64(math.MaxInt64 / int64(time.Millisecond))
+	maxDurationMillis = math.MaxInt64 / int64(time.Millisecond)
 )
 
 // Variant is the model of a skin: classic (wide arms) or slim.

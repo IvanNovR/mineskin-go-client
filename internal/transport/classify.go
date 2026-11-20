@@ -57,8 +57,7 @@ func decodeEnvelope(r Response) (env envelope, ok, wellFormed bool) {
 		return envelope{}, false, false
 	}
 	err := json.Unmarshal(body, &env)
-	var syntax *json.SyntaxError
-	if errors.As(err, &syntax) {
+	if _, ok := errors.AsType[*json.SyntaxError](err); ok {
 		return envelope{}, false, false
 	}
 	return env, true, err == nil

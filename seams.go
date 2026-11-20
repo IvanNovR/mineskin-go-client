@@ -96,8 +96,7 @@ func (c *Client) exchange(ctx context.Context, g *ratelimit.Group, method, path 
 // ErrInvalidInput, and anything else (a ctx error of the queue, a transport or
 // read failure) is wrapped with the label and keeps the cause in its chain.
 func mapGroupErr(label string, err error) error {
-	var retry *ratelimit.RetryCancelledError
-	if errors.As(err, &retry) {
+	if retry, ok := errors.AsType[*ratelimit.RetryCancelledError](err); ok {
 		return newRetryCancelledError(mapGroupErr(label, retry.Err), retry.Last)
 	}
 	var build *transport.BuildError

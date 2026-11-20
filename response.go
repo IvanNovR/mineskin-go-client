@@ -118,8 +118,7 @@ func decodeResponse[W any](raw transport.Response, log *slog.Logger, path string
 	}
 	var head failureWire
 	if err := json.Unmarshal(body, &head); err != nil {
-		var syntax *json.SyntaxError
-		if errors.As(err, &syntax) {
+		if _, ok := errors.AsType[*json.SyntaxError](err); ok {
 			logDropped(log, path, raw, nil)
 			return wire, ResponseMeta{}, newUnexpectedResponseError(raw.Status, raw.Header, raw.Body, err, raw.Received)
 		}

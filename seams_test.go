@@ -120,36 +120,48 @@ func TestSeamMapGroupErr(t *testing.T) {
 		err   error
 		check func(t *testing.T, got error)
 	}{
-		{"throttle closed", throttle.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed) }},
-		{"tuner closed", ratelimit.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed) }},
-		{"ctx error is wrapped", context.Canceled, func(t *testing.T, got error) { mustIs(t, got, context.Canceled) }},
+		{"throttle closed", throttle.ErrClosed, func(t *testing.T, got error) {
+			t.Helper()
+			mustIs(t, got, ErrClientClosed)
+		}},
+		{"tuner closed", ratelimit.ErrClosed, func(t *testing.T, got error) {
+			t.Helper()
+			mustIs(t, got, ErrClientClosed)
+		}},
+		{"ctx error is wrapped", context.Canceled, func(t *testing.T, got error) {
+			t.Helper()
+			mustIs(t, got, context.Canceled)
+		}},
 		{"send error is wrapped once with the label", boom, func(t *testing.T, got error) {
+			t.Helper()
 			mustIs(t, got, boom)
 			if want := "mineskin: GET /v2/x: boom"; got.Error() != want {
 				t.Errorf("error = %q, want %q", got, want)
 			}
 		}},
 		{"unbuildable request is invalid input", build, func(t *testing.T, got error) {
+			t.Helper()
 			mustIs(t, got, ErrInvalidInput, build.Err)
 			if strings.Count(got.Error(), "mineskin:") != 1 {
 				t.Errorf("error = %q, want one prefix", got)
 			}
 		}},
 		{"gate skip passes through", ratelimit.ErrSkipped, func(t *testing.T, got error) {
+			t.Helper()
 			if got != errCheckSkipped { //nolint:errorlint // identity
 				t.Errorf("error = %v, want errCheckSkipped", got)
 			}
 		}},
 		{"retry cancelled keeps ctx error and the 429", &ratelimit.RetryCancelledError{Err: context.Canceled, Last: last}, func(t *testing.T, got error) {
+			t.Helper()
 			mustIs(t, got, context.Canceled)
-			var apiErr *APIError
-			if !errors.As(got, &apiErr) {
+			if _, ok := errors.AsType[*APIError](got); !ok {
 				t.Errorf("error = %v, want *APIError in the chain", got)
 			}
 		}},
 		{"retry cancelled without a 429 error is the ctx error alone", &ratelimit.RetryCancelledError{Err: context.Canceled, Last: transport.Response{Status: 200, Body: []byte(`{"success":true}`)}}, func(t *testing.T, got error) {
-			var rc *retryCancelledError
-			if errors.As(got, &rc) {
+			t.Helper()
+			if _, ok := errors.AsType[*retryCancelledError](got); ok {
 				t.Errorf("error = %v, want no retryCancelledError", got)
 			}
 			mustIs(t, got, context.Canceled)

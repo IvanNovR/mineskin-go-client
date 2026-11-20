@@ -110,11 +110,9 @@ func TestWaitForJob_DedupSharesResult(t *testing.T) {
 	results := make([]*JobResponse, 2)
 	errs := make([]error, 2)
 	for i := range results {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			results[i], errs[i] = c.WaitForJob(waitCtx(t), Job{ID: "j1"})
-		}()
+		})
 	}
 	eventually(t, "both waiters registered", func() bool {
 		return c.poller.Waiters("j1") == 2
@@ -243,11 +241,9 @@ func TestWaitForJob_BatchedOverHTTP(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make([]error, n)
 	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			_, errs[i] = c.WaitForJob(waitCtx(t), Job{ID: fmt.Sprintf("j%d", i)})
-		}()
+		})
 	}
 	eventually(t, "all jobs registered", func() bool { return c.poller.Pending() == n })
 	allDone := make(chan error, 1)
@@ -288,14 +284,12 @@ func TestWaitForJob_Concurrent(t *testing.T) {
 	var failures atomic.Int32
 	for i := range ids {
 		for range waiters {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				r, err := c.WaitForJob(waitCtx(t), Job{ID: fmt.Sprintf("j%d", i)})
 				if err != nil || r.Job.Status != JobStatusCompleted {
 					failures.Add(1)
 				}
-			}()
+			})
 		}
 	}
 	wg.Wait()
@@ -373,7 +367,7 @@ func TestWaitForJob_FinishedResultWinsOverDoneContext(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, jobJSON("j1", "completed")))
 	c := newTestClient(t, srv.URL, fastPolling())
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		closed := make(chan struct{})
 		close(closed)
 		ctx := &doneAfterIdle{Context: waitCtx(t), p: c.poller, closed: closed}
@@ -420,11 +414,9 @@ func waitTwice(t *testing.T, finalBody string) (resp [2]*JobResponse, errs [2]er
 	c := newTestClient(t, srv.URL, fastPolling())
 	var wg sync.WaitGroup
 	for i := range resp {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			resp[i], errs[i] = c.WaitForJob(waitCtx(t), Job{ID: "j1"})
-		}()
+		})
 	}
 	eventually(t, "both waiters registered", func() bool { return c.poller.Waiters("j1") == 2 })
 	close(release)

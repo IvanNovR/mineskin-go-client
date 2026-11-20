@@ -242,6 +242,7 @@ func TestAcquireAllThreeConditions(t *testing.T) {
 			name:   "only the in-flight slot blocks",
 			limits: Limits{Concurrency: 1},
 			setup: func(t *testing.T, th *Throttle) (int, func()) {
+				t.Helper()
 				rel := mustAcquire(t, th)
 				return 1, rel
 			},
@@ -251,6 +252,7 @@ func TestAcquireAllThreeConditions(t *testing.T) {
 			name:   "only the interval blocks",
 			limits: Limits{Interval: time.Second, Concurrency: 5},
 			setup: func(t *testing.T, th *Throttle) (int, func()) {
+				t.Helper()
 				mustAcquire(t, th)()
 				return 0, nil
 			},

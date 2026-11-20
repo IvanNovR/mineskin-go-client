@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -38,21 +37,26 @@ func ExampleClient_WaitForJob() {
 	defer srv.Close()
 	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL), mineskin.WithUserAgent("example/1.0"))
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
+	defer func() { _ = c.Close() }()
 	ctx := context.Background()
 
 	q, err := c.Queue(ctx, mineskin.FromURL("https://example.com/skin.png"), mineskin.GenerateOptions{})
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	done, err := c.WaitForJob(ctx, q.Job)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	res, err := c.GetSkin(ctx, done.Job.Result)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	fmt.Println(res.Skin.Name)
 	// Output: Steve
@@ -63,13 +67,16 @@ func ExampleClient_Generate() {
 	defer srv.Close()
 	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL), mineskin.WithUserAgent("example/1.0"))
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
+	defer func() { _ = c.Close() }()
 
 	res, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/skin.png"),
 		mineskin.GenerateOptions{Visibility: mineskin.VisibilityUnlisted})
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	fmt.Println(res.Skin.Name)
 	// Output: Steve
@@ -83,13 +90,15 @@ func ExampleWithAutoTuning() {
 	// baseline.
 	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL), mineskin.WithAutoTuning())
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	defer func() { _ = c.Close() }()
 
 	res, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/skin.png"), mineskin.GenerateOptions{})
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	fmt.Println(res.Skin.Name)
 	// Output: Steve
@@ -102,7 +111,8 @@ func ExampleWithGenerateThrottle() {
 		mineskin.WithGetThrottle(mineskin.Throttle{Concurrency: 2}),
 	)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	defer func() { _ = c.Close() }()
 
@@ -117,10 +127,12 @@ func ExampleClient_Close() {
 	defer srv.Close()
 	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL))
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	if err := c.Close(); err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	// Calls after Close fail immediately.
 	_, err = c.GetSkin(context.Background(), exampleSkinUUID)
@@ -144,11 +156,14 @@ func ExampleWithRateLimitRetries() {
 	c, err := mineskin.NewClient(mineskin.WithBaseURL(srv.URL), mineskin.WithUserAgent("example/1.0"),
 		mineskin.WithRateLimitRetries(2))
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
+	defer func() { _ = c.Close() }()
 	skin, err := c.GetSkin(context.Background(), exampleSkinUUID)
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
+		return
 	}
 	fmt.Println(skin.Skin.Name, calls.Load())
 	// Output: Steve 2

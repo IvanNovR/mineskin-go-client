@@ -134,8 +134,7 @@ func TestGetSkinHTMLBadGateway(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(502, `<html>Bad Gateway</html>`))
 	_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
-	var ue *mineskin.UnexpectedResponseError
-	if !errors.As(err, &ue) {
+	if _, ok := errors.AsType[*mineskin.UnexpectedResponseError](err); !ok {
 		t.Fatalf("err = %T %v, want *UnexpectedResponseError", err, err)
 	}
 }
@@ -225,7 +224,7 @@ func TestGetSkinWrongTypedPayloadOnErrorResponseIsAPIError(t *testing.T) {
 
 func TestGeneratorInfoDurationBounds(t *testing.T) {
 	t.Parallel()
-	maxMillis := int64(math.MaxInt64 / int64(time.Millisecond))
+	maxMillis := math.MaxInt64 / int64(time.Millisecond)
 	tests := map[string]struct {
 		in      string
 		want    time.Duration

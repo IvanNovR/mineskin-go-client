@@ -73,15 +73,13 @@ func (t *Tuner) startLoadLocked() <-chan struct{} {
 	done := make(chan struct{})
 	t.grants.loading, t.grants.done, t.grants.attemptAt = true, done, t.clock.Now()
 	refresh := t.grants.settled
-	t.grants.bg.Add(1)
-	go func() {
-		// Deferred in this order: done is closed first, then the group is
-		// released, even if the load panics (which is not recovered).
-		defer t.grants.bg.Done()
+	t.grants.bg.Go(func() {
+		// done is closed first, then the group is released (Go defers Done),
+		// even if the load panics (which is not recovered).
 		defer close(done)
 		g, err := t.grants.load(t.grants.baseCtx)
 		t.finishLoad(g, err, refresh)
-	}()
+	})
 	return done
 }
 

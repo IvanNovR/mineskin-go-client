@@ -70,7 +70,7 @@ func TestSecretSlogAndJSON(t *testing.T) {
 		"text": func(b *bytes.Buffer) slog.Handler { return slog.NewTextHandler(b, nil) },
 	} {
 		var buf bytes.Buffer
-		slog.New(h(&buf)).Info("x", "key", s, "ptr", &s, slog.Any("any", s), slog.Group("g", "key", s))
+		slog.New(h(&buf)).Info("x", slog.Any("key", s), slog.Any("ptr", &s), slog.Any("any", s), slog.Group("g", slog.Any("key", s)))
 		out := buf.String()
 		if strings.Contains(out, "SECRETPART") || strings.Contains(out, "msk_id") {
 			t.Errorf("%s output leaks the secret: %s", name, out)

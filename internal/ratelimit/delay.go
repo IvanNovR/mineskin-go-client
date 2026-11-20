@@ -13,10 +13,15 @@ import (
 // maxRelativeMillis is the largest millisecond count a time.Duration holds.
 const maxRelativeMillis = math.MaxInt64 / int64(time.Millisecond)
 
+// maxServerDelay caps the delay a server can impose on a group, so a hostile or
+// broken Retry-After or rateLimit.next.relative cannot stall the group for
+// days or years. APIError.RetryAfter keeps the raw server value.
+const maxServerDelay = time.Hour
+
 // ServerDelay returns how long the server asks the group to wait: the later
 // of the body's rateLimit.next.relative (any JSON object body) and the
 // Retry-After header (retryable statuses only). Missing or invalid values
-// give 0; it never fails, so the original result or error is never replaced.
+// give 0 and a longer delay is capped at maxServerDelay; it never fails, so the original result or error is never replaced.
 func ServerDelay(r transport.Response) time.Duration {
 	delay := bodyRelative(r.Body)
 	if transport.IsRetryableStatus(r.Status) {
@@ -24,7 +29,7 @@ func ServerDelay(r transport.Response) time.Duration {
 			delay = max(delay, ra)
 		}
 	}
-	return delay
+	return min(delay, maxServerDelay)
 }
 
 // bodyRelative leniently reads rateLimit.next.relative (milliseconds) from a

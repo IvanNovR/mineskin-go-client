@@ -93,7 +93,7 @@
 // rateLimit.next.relative from a JSON body, and the Retry-After header
 // (delta-seconds or an HTTP-date, RFC 9110) of a retryable response (408, 429
 // and 5xx except 501 and 505). The delay moves only the deadline of the group
-// that received the response and is not capped. A missing or invalid value
+// that received the response and is capped at one hour; APIError.RetryAfter keeps the raw value. A missing or invalid value
 // changes nothing.
 //
 // WithAutoTuning makes the generate group follow the limits granted to the

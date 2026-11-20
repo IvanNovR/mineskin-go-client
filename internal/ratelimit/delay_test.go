@@ -53,3 +53,46 @@ func TestServerDelay(t *testing.T) {
 		})
 	}
 }
+
+func TestServerDelayCapsHugeValues(t *testing.T) {
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	rel := func(v string) string { return `{"success":true,"rateLimit":{"next":{"relative":` + v + `}}}` }
+	tests := []struct {
+		name       string
+		status     int
+		retryAfter string
+		body       string
+	}{
+		{"Retry-After 99999999 seconds", 429, "99999999", `{"success":false}`},
+		{"Retry-After in the far future", 503, "Fri, 31 Dec 9999 23:59:59 GMT", "<html>"},
+		{"relative near the Duration maximum", 200, "", rel("9223372036854")},
+		{"relative just above the cap", 200, "", rel("3600001")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := http.Header{}
+			if tt.retryAfter != "" {
+				h.Set(transport.HeaderRetryAfter, tt.retryAfter)
+			}
+			r := transport.Response{Status: tt.status, Header: h, Body: []byte(tt.body), Received: at}
+			if got := ServerDelay(r); got != time.Hour {
+				t.Errorf("ServerDelay() = %v, want exactly %v", got, time.Hour)
+			}
+		})
+	}
+}
+
+func TestServerDelayCapKeepsValuesAtOrBelowTheCap(t *testing.T) {
+	at := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	for _, tt := range []struct {
+		retryAfter string
+		want       time.Duration
+	}{{"3600", time.Hour}, {"3599", 3599 * time.Second}} {
+		h := http.Header{}
+		h.Set(transport.HeaderRetryAfter, tt.retryAfter)
+		r := transport.Response{Status: 429, Header: h, Body: []byte(`{}`), Received: at}
+		if got := ServerDelay(r); got != tt.want {
+			t.Errorf("Retry-After %s: ServerDelay() = %v, want %v", tt.retryAfter, got, tt.want)
+		}
+	}
+}

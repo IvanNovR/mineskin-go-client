@@ -33,7 +33,6 @@ These settings are expected on the GitHub repository:
 - Actions workflow permissions: read-only by default, and Actions cannot approve pull requests.
 - Environment `live` (branches `dev` and `main`) holding the secret `MINESKIN_API_KEY`.
 - Repository variable `RELEASE_AUTOMATION_READY` (kill switch for the release jobs that write).
-- Environment `release`, limited to the `main` branch by its deployment branch policy; the release and proxy jobs run in it. It must exist and be configured **before** the first run of `release.yml`, otherwise GitHub creates it automatically without protection.
 
 ## Automation
 
@@ -41,8 +40,8 @@ These settings are expected on the GitHub repository:
 
 1. **resolve** (read-only) checks that the run is on `main` and that the commit is on `main`, then runs [svu](https://github.com/caarlos0/svu) v3.4.4 with `.svu.yml` (`v0: true`) to compute the next version. svu runs only here, never in a job that holds a write token.
 2. **ci** runs the full CI (`ci.yml`) on that exact commit.
-3. **release** (only when CI passed and there is something to release; Environment `release`) creates the tag and a GitHub Release with generated notes on that commit (not a draft, not a prerelease; marked latest only when the commit is the head of `main`), and then checks the Release, that the tag points at the commit, and that the commit is on `main`.
-4. **proxy** (Environment `release`) asks `proxy.golang.org` for the new version, retrying with backoff for about 9 minutes. If it still fails, the job turns red but the release stays; see "Recovery".
+3. **release** (only when CI passed and there is something to release) creates the tag and a GitHub Release with generated notes on that commit (not a draft, not a prerelease; marked latest only when its tag is the highest v0 tag), and then checks the Release, that the tag points at the commit, and that the commit is on `main`.
+4. **proxy** asks `proxy.golang.org` for the new version, retrying with backoff for about 9 minutes. If it still fails, the job turns red but the release stays; see "Recovery".
 
 What gets released:
 
@@ -56,6 +55,12 @@ To see the coming version locally, run `make next-version` on an up-to-date `dev
 ### Release preview
 
 `release-preview.yml` is a required check on pull requests into `main`. It runs the same svu, with the `.svu.yml` from `main` (the pull request's own copy only while `main` has none, and the summary then says so), on the pull request merged into `main` plus an empty local commit that carries the pull request title, and reports "Merging releases vX.Y.Z" or "No release (...)" in the job summary. It fails if the result is not a `v0.x.y` version. For the promotion to v0.1.0 it must say **Merging releases v0.1.0**; if it says anything else, stop and investigate.
+
+### Trust model
+
+- Anyone with write access to the repository can release: they could dispatch an edited copy of the workflow, so the write power of the workflow's `GITHUB_TOKEN` is not fenced off from them.
+- The real protections are the `v*` tag ruleset (tags cannot be deleted or moved) and immutable releases, so a published version can never be changed.
+- Upgrade path, once anyone besides the owner gets write access: create tags and Releases with a GitHub App token held in an environment secret, and allow tag creation only for that App.
 
 ### Kill switch
 
@@ -78,7 +83,7 @@ Before a retry, check that the merge commit message setting is still "pull reque
   gh workflow run release.yml --ref main -f mode=retry -f sha=<full 40-character SHA on main> -f tag=vX.Y.Z
   ```
 
-  `tag` is optional and only an assertion: the run is refused when it differs from the version svu computes for that commit (or from the tag already on it). A `tag` given when there is nothing to release is refused too; without `tag` that case just ends green. A commit that is already part of a later version tag is refused. The Release is marked latest only when the commit is the head of `main`.
+  `tag` is optional and only an assertion: the run is refused when it differs from the version svu computes for that commit (or from the tag already on it). A `tag` given when there is nothing to release is refused too; without `tag` that case just ends green. A commit that is already part of a later version tag is refused. The Release is marked latest only when its tag is the highest v0 tag.
 
 - **Version not on the Go proxy or pkg.go.dev**: run `proxy-only` for the existing tag. It skips CI and the release job.
 

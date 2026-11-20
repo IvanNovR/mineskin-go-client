@@ -23,7 +23,13 @@ func TestParseDotEnv(t *testing.T) {
 		"no equals sign\n" +
 		"=novalue\n" +
 		"SHELL=$(echo pwned)\n" +
-		"UNBALANCED=\"half\n"
+		"UNBALANCED=\"half\n" +
+		"QDC=\"v\" # c\n" +
+		"QSC='v' # c\n" +
+		"UQC=v # c\n" +
+		"HASH=\"a#b\"\n" +
+		"QCRLF=\"v\" # c\r\n" +
+		"EXPQ=export \"x\"\n"
 	want := map[string]string{
 		"PLAIN":      "value",
 		"SPACED":     "padded value",
@@ -36,6 +42,12 @@ func TestParseDotEnv(t *testing.T) {
 		"EQUALS":     "a=b=c",
 		"SHELL":      "$(echo pwned)",
 		"UNBALANCED": "\"half",
+		"QDC":        "v",
+		"QSC":        "v",
+		"UQC":        "v",
+		"HASH":       "a#b",
+		"QCRLF":      "v",
+		"EXPQ":       "export \"x\"",
 	}
 
 	if got := parseDotEnv(content); !reflect.DeepEqual(got, want) {

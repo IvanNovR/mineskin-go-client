@@ -30,8 +30,15 @@ func parseDotEnv(content string) map[string]string {
 }
 
 func dotEnvValue(v string) string {
-	if len(v) >= 2 && (v[0] == '"' || v[0] == '\'') && v[len(v)-1] == v[0] {
-		return v[1 : len(v)-1]
+	if v != "" && (v[0] == '"' || v[0] == '\'') {
+		// A quoted value ends at the matching quote; only whitespace and a #
+		// comment may follow it. Anything else is not a quoted value.
+		if end := strings.IndexByte(v[1:], v[0]); end >= 0 {
+			rest := strings.TrimSpace(v[end+2:])
+			if rest == "" || strings.HasPrefix(rest, "#") {
+				return v[1 : end+1]
+			}
+		}
 	}
 	if before, _, found := strings.Cut(v, " #"); found {
 		v = before

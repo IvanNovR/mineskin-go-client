@@ -51,5 +51,5 @@ func (cfg *config) validate() error {
 	if err := cfg.getThrottle.validate("get"); err != nil {
 		return err
 	}
-	return validateHeaderValues(cfg.userAgent, cfg.apiKey)
+	return validateHeaderValues(cfg.userAgent, cfg.apiKey.Reveal())
 }

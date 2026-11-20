@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/IvanNovR/mineskin-go-client/internal/clock"
+	"github.com/IvanNovR/mineskin-go-client/internal/transport"
 )
 
 // config collects the settings applied by Option values. defaultConfig
@@ -15,7 +16,7 @@ import (
 type config struct {
 	baseURL   string
 	userAgent string
-	apiKey    string
+	apiKey    transport.Secret
 	timeout   time.Duration
 	// transport is nil until WithTransport sets it; NewClient then creates and
 	// owns a transport.
@@ -45,7 +46,7 @@ type Option func(*config)
 // missing or blank key is allowed, but logs a warning and sends no
 // Authorization header. The key is never logged.
 func WithAPIKey(key string) Option {
-	return func(c *config) { c.apiKey = strings.TrimSpace(key) }
+	return func(c *config) { c.apiKey = transport.NewSecret(strings.TrimSpace(key)) }
 }
 
 // WithUserAgent sets the User-Agent header, for example "AppName/1.2.3". An

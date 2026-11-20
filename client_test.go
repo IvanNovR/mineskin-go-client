@@ -22,8 +22,8 @@ func TestNewClientDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	if c.doer.BaseURL != DefaultBaseURL || c.doer.UserAgent != DefaultUserAgent || c.doer.APIKey != "" {
-		t.Errorf("defaults wrong: %q %q %q", c.doer.BaseURL, c.doer.UserAgent, c.doer.APIKey)
+	if c.doer.BaseURL != DefaultBaseURL || c.doer.UserAgent != DefaultUserAgent || !c.doer.APIKey.IsEmpty() {
+		t.Errorf("defaults wrong: %q %q %q", c.doer.BaseURL, c.doer.UserAgent, c.doer.APIKey.Reveal())
 	}
 	if c.doer.Timeout != defaultTimeout || defaultTimeout != 10*time.Second {
 		t.Errorf("timeout = %v", c.doer.Timeout)
@@ -122,8 +122,8 @@ func TestNewClientAPIKey(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if c.doer.APIKey != tt.wantKey {
-				t.Errorf("apiKey = %q, want %q", c.doer.APIKey, tt.wantKey)
+			if c.doer.APIKey.Reveal() != tt.wantKey {
+				t.Errorf("apiKey = %q, want %q", c.doer.APIKey.Reveal(), tt.wantKey)
 			}
 			if got := strings.Contains(buf.String(), "without API key"); got != tt.wantWarn {
 				t.Errorf("key warning = %v, want %v", got, tt.wantWarn)

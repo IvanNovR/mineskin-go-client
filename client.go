@@ -37,6 +37,9 @@ const (
 // poller to exit (see Close). The client creates its own HTTP transport
 // unless WithTransport is used.
 //
+// The API key is held in a redacted type: formatting a Client with %v, %+v or
+// %#v and logging it with log/slog never shows the key.
+//
 // Go's HTTP client already strips the Authorization header when a redirect
 // leads to a different host, and this client refuses redirects from https to
 // http and stops after 10 redirects.
@@ -147,11 +150,12 @@ func normalizeBaseURL(raw string) (string, error) {
 
 // logConfig emits the construction warnings and the debug key id. It never
 // logs the key or its secret part.
-func logConfig(l *slog.Logger, baseURL, userAgent, apiKey string) {
+func logConfig(l *slog.Logger, baseURL, userAgent string, key transport.Secret) {
+	apiKey := key.Reveal()
 	if userAgent == DefaultUserAgent {
 		l.Warn("Using the default User-Agent, please set a custom one (e.g. AppName/Version)")
 	}
-	if apiKey == "" {
+	if key.IsEmpty() {
 		l.Warn("Creating MineSkin client without API key, get one at https://account.mineskin.org/keys")
 		return
 	}

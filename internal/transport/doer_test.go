@@ -25,7 +25,7 @@ func newDoer(t *testing.T, h http.HandlerFunc) *Doer {
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
 	return &Doer{
-		BaseURL: srv.URL, UserAgent: "test/1.0", APIKey: testKey,
+		BaseURL: srv.URL, UserAgent: "test/1.0", APIKey: NewSecret(testKey),
 		HTTP: srv.Client(), Clock: clock.NewFake(epoch),
 	}
 }
@@ -65,7 +65,7 @@ func TestDoSendsHeadersAndPath(t *testing.T) {
 func TestDoWithoutBodyOrKey(t *testing.T) {
 	var got *http.Request
 	d := newDoer(t, func(w http.ResponseWriter, r *http.Request) { got = r })
-	d.APIKey = ""
+	d.APIKey = Secret{}
 	if _, err := d.Do(context.Background(), http.MethodGet, "/x", nil); err != nil {
 		t.Fatalf("Do() error = %v", err)
 	}

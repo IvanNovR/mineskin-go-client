@@ -69,8 +69,9 @@ func (e *BuildError) Unwrap() error { return e.Err }
 type Doer struct {
 	BaseURL   string
 	UserAgent string
-	// APIKey, when not empty, is sent as a bearer token. It is never logged.
-	APIKey string
+	// APIKey, when not empty, is sent as a bearer token. It is redacted when
+	// formatted or logged.
+	APIKey Secret
 	HTTP   *http.Client
 	// Timeout bounds each call of Do, including reading the response body;
 	// zero or less means no timeout. It is applied per call with a context
@@ -141,8 +142,8 @@ func (d *Doer) send(ctx context.Context, method, path string, body *Body) (Respo
 	if body != nil {
 		req.Header.Set("Content-Type", body.ContentType)
 	}
-	if d.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+d.APIKey)
+	if !d.APIKey.IsEmpty() {
+		req.Header.Set("Authorization", "Bearer "+d.APIKey.Reveal())
 	}
 
 	start := time.Now()

@@ -54,8 +54,8 @@ func TestNewClientBaseURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c, err := NewClient(WithBaseURL(tt.in))
 			if tt.wantErr {
-				if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-					t.Fatalf("err = %v, want ErrInvalidInput and ErrClient", err)
+				if !errors.Is(err, ErrInvalidInput) {
+					t.Fatalf("err = %v, want ErrInvalidInput", err)
 				}
 				return
 			}
@@ -247,8 +247,8 @@ func TestCheckRedirect(t *testing.T) {
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
 			}
-			if err != nil && (!errors.Is(err, ErrClient) || errors.Is(err, ErrInvalidInput)) {
-				t.Errorf("err should match ErrClient only: %v", err)
+			if err != nil && errors.Is(err, ErrInvalidInput) {
+				t.Errorf("a redirect refusal must not be invalid input: %v", err)
 			}
 		})
 	}
@@ -326,7 +326,7 @@ func TestNewClientRejectsControlCharacters(t *testing.T) {
 	for name, opts := range tests {
 		t.Run(name, func(t *testing.T) {
 			_, err := NewClient(opts...)
-			if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
+			if !errors.Is(err, ErrInvalidInput) {
 				t.Fatalf("err = %v, want ErrInvalidInput", err)
 			}
 			if strings.Contains(err.Error(), "secretpart") {

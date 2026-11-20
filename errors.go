@@ -11,44 +11,25 @@ import (
 
 // Sentinel errors for use with errors.Is.
 var (
-	// ErrClient matches every error returned by this package, whether it is an
-	// API error, a transport failure, a parse failure or an input validation
-	// failure.
-	ErrClient = errors.New("mineskin: client error")
-
 	// ErrInvalidInput matches configuration and argument validation errors.
 	ErrInvalidInput = errors.New("mineskin: invalid input")
 
 	// ErrNotFound matches errors caused by an HTTP 404 response.
 	ErrNotFound = errors.New("mineskin: not found")
-)
 
-// ErrMaxAttempts and ErrJobNotCompleted match ErrClient directly, unlike the
-// classification sentinels ErrNotFound and ErrInvalidInput, which are matched
-// only by the errors that carry that classification (wrapped errors).
-var (
 	// ErrMaxAttempts matches the error returned when job polling gave up after
 	// the maximum number of attempts.
-	ErrMaxAttempts error = sentinelError("mineskin: job polling reached max attempts")
+	ErrMaxAttempts = errors.New("mineskin: job polling reached max attempts")
 
 	// ErrJobNotCompleted matches the error returned by JobSkin when the job has
 	// no result yet.
-	ErrJobNotCompleted error = sentinelError("mineskin: job is not completed")
+	ErrJobNotCompleted = errors.New("mineskin: job is not completed")
 
 	// ErrClientClosed matches the error returned by every call made after
 	// Client.Close, and by calls that Close interrupts while they are queued,
 	// waiting for a job or in flight.
-	ErrClientClosed error = sentinelError("mineskin: client is closed")
+	ErrClientClosed = errors.New("mineskin: client is closed")
 )
-
-// sentinelError is a package sentinel that also matches ErrClient.
-type sentinelError string
-
-// Error implements the error interface.
-func (e sentinelError) Error() string { return string(e) }
-
-// Is reports whether target is ErrClient.
-func (e sentinelError) Is(target error) bool { return target == ErrClient }
 
 // CodeAndMessage is a single entry of the errors, warnings or messages lists
 // of a MineSkin API response.
@@ -60,8 +41,8 @@ type CodeAndMessage struct {
 }
 
 // APIError is returned when the MineSkin API reports that a request was not
-// successful. It matches ErrClient with errors.Is, and ErrNotFound when the
-// HTTP status is 404. Use errors.As to obtain it.
+// successful. It matches ErrNotFound with errors.Is when the HTTP status is
+// 404. Use errors.As to obtain it.
 type APIError struct {
 	// Code is the first error code of the response, or "request_failed".
 	Code string
@@ -89,16 +70,9 @@ func (e *APIError) Error() string {
 	return fmt.Sprintf("mineskin: API error (HTTP %d, %s): %s", e.Status, e.Code, e.Message)
 }
 
-// Is reports whether target is ErrClient, or ErrNotFound for an HTTP 404.
+// Is reports whether target is ErrNotFound and the HTTP status is 404.
 func (e *APIError) Is(target error) bool {
-	switch target {
-	case ErrClient:
-		return true
-	case ErrNotFound:
-		return e.Status == http.StatusNotFound
-	default:
-		return false
-	}
+	return target == ErrNotFound && e.Status == http.StatusNotFound
 }
 
 // clientError describes a failure that happened on the client side: transport
@@ -110,14 +84,12 @@ type clientError struct {
 	invalidInput bool
 }
 
-// newInvalidInputError returns a validation error that matches ErrInvalidInput
-// and ErrClient.
+// newInvalidInputError returns a validation error that matches ErrInvalidInput.
 func newInvalidInputError(msg string) error {
 	return &clientError{msg: msg, invalidInput: true}
 }
 
-// wrapClientError returns an error that matches ErrClient and wraps err, which
-// may be nil.
+// wrapClientError returns an error that wraps err, which may be nil.
 func wrapClientError(msg string, err error) error {
 	return &clientError{msg: msg, err: err}
 }
@@ -133,20 +105,13 @@ func (e *clientError) Error() string {
 // Unwrap returns the underlying cause, if any.
 func (e *clientError) Unwrap() error { return e.err }
 
-// Is reports whether target is ErrClient, or ErrInvalidInput for validation errors.
+// Is reports whether target is ErrInvalidInput for validation errors.
 func (e *clientError) Is(target error) bool {
-	switch target {
-	case ErrClient:
-		return true
-	case ErrInvalidInput:
-		return e.invalidInput
-	default:
-		return false
-	}
+	return target == ErrInvalidInput && e.invalidInput
 }
 
-// JobFailedError is returned when a job has the FAILED status. It matches
-// ErrClient with errors.Is. Use errors.As to obtain it.
+// JobFailedError is returned when a job has the FAILED status. Use errors.As
+// to obtain it.
 type JobFailedError struct {
 	// Code is the first error code of the response, or "job_failed".
 	Code string
@@ -162,9 +127,6 @@ type JobFailedError struct {
 func (e *JobFailedError) Error() string {
 	return fmt.Sprintf("mineskin: job %s failed (%s): %s", e.Job.ID, e.Code, e.Message)
 }
-
-// Is reports whether target is ErrClient.
-func (e *JobFailedError) Is(target error) bool { return target == ErrClient }
 
 // newJobFailedError builds the error for a failed job, using the first
 // reported error or the defaults.

@@ -296,16 +296,13 @@ func TestUnexpectedResponseErrorIsRetryable(t *testing.T) {
 
 func TestUnexpectedResponseErrorIs(t *testing.T) {
 	notFound := newUnexpectedResponseError(404, http.Header{}, []byte("nope"), nil, testNow)
-	if !errors.Is(notFound, ErrClient) || !errors.Is(notFound, ErrNotFound) {
-		t.Error("404 must match ErrClient and ErrNotFound")
+	if !errors.Is(notFound, ErrNotFound) {
+		t.Error("404 must match ErrNotFound")
 	}
 	if errors.Is(notFound, ErrInvalidInput) {
 		t.Error("must not match ErrInvalidInput")
 	}
 	bad := newUnexpectedResponseError(502, http.Header{}, nil, nil, testNow)
-	if !errors.Is(bad, ErrClient) {
-		t.Error("502 must match ErrClient")
-	}
 	if errors.Is(bad, ErrNotFound) {
 		t.Error("502 must not match ErrNotFound")
 	}

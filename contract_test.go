@@ -88,7 +88,7 @@ func apiNotFoundCase() contractCase {
 			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
 			return err
 		},
-		is:    []error{ErrNotFound, ErrClient},
+		is:    []error{ErrNotFound},
 		isNot: []error{ErrInvalidInput, ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			var apiErr *APIError
@@ -114,7 +114,7 @@ func htmlBadGatewayCase() contractCase {
 			_, err := newTestClient(t, srv.URL).GetUser(context.Background())
 			return err
 		},
-		is:    []error{ErrClient},
+		is:    []error{},
 		isNot: []error{ErrNotFound, ErrInvalidInput},
 		check: func(t *testing.T, err error) {
 			var ue *UnexpectedResponseError
@@ -140,7 +140,7 @@ func transportErrorCase() contractCase {
 			_, err := newTestClient(t, "http://127.0.0.1:1", WithTransport(rt)).GetUser(context.Background())
 			return err
 		},
-		is:    []error{ErrClient},
+		is:    []error{},
 		isNot: []error{ErrNotFound, ErrInvalidInput, ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			var ne net.Error
@@ -172,7 +172,7 @@ func ctxCancelledQueuedCase() contractCase {
 			}
 			return err
 		},
-		is:    []error{context.Canceled, ErrClient},
+		is:    []error{context.Canceled},
 		isNot: []error{ErrClientClosed, context.DeadlineExceeded},
 	}
 }
@@ -204,7 +204,7 @@ func ctxCancelledDuring429RetryCase() contractCase {
 			}
 			return err
 		},
-		is:    []error{context.Canceled, ErrClient},
+		is:    []error{context.Canceled},
 		isNot: []error{ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			var apiErr *APIError
@@ -229,7 +229,7 @@ func closeQueuedCase() contractCase {
 			_ = mustDone(t, "held", held)
 			return mustDone(t, "queued", queued)
 		},
-		is:    []error{ErrClientClosed, ErrClient},
+		is:    []error{ErrClientClosed},
 		isNot: []error{context.Canceled},
 	}
 }
@@ -249,7 +249,7 @@ func closeInFlightCase() contractCase {
 			_ = c.Close()
 			return mustDone(t, "GetUser", res)
 		},
-		is:    []error{ErrClientClosed, ErrClient},
+		is:    []error{ErrClientClosed},
 		isNot: []error{context.Canceled},
 	}
 }
@@ -268,7 +268,7 @@ func closeWaitingCase() contractCase {
 			_ = c.Close()
 			return mustDone(t, "WaitForJob", res)
 		},
-		is:    []error{ErrClientClosed, ErrClient},
+		is:    []error{ErrClientClosed},
 		isNot: []error{context.Canceled},
 	}
 }
@@ -292,7 +292,7 @@ func maxAttemptsCase() contractCase {
 		run: func(t *testing.T) error {
 			return waitFor(t, jobJSON("j1", "waiting"), pollOnce(2, func(int) time.Duration { return time.Millisecond }))
 		},
-		is:    []error{ErrMaxAttempts, ErrClient},
+		is:    []error{ErrMaxAttempts},
 		isNot: []error{ErrInvalidInput, ErrClientClosed},
 	}
 }
@@ -304,7 +304,7 @@ func jobFailedCase() contractCase {
 			body := `{"success":true,"job":{"id":"j1","status":"failed"},"errors":[{"code":"bad_image","message":"nope"}]}`
 			return waitFor(t, body, pollOnce(5, func(int) time.Duration { return time.Millisecond }))
 		},
-		is:    []error{ErrClient},
+		is:    []error{},
 		isNot: []error{ErrMaxAttempts, ErrInvalidInput},
 		check: func(t *testing.T, err error) {
 			var jf *JobFailedError
@@ -324,7 +324,7 @@ func pollIntervalZeroCase() contractCase {
 		run: func(t *testing.T) error {
 			return waitFor(t, jobJSON("j1", "waiting"), pollOnce(5, func(int) time.Duration { return 0 }))
 		},
-		is:    []error{ErrInvalidInput, ErrClient},
+		is:    []error{ErrInvalidInput},
 		isNot: []error{ErrMaxAttempts, ErrClientClosed},
 	}
 }
@@ -335,7 +335,7 @@ func pollIntervalPanicCase() contractCase {
 		run: func(t *testing.T) error {
 			return waitFor(t, jobJSON("j1", "waiting"), pollOnce(5, func(int) time.Duration { panic("boom") }))
 		},
-		is:    []error{ErrClient},
+		is:    []error{},
 		isNot: []error{ErrInvalidInput, ErrMaxAttempts, ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			if !strings.Contains(err.Error(), "panicked") || !strings.Contains(err.Error(), "boom") {
@@ -355,7 +355,7 @@ func newClientValidationCase() contractCase {
 			}
 			return err
 		},
-		is:    []error{ErrInvalidInput, ErrClient},
+		is:    []error{ErrInvalidInput},
 		isNot: []error{ErrNotFound, ErrClientClosed},
 		check: func(t *testing.T, err error) {
 			if strings.Contains(err.Error(), "msk_secret_value") {

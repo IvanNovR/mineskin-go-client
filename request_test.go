@@ -92,8 +92,8 @@ func TestDoNilContextIsInvalidInput(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	var nilCtx context.Context
 	_, err := c.do(nilCtx, http.MethodGet, "/v2/x", nil)
-	if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want ErrInvalidInput and ErrClient", err)
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("err = %v, want ErrInvalidInput", err)
 	}
 	if hits.Load() != 0 {
 		t.Error("a request was sent for a nil context")
@@ -130,9 +130,6 @@ func TestTimeoutWhileBodyStalls(t *testing.T) {
 	if time.Since(start) > 5*time.Second {
 		t.Errorf("took %v, timeout not enforced on the body read", time.Since(start))
 	}
-	if !errors.Is(err, ErrClient) {
-		t.Errorf("err does not match ErrClient: %v", err)
-	}
 	var ne net.Error
 	isNetTimeout := errors.As(err, &ne) && ne.Timeout()
 	if !errors.Is(err, context.DeadlineExceeded) && !isNetTimeout {
@@ -159,8 +156,8 @@ func TestContextCancelReturnsCanceled(t *testing.T) {
 		cancel()
 	}()
 	_, err := c.do(ctx, http.MethodGet, "/v2/x", nil)
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want Canceled and ErrClient", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want Canceled", err)
 	}
 }
 
@@ -177,8 +174,8 @@ func TestRedirectHTTPSToHTTPIsRefused(t *testing.T) {
 
 	c := newTestClient(t, tlsSrv.URL, WithTransport(tlsSrv.Client().Transport), WithAPIKey(testAPIKey))
 	_, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
-	if !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want ErrClient", err)
+	if err == nil {
+		t.Fatalf("err = %v, want a error", err)
 	}
 	if plainHits.Load() != 0 {
 		t.Error("plain http server was contacted after an https->http redirect")
@@ -254,8 +251,8 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 			opts := append([]Option{WithAPIKey(testAPIKey), WithLogger(captureLogger(&logs))}, tt.opts...)
 			c := newTestClient(t, closedURL, opts...)
 			_, err := c.do(context.Background(), http.MethodGet, "/v2/skins/abc", nil)
-			if !errors.Is(err, ErrClient) {
-				t.Fatalf("err = %v, want ErrClient", err)
+			if err == nil {
+				t.Fatalf("err = %v, want a error", err)
 			}
 			if strings.Contains(err.Error(), testAPIKey) || strings.Contains(err.Error(), "Bearer") {
 				t.Errorf("error leaks credentials: %v", err)
@@ -288,8 +285,8 @@ func TestDoBodySizeLimit(t *testing.T) {
 			c := newTestClient(t, srv.URL, WithTimeout(30*time.Second))
 			raw, err := c.do(context.Background(), http.MethodGet, "/v2/x", nil)
 			if tt.wantErr {
-				if !errors.Is(err, ErrClient) {
-					t.Fatalf("err = %v, want ErrClient", err)
+				if err == nil {
+					t.Fatalf("err = %v, want a error", err)
 				}
 				return
 			}
@@ -359,8 +356,8 @@ func TestGetPropagatesTransportError(t *testing.T) {
 	c := newTestClient(t, "http://example.invalid", WithTransport(roundTripFunc(
 		func(*http.Request) (*http.Response, error) { return nil, errors.New("boom") })))
 	_, err := c.get(context.Background(), "/v2/x", noopDecoder)
-	if !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want ErrClient", err)
+	if err == nil {
+		t.Fatalf("err = %v, want a error", err)
 	}
 }
 

@@ -93,7 +93,7 @@ func TestWaitForJobFailed(t *testing.T) {
 	if !errors.As(err, &jfe) || got != nil {
 		t.Fatalf("got = %+v err = %v, want *JobFailedError", got, err)
 	}
-	if jfe.Job.ID != "j1" || jfe.Code != "bad_image" || !errors.Is(err, ErrClient) {
+	if jfe.Job.ID != "j1" || jfe.Code != "bad_image" {
 		t.Errorf("err = %+v", jfe)
 	}
 }
@@ -268,8 +268,8 @@ func TestWaitForJobContextCancel(t *testing.T) {
 	cancel()
 	err := <-errCh
 
-	if !errors.Is(err, context.Canceled) || !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want context.Canceled and ErrClient", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
 	}
 	if c.poller.Pending() != 0 {
 		t.Error("job still pending after cancel")
@@ -289,8 +289,8 @@ func TestWaitForJobContextDeadline(t *testing.T) {
 	defer cancel()
 
 	_, err := c.WaitForJob(ctx, Job{ID: "j1"})
-	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, ErrClient) {
-		t.Fatalf("err = %v, want DeadlineExceeded and ErrClient", err)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want DeadlineExceeded", err)
 	}
 }
 

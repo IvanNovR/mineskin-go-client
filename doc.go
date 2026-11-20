@@ -52,7 +52,6 @@
 //
 // # Errors
 //
-// Every error returned by the package matches ErrClient with errors.Is.
 // Invalid arguments or options also match ErrInvalidInput. A 404 response
 // matches ErrNotFound. When the API reports a failure the error is an
 // *APIError (use errors.As); a body that is not the expected JSON, such as a
@@ -103,8 +102,8 @@
 // carried (or the normal interval when it had none). If that delay ends after
 // the context's deadline, the original 429 error is returned at once. If the
 // context ends while a retry is waiting, the error matches both the context
-// error (errors.Is with context.Canceled or context.DeadlineExceeded, and
-// ErrClient) and the 429 (errors.As with *APIError or
+// error (errors.Is with context.Canceled or context.DeadlineExceeded) and
+// the 429 (errors.As with *APIError or
 // *UnexpectedResponseError). Only 429
 // is retried; for other failures the errors carry APIError.RetryAfter,
 // APIError.RateLimit and APIError.IsRetryable so that the caller can decide.

@@ -124,8 +124,8 @@ func TestWithJobPollingValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			c, err := NewClient(WithJobPolling(tt.in))
-			if c != nil || !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-				t.Fatalf("got (%v, %v), want nil and ErrInvalidInput+ErrClient", c, err)
+			if c != nil || !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("got (%v, %v), want nil and ErrInvalidInput", c, err)
 			}
 		})
 	}

@@ -99,9 +99,9 @@ func TestSeamMapGroupErr(t *testing.T) {
 		err   error
 		check func(t *testing.T, got error)
 	}{
-		{"throttle closed", throttle.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed, ErrClient) }},
-		{"tuner closed", ratelimit.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed, ErrClient) }},
-		{"ctx error is wrapped", context.Canceled, func(t *testing.T, got error) { mustIs(t, got, context.Canceled, ErrClient) }},
+		{"throttle closed", throttle.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed) }},
+		{"tuner closed", ratelimit.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed) }},
+		{"ctx error is wrapped", context.Canceled, func(t *testing.T, got error) { mustIs(t, got, context.Canceled) }},
 		{"send error passes through", sent, func(t *testing.T, got error) {
 			if got != error(sent) { //nolint:errorlint // identity: no double wrapping
 				t.Errorf("error = %v, want the same *clientError", got)
@@ -113,7 +113,7 @@ func TestSeamMapGroupErr(t *testing.T) {
 			}
 		}},
 		{"retry cancelled keeps ctx error and the 429", &ratelimit.RetryCancelledError{Err: context.Canceled, Last: last}, func(t *testing.T, got error) {
-			mustIs(t, got, context.Canceled, ErrClient)
+			mustIs(t, got, context.Canceled)
 			var apiErr *APIError
 			if !errors.As(got, &apiErr) {
 				t.Errorf("error = %v, want *APIError in the chain", got)
@@ -124,7 +124,7 @@ func TestSeamMapGroupErr(t *testing.T) {
 			if errors.As(got, &rc) {
 				t.Errorf("error = %v, want no retryCancelledError", got)
 			}
-			mustIs(t, got, context.Canceled, ErrClient)
+			mustIs(t, got, context.Canceled)
 		}},
 	}
 	for _, tt := range tests {
@@ -247,10 +247,10 @@ func TestSeamMapPollErr(t *testing.T) {
 		is   []error
 		text string
 	}{
-		{"exhausted", &poll.ExhaustedError{ID: "j1", Attempts: 3}, []error{ErrMaxAttempts, ErrClient}, "job j1 after 3 attempts"},
-		{"zero interval", &poll.IntervalError{Value: 0}, []error{ErrInvalidInput, ErrClient}, "poll interval must be greater than zero"},
+		{"exhausted", &poll.ExhaustedError{ID: "j1", Attempts: 3}, []error{ErrMaxAttempts}, "job j1 after 3 attempts"},
+		{"zero interval", &poll.IntervalError{Value: 0}, []error{ErrInvalidInput}, "poll interval must be greater than zero"},
 		{"negative interval", &poll.IntervalError{Value: -time.Second}, []error{ErrInvalidInput}, ""},
-		{"panicking interval", &poll.IntervalError{Panic: "boom"}, []error{ErrClient}, "poll interval panicked: boom"},
+		{"panicking interval", &poll.IntervalError{Panic: "boom"}, []error{}, "poll interval panicked: boom"},
 		{"closed passes through", ErrClientClosed, []error{ErrClientClosed}, ""},
 		{"other passes through", plain, []error{plain}, "plain"},
 	}

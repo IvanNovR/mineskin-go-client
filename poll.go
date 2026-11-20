@@ -16,7 +16,7 @@ const (
 
 // PollInterval returns the wait before the given check attempt (1-based).
 // A result of zero or less fails the wait with ErrInvalidInput, and a panic
-// in the function fails it with an error matching ErrClient. The function is
+// in the function fails it with an error. The function is
 // called without any client lock held but must not call back into the client.
 type PollInterval func(attempt int) time.Duration
 
@@ -72,7 +72,7 @@ type PollOptions struct {
 	InitialDelay time.Duration
 	// Interval gives the wait between later checks. It must return a
 	// positive duration: zero or less fails the wait with ErrInvalidInput. A
-	// panic is recovered and fails the wait with an error matching ErrClient.
+	// panic is recovered and fails the wait with an error.
 	// nil selects a constant DefaultPollInterval.
 	Interval PollInterval
 	// MaxAttempts is the number of status checks before giving up.

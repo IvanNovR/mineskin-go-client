@@ -81,7 +81,7 @@ func TestHandleResponseAPIError(t *testing.T) {
 			if apiErr.Code != tt.wantCode || apiErr.Message != tt.wantMessage || apiErr.Status != tt.status || apiErr.Success {
 				t.Errorf("apiErr = %+v", apiErr)
 			}
-			if !errors.Is(err, ErrClient) || errors.Is(err, ErrNotFound) != tt.wantNotFnd {
+			if err == nil || errors.Is(err, ErrNotFound) != tt.wantNotFnd {
 				t.Errorf("Is mismatch for %v", err)
 			}
 		})
@@ -113,9 +113,6 @@ func TestHandleResponseUnexpected(t *testing.T) {
 			}
 			if (ue.Err != nil) != tt.wantCause || ue.IsRetryable() != tt.retryable || ue.Status != tt.status {
 				t.Errorf("ue = %+v", ue)
-			}
-			if !errors.Is(err, ErrClient) {
-				t.Error("must match ErrClient")
 			}
 		})
 	}
@@ -153,8 +150,8 @@ func TestHandleResponseParseError(t *testing.T) {
 			if err == nil || errors.As(err, &ue) || errors.As(err, &apiErr) {
 				t.Fatalf("want plain parse error, got %T %v", err, err)
 			}
-			if !errors.Is(err, ErrClient) || errors.Is(err, ErrInvalidInput) {
-				t.Errorf("must match ErrClient only: %v", err)
+			if errors.Is(err, ErrInvalidInput) {
+				t.Errorf("must not match ErrInvalidInput: %v", err)
 			}
 			var typeErr *json.UnmarshalTypeError
 			if !errors.As(err, &typeErr) {
@@ -179,7 +176,7 @@ func TestHandleResponseDecodeBodyReceivesInputs(t *testing.T) {
 	}
 	cause := errors.New("bad job")
 	_, err = handleResponse(transport.Response{Status: 200, Body: body}, func(map[string]json.RawMessage, []byte) error { return cause })
-	if !errors.Is(err, cause) || !errors.Is(err, ErrClient) || err.Error() != "mineskin: failed to parse response: bad job" {
+	if !errors.Is(err, cause) || err.Error() != "mineskin: failed to parse response: bad job" {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -198,7 +195,7 @@ func TestHandleResponseSuccessWithBadPayloadIsParseError(t *testing.T) {
 	_, err := handleResponse(transport.Response{Status: 200, Body: []byte(`{"success":true}`)},
 		func(map[string]json.RawMessage, []byte) error { return errors.New("boom") })
 	var apiErr *APIError
-	if err == nil || errors.As(err, &apiErr) || !errors.Is(err, ErrClient) {
+	if err == nil || errors.As(err, &apiErr) {
 		t.Errorf("want parse error, got %v", err)
 	}
 }
@@ -280,8 +277,9 @@ func TestHandleResponseDuplicateHeadersDoNotFail(t *testing.T) {
 
 func TestHandleResponseUnexpectedIsClientError(t *testing.T) {
 	_, err := handleResponse(transport.Response{Status: 530, Body: []byte("error code: 1033")}, noopDecoder)
-	if !errors.Is(err, ErrClient) {
-		t.Errorf("must match ErrClient: %v", err)
+	var ue *UnexpectedResponseError
+	if !errors.As(err, &ue) {
+		t.Errorf("want *UnexpectedResponseError: %v", err)
 	}
 }
 

@@ -115,8 +115,8 @@ func mapGroupErr(label string, err error) error {
 }
 
 // retryCancelledError is returned when the caller's ctx ends while a retry of
-// a 429 is waiting or in flight. It matches both the ctx error (and so
-// ErrClient, through its wrapping) and the 429 error.
+// a 429 is waiting or in flight. It matches both the ctx error and the 429
+// error.
 type retryCancelledError struct {
 	// ctxErr is the wrapped ctx error of the failed retry attempt.
 	ctxErr error
@@ -186,7 +186,7 @@ func toPollOptions(o PollOptions) poll.Options {
 
 // mapPollErr turns the errors of internal/poll into the public contract: an
 // exhausted job is ErrMaxAttempts, a bad interval is ErrInvalidInput and a
-// panicking one an ErrClient error. Other errors (a Fetcher error, the error
+// panicking one a wrapped error. Other errors (a Fetcher error, the error
 // passed to Close) pass through.
 func mapPollErr(err error) error {
 	var exhausted *poll.ExhaustedError
@@ -205,7 +205,7 @@ func mapPollErr(err error) error {
 
 // do sends a request through the transport and wraps its raw errors. ctx must
 // not be nil; a nil context or an unbuildable request yields an error matching
-// ErrInvalidInput. Transport and read failures match ErrClient and keep the
+// ErrInvalidInput. Transport and read failures keep the
 // underlying error in the chain, so errors.Is(err, context.Canceled),
 // context.DeadlineExceeded and net.Error timeouts keep working. The error text
 // holds the method and path only, never headers or the API key.

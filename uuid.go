@@ -20,7 +20,7 @@ type UUID [16]byte
 
 // ParseUUID parses a UUID in dashed (8-4-4-4-12) or undashed (32 hex digits)
 // form. Hex digits may be upper or lower case. A failure matches
-// ErrInvalidInput and ErrClient; the error never contains the input.
+// ErrInvalidInput; the error never contains the input.
 func ParseUUID(s string) (UUID, error) {
 	var u UUID
 	hexDigits, ok := uuidHexDigits(s)

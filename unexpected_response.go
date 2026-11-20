@@ -36,8 +36,8 @@ const (
 // UnexpectedResponseError is returned when the API answers with something
 // that is not a MineSkin JSON object, such as a Cloudflare error page, an
 // nginx 502 page, an empty proxy error or truncated JSON. It matches
-// ErrClient with errors.Is, and ErrNotFound when the HTTP status is 404. Use
-// errors.As to obtain it.
+// ErrNotFound with errors.Is when the HTTP status is 404. Use errors.As to
+// obtain it.
 type UnexpectedResponseError struct {
 	// Status is the HTTP status code.
 	Status int
@@ -129,16 +129,9 @@ func (e *UnexpectedResponseError) Error() string {
 // Unwrap returns the underlying cause, if any.
 func (e *UnexpectedResponseError) Unwrap() error { return e.Err }
 
-// Is reports whether target is ErrClient, or ErrNotFound for an HTTP 404.
+// Is reports whether target is ErrNotFound and the HTTP status is 404.
 func (e *UnexpectedResponseError) Is(target error) bool {
-	switch target {
-	case ErrClient:
-		return true
-	case ErrNotFound:
-		return e.Status == http.StatusNotFound
-	default:
-		return false
-	}
+	return target == ErrNotFound && e.Status == http.StatusNotFound
 }
 
 // IsRetryable reports whether the error is likely temporary: status 408, 429,

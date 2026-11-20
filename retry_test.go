@@ -238,7 +238,7 @@ func TestRetryWaitEndsOnCloseAndCancel(t *testing.T) {
 		waitWaiting(t, c.getGroup, 1)
 		_ = c.Close()
 		if err := mustDone(t, "GetSkin", res); !errors.Is(err, ErrClientClosed) {
-			t.Errorf("error = %v, want ErrClientClosed", err)
+			t.Errorf("error = %v, want a errorClosed", err)
 		}
 	})
 	t.Run("cancel", func(t *testing.T) {
@@ -365,12 +365,12 @@ func assertOriginal429(t *testing.T, err error) {
 	}
 }
 
-// assertCtxAnd429 checks that err matches the ctx error, ErrClient and the
+// assertCtxAnd429 checks that err matches the ctx error and the
 // saved 429 (as *APIError and as text).
 func assertCtxAnd429(t *testing.T, err, ctxErr error) {
 	t.Helper()
-	if !errors.Is(err, ctxErr) || !errors.Is(err, ErrClient) {
-		t.Errorf("error = %v, want it to match %v and ErrClient", err, ctxErr)
+	if !errors.Is(err, ctxErr) {
+		t.Errorf("error = %v, want it to match %v", err, ctxErr)
 	}
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) || apiErr.Status != 429 {

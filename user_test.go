@@ -111,7 +111,7 @@ func TestGetUserWrongTypedFieldsAreParseErrors(t *testing.T) {
 			srv := newTestServer(t, writeJSON(200, body))
 			_, err := newTestClient(t, srv.URL).GetUser(context.Background())
 			var apiErr *APIError
-			if !errors.Is(err, ErrClient) || errors.As(err, &apiErr) {
+			if err == nil || errors.As(err, &apiErr) {
 				t.Errorf("err = %v, want parse error", err)
 			}
 		})

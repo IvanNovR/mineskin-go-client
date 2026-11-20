@@ -11,7 +11,7 @@ import (
 // client is fully shut down.
 //
 // Calls queued in a throttle, waits in WaitForJob and requests in flight fail
-// with an error matching ErrClientClosed and ErrClient, and every call made
+// with an error matching ErrClientClosed, and every call made
 // afterwards fails the same way without sending a request. Close returns
 // after the job poller and any grants load or refresh have exited.
 //

@@ -15,8 +15,7 @@ import (
 // A nil ctx, or a job id that is empty, "." or "..", fails with
 // ErrInvalidInput without a request. A failed job gives a *JobFailedError, and
 // a job still unfinished after PollOptions.MaxAttempts checks gives
-// ErrMaxAttempts. When ctx ends, the error matches both ctx.Err() and
-// ErrClient; the job stops being polled unless another waiter still needs it.
+// ErrMaxAttempts. When ctx ends, the error matches ctx.Err(); the job stops being polled unless another waiter still needs it.
 // Errors of the status requests are returned as they are. A wait that Close
 // interrupts, and any wait started after Close, fails with ErrClientClosed.
 //

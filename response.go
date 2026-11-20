@@ -55,7 +55,7 @@ type ResponseMeta struct {
 //
 // The steps are, in order: a body that is not a JSON object gives an
 // *UnexpectedResponseError; so does a body that fails to unmarshal; a failing
-// envelope gives a parse error matching ErrClient; an unsuccessful response
+// envelope gives a parse error; an unsuccessful response
 // gives an *APIError without decoding the payload; a failing decodeBody on a
 // successful response gives a parse error; otherwise the metadata is returned.
 func handleResponse(raw transport.Response, decodeBody func(obj map[string]json.RawMessage, body []byte) error) (ResponseMeta, error) {

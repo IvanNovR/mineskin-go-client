@@ -73,7 +73,7 @@ type Client struct {
 var _ io.Closer = (*Client)(nil)
 
 // NewClient creates a Client from the given options. Invalid configuration
-// yields an error matching ErrInvalidInput and ErrClient; the error never
+// yields an error matching ErrInvalidInput; the error never
 // contains the API key.
 func NewClient(opts ...Option) (*Client, error) {
 	cfg := &config{

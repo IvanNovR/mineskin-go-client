@@ -65,8 +65,8 @@ func TestParseUUIDInvalid(t *testing.T) {
 			if err == nil {
 				t.Fatalf("ParseUUID(%q) = %v, want error", tt.in, u)
 			}
-			if !errors.Is(err, ErrInvalidInput) || !errors.Is(err, ErrClient) {
-				t.Fatalf("error %v must match ErrInvalidInput and ErrClient", err)
+			if !errors.Is(err, ErrInvalidInput) {
+				t.Fatalf("error %v must match ErrInvalidInput", err)
 			}
 			if errors.Is(err, ErrNotFound) {
 				t.Fatalf("error must not match ErrNotFound")

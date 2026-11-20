@@ -144,6 +144,16 @@ func (p PollOptions) validate() error {
 	if p.MaxAttempts < 0 {
 		return invalidInput("poll max attempts must not be negative")
 	}
+	switch iv := p.Interval.(type) {
+	case *Backoff:
+		if iv == nil {
+			return invalidInput("poll interval is a nil *Backoff")
+		}
+	case PollIntervalFunc:
+		if iv == nil {
+			return invalidInput("poll interval is a nil function")
+		}
+	}
 	if v, ok := p.Interval.(intervalValidator); ok {
 		return v.validate()
 	}

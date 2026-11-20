@@ -199,3 +199,23 @@ func TestNewClientCustomPolling(t *testing.T) {
 		t.Errorf("polling = %+v", c.polling)
 	}
 }
+
+func TestNilIntervalImplementationsAreInvalidInput(t *testing.T) {
+	var nilBackoff *Backoff
+	tests := []struct {
+		name string
+		iv   PollInterval
+		want string
+	}{
+		{"nil *Backoff", nilBackoff, "mineskin: invalid input: poll interval is a nil *Backoff"},
+		{"nil PollIntervalFunc", PollIntervalFunc(nil), "mineskin: invalid input: poll interval is a nil function"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c, err := NewClient(WithJobPolling(PollOptions{Interval: tt.iv}))
+			if c != nil || !errors.Is(err, ErrInvalidInput) || err.Error() != tt.want {
+				t.Fatalf("got (%v, %v), want nil client and %q", c, err, tt.want)
+			}
+		})
+	}
+}

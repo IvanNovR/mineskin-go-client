@@ -72,7 +72,10 @@ func WithBaseURL(baseURL string) Option {
 // after a 429 gets its own budget, and time spent queued in a request group's
 // throttle does not count. It is not a limit on a whole call: the total
 // duration of Generate, WaitForJob or a retried request is bounded by the
-// caller's context, and WaitForJob also by the poll max attempts.
+// caller's context, and WaitForJob also by the poll max attempts. A request
+// that exceeds it fails with an error that matches context.DeadlineExceeded,
+// is a net.Error with Timeout() true and is retryable (see IsRetryable); a
+// deadline of the caller's own context is not.
 func WithTimeout(d time.Duration) Option {
 	return func(c *config) { c.timeout = d }
 }
@@ -122,16 +125,16 @@ func WithJobPolling(p PollOptions) Option {
 // context, and throttling cannot be disabled. WithGenerateThrottle and
 // WithAutoTuning set the same pacing, so the one given last wins.
 func WithGenerateThrottle(t Throttle) Option {
-	return func(c *config) { c.generate = generatePacing{throttle: t.orDefault(defaultGenerateThrottle)} }
+	return func(c *config) { c.generate = generatePacing{throttle: t.orDefault(defaultGenerateThrottle())} }
 }
 
 // WithGetThrottle sets the pacing of the get group, which holds GetSkin,
 // GetUser, GetJob, ListJobs and the job poller's requests. Zero fields select
-// DefaultGetInterval (100 ms) and DefaultGetConcurrency (5); a negative field
-// makes NewClient return an error matching ErrInvalidInput. Queue time is
-// bounded only by the caller's context, and throttling cannot be disabled.
+// the defaults, an interval of 100 ms and 5 requests in flight; a negative
+// field makes NewClient return an error matching ErrInvalidInput. Queue time
+// is bounded only by the caller's context, and throttling cannot be disabled.
 func WithGetThrottle(t Throttle) Option {
-	return func(c *config) { c.getThrottle = t.orDefault(defaultGetThrottle) }
+	return func(c *config) { c.getThrottle = t.orDefault(defaultGetThrottle()) }
 }
 
 // WithAutoTuning makes the generate group follow the limits granted to the

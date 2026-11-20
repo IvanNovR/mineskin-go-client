@@ -2,14 +2,17 @@ package mineskin
 
 import "time"
 
-var (
-	// defaultGenerateThrottle paces Queue and Generate: one start per 200 ms,
-	// one request in flight.
-	defaultGenerateThrottle = Throttle{Interval: defaultGenerateInterval, Concurrency: defaultGenerateConcurrency}
-	// defaultGetThrottle paces GetSkin, GetUser, GetJob, ListJobs and job
-	// polling: one start per 100 ms, five requests in flight.
-	defaultGetThrottle = Throttle{Interval: defaultGetInterval, Concurrency: defaultGetConcurrency}
-)
+// defaultGenerateThrottle paces Queue and Generate: one start per 200 ms,
+// one request in flight.
+func defaultGenerateThrottle() Throttle {
+	return Throttle{Interval: defaultGenerateInterval, Concurrency: defaultGenerateConcurrency}
+}
+
+// defaultGetThrottle paces GetSkin, GetUser, GetJob, ListJobs and job polling:
+// one start per 100 ms, five requests in flight.
+func defaultGetThrottle() Throttle {
+	return Throttle{Interval: defaultGetInterval, Concurrency: defaultGetConcurrency}
+}
 
 const (
 	defaultGenerateInterval    = 200 * time.Millisecond

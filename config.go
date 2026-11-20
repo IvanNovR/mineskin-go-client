@@ -21,8 +21,8 @@ func defaultConfig() *config {
 		timeout:          defaultTimeout,
 		logger:           slog.New(slog.DiscardHandler),
 		polling:          PollOptions{}.withDefaults(),
-		generate:         generatePacing{throttle: defaultGenerateThrottle},
-		getThrottle:      defaultGetThrottle,
+		generate:         generatePacing{throttle: defaultGenerateThrottle()},
+		getThrottle:      defaultGetThrottle(),
 		rateLimitRetries: defaultRateLimitRetries,
 		clock:            clock.Real(),
 	}

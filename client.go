@@ -40,9 +40,11 @@ const (
 // The API key is held in a redacted type: formatting a Client with %v, %+v or
 // %#v and logging it with log/slog never shows the key.
 //
-// Go's HTTP client already strips the Authorization header when a redirect
-// leads to a different host, and this client refuses redirects from https to
-// http and stops after 10 redirects.
+// The API does not redirect. This client drops the Authorization header when a
+// redirect leads to a different host (a different port or a sibling subdomain
+// counts), refuses redirects from https to http and stops after 10 redirects.
+// NewClient refuses an API key with an http:// base URL to a non-loopback
+// host unless WithInsecureHTTP is given.
 type Client struct {
 	// doer holds the base URL, User-Agent, API key and HTTP client.
 	doer     *transport.Doer
@@ -159,7 +161,7 @@ func logConfig(l *slog.Logger, baseURL, userAgent string, key transport.Secret) 
 		l.Warn("Creating MineSkin client without API key, get one at https://account.mineskin.org/keys")
 		return
 	}
-	if sendsKeyOverPlainHTTP(baseURL) {
+	if sendsKeyOverPlainHTTP(baseURL) { // only reachable with WithInsecureHTTP
 		l.Warn("Sending the API key over plain HTTP to a non-loopback host; use https")
 	}
 	if strings.HasPrefix(apiKey, apiKeyPrefix) {

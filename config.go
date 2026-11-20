@@ -36,6 +36,9 @@ func (cfg *config) validate() error {
 		return err
 	}
 	cfg.baseURL = baseURL
+	if !cfg.apiKey.IsEmpty() && !cfg.insecureHTTP && sendsKeyOverPlainHTTP(baseURL) {
+		return invalidInput("API key over plain http to a non-loopback host; use https or WithInsecureHTTP()")
+	}
 	if cfg.rateLimitRetries < 0 {
 		return invalidInput("rate limit retries must not be negative")
 	}

@@ -7,7 +7,8 @@
 //
 // Create a Client with NewClient and functional options (WithAPIKey,
 // WithBaseURL, WithUserAgent, WithTimeout, WithTransport, WithLogger,
-// WithJobPolling, WithGenerateThrottle, WithGetThrottle, WithAutoTuning), then
+// WithJobPolling, WithGenerateThrottle, WithGetThrottle, WithAutoTuning,
+// WithInsecureHTTP), then
 // call GetSkin to fetch a skin by its MineSkin skin id (a UUID, see ParseUUID), or
 // GetUser to read the user and grants of the API key:
 //

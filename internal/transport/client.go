@@ -10,12 +10,17 @@ import (
 // MaxRedirects is the number of redirects after which CheckRedirect stops.
 const MaxRedirects = 10
 
-// CheckRedirect refuses redirects from https to http and stops after
-// MaxRedirects redirects. It is an http.Client.CheckRedirect function; its
+// CheckRedirect refuses redirects from https to http, stops after
+// MaxRedirects redirects and removes the Authorization header from a redirect
+// to another host (a different port or a sibling subdomain counts too; the
+// standard library compares the host name only). The API never redirects. It is an http.Client.CheckRedirect function; its
 // errors are raw and the caller adds its own context.
 func CheckRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= MaxRedirects {
 		return errors.New("stopped after 10 redirects")
+	}
+	if len(via) > 0 && req.URL.Host != via[0].URL.Host {
+		req.Header.Del("Authorization")
 	}
 	if req.URL.Scheme == "http" {
 		for _, prev := range via {

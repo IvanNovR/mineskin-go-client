@@ -97,4 +97,32 @@ Before a retry, check that the merge commit message setting is still "pull reque
 
 ## Live tests
 
-> Placeholder: how to run the live tests before a promotion is documented here once the live-test workflow is merged. Until then run `make test-live` locally.
+The live tests call the real MineSkin API and consume credits. Run them on `dev` before every promotion.
+
+- **First release**: `live.yml` can only be dispatched once it is on the default branch (`main`), so run the live tests locally on an up-to-date `dev` with your own key (see [CONTRIBUTING.md](CONTRIBUTING.md#live-tests)):
+
+  ```sh
+  make test-live
+  ```
+
+- **Later releases**: run `.github/workflows/live.yml` on `dev` and wait for it to pass:
+
+  ```sh
+  gh workflow run live.yml --ref dev -f paid=false
+  ```
+
+  Use `-f paid=true` only when the stored key is a paid key; it sets `MINESKIN_LIVE_PAID=1` and also runs the tests that need one.
+
+Setup: the workflow runs in the GitHub Environment `live`, limited to the branches `dev` and `main` with no required reviewer, and reads the environment secret `MINESKIN_API_KEY`. The owner sets the secret himself:
+
+```sh
+gh secret set MINESKIN_API_KEY --env live
+```
+
+`gh` prompts for the value, so it never lands in shell history. Agents and automation never handle the key. If the secret is missing, the workflow fails at its first check with "MINESKIN_API_KEY secret not configured in environment live"; the key is never printed.
+
+Keeping the key safe:
+
+- Store `MINESKIN_API_KEY` only as a secret of the `live` environment, never as a repository or organisation secret. Any workflow can read a repository secret without the environment.
+- Prefer a free or least-privilege key for the stored secret. A paid key costs money each time someone with dispatch rights runs `paid=true`.
+- Write access means key access: anyone who can push to `dev` can add a test that prints the key and then dispatch `live.yml` on `dev`. Today only the owner has write access. Before anyone else gets it, require pull requests on `dev` as well (the same trust model as releases, see [Trust model](#trust-model)).

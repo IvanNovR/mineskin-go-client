@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -239,3 +240,82 @@ func testPNG(t *testing.T) []byte {
 // pause waits one poll tick between two checks of shared state. It is the only
 // real-time wait the polling helpers use; no assertion depends on its length.
 func pause() { time.Sleep(pollEvery) }
+
+// pollOnce is a fast polling configuration with the given interval function.
+func pollOnce(attempts int, interval func(int) time.Duration) Option {
+	return WithJobPolling(PollOptions{InitialDelay: time.Millisecond, MaxAttempts: attempts, Interval: PollIntervalFunc(interval)})
+}
+
+const jobResultID = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
+
+// assertGoStyleMessage checks the error-string rules of the package: exactly
+// one "mineskin:" prefix, at the start, and text that starts in lower case
+// (an acronym such as API or HTTP is fine; API-provided text is verbatim and
+// is never the first word after the prefix in these cases).
+func assertGoStyleMessage(t *testing.T, err error) {
+	t.Helper()
+	msg := err.Error()
+	if !strings.HasPrefix(msg, messagePrefix) {
+		t.Errorf("error %q lacks the %q prefix", msg, messagePrefix)
+		return
+	}
+	if n := strings.Count(msg, messagePrefix); n != 1 {
+		t.Errorf("error %q has %d prefixes, want 1", msg, n)
+	}
+	first := msg[len(messagePrefix)]
+	word, _, _ := strings.Cut(msg[len(messagePrefix):], " ")
+	isAcronym := word == strings.ToUpper(word)
+	if first >= 'A' && first <= 'Z' && !isAcronym {
+		t.Errorf("error %q starts with a capitalised word", msg)
+	}
+}
+
+// assertParseError checks a plain client-side parse failure: not an API or
+// unexpected-response error, not a classification sentinel, Go-style text.
+func assertParseError(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("error = nil, want a parse error")
+	}
+	var apiErr *APIError
+	var ue *UnexpectedResponseError
+	if errors.As(err, &apiErr) || errors.As(err, &ue) {
+		t.Errorf("error %v is an API or unexpected-response error, want a plain parse error", err)
+	}
+	if errors.Is(err, ErrInvalidInput) || errors.Is(err, ErrNotFound) {
+		t.Errorf("error %v matches ErrInvalidInput or ErrNotFound", err)
+	}
+	assertGoStyleMessage(t, err)
+}
+
+const testSkinID = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
+
+// testSkinUUID is testSkinID parsed.
+var testSkinUUID = fixtureUUID(testSkinID)
+
+// fixtureUUID parses s or panics; for test fixtures only.
+func fixtureUUID(s string) UUID {
+	id, err := ParseUUID(s)
+	if err != nil {
+		panic(err)
+	}
+	return id
+}
+
+const skinFixture = `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","name":"Steve","variant":"slim","visibility":"unlisted",
+"texture":{"data":{"value":"VAL","signature":"SIG"},"hash":{"skin":"sh","cape":"ch"},"url":{"skin":"su","cape":"cu"}},
+"generator":{"timestamp":1700000000123,"duration":1500},"views":7,"duplicate":true}}`
+
+const queueFixture = `{"success":true,"job":{"id":"job-1","status":"waiting","timestamp":1700000000000},
+"rateLimit":{"next":{"relative":500},"limit":{"limit":10,"remaining":9,
+"hour":{"limit":100,"remaining":99,"used":1,"reset":1700003600}}},
+"usage":{"credits":{"used":2,"remaining":98}}}`
+
+func jobJSON(id, status string) string {
+	if status == "completed" {
+		return `{"success":true,"job":{"id":"` + id + `","status":"completed","result":"` + jobResultID + `"}}`
+	}
+	return `{"success":true,"job":{"id":"` + id + `","status":"` + status + `"}}`
+}
+
+const messagePrefix = "mineskin: "

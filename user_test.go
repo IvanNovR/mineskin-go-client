@@ -1,10 +1,12 @@
-package mineskin
+package mineskin_test
 
 import (
 	"context"
 	"errors"
 	"net/http"
 	"testing"
+
+	"github.com/IvanNovR/mineskin-go-client"
 )
 
 func TestGetUserWithoutSuccessField(t *testing.T) {
@@ -92,7 +94,7 @@ func TestGetUserUnauthorizedWithoutUserIsAPIError(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(401, `{"success":false,"errors":[{"code":"invalid_api_key","message":"Invalid API key"}]}`))
 	got, err := newTestClient(t, srv.URL).GetUser(context.Background())
-	var apiErr *APIError
+	var apiErr *mineskin.APIError
 	if got != nil || !errors.As(err, &apiErr) || apiErr.Meta.Status != 401 || apiErr.Code != "invalid_api_key" {
 		t.Fatalf("got=%v err=%T %v", got, err, err)
 	}
@@ -102,7 +104,7 @@ func TestGetUser403WithoutSuccessHasEmptyCode(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(403, `{}`))
 	_, err := newTestClient(t, srv.URL).GetUser(context.Background())
-	var apiErr *APIError
+	var apiErr *mineskin.APIError
 	if !errors.As(err, &apiErr) || apiErr.Code != "" || apiErr.Message != "" || apiErr.Meta.Status != 403 {
 		t.Fatalf("err = %T %v", err, err)
 	}
@@ -130,7 +132,7 @@ func TestGetUserAbsentOrNullUserIsZeroUUID(t *testing.T) {
 	for _, body := range []string{`{"grants":{}}`, `{"user":null,"grants":{}}`} {
 		srv := newTestServer(t, writeJSON(200, body))
 		got, err := newTestClient(t, srv.URL).GetUser(context.Background())
-		if err != nil || got.User.UUID != (UUID{}) {
+		if err != nil || got.User.UUID != (mineskin.UUID{}) {
 			t.Errorf("body %s: uuid=%v err=%v", body, got, err)
 		}
 	}

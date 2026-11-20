@@ -1,4 +1,4 @@
-package mineskin
+package mineskin_test
 
 import (
 	"context"
@@ -11,12 +11,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-)
 
-const queueFixture = `{"success":true,"job":{"id":"job-1","status":"waiting","timestamp":1700000000000},
-"rateLimit":{"next":{"relative":500},"limit":{"limit":10,"remaining":9,
-"hour":{"limit":100,"remaining":99,"used":1,"reset":1700003600}}},
-"usage":{"credits":{"used":2,"remaining":98}}}`
+	"github.com/IvanNovR/mineskin-go-client"
+)
 
 func TestQueueURLSendsJSON(t *testing.T) {
 	t.Parallel()
@@ -29,11 +26,11 @@ func TestQueueURLSendsJSON(t *testing.T) {
 		writeJSON(200, queueFixture)(w, r)
 	})
 	got, err := newTestClient(t, srv.URL).Queue(context.Background(),
-		FromURL("https://example.com/s.png"), GenerateOptions{Name: "n", Variant: VariantSlim})
+		mineskin.FromURL("https://example.com/s.png"), mineskin.GenerateOptions{Name: "n", Variant: mineskin.VariantSlim})
 	if err != nil {
 		t.Fatalf("Queue() error = %v", err)
 	}
-	if method != http.MethodPost || path != "/v2/queue" || ctype != jsonContentType {
+	if method != http.MethodPost || path != "/v2/queue" || ctype != "application/json" {
 		t.Errorf("request = %s %s %q", method, path, ctype)
 	}
 	var sent map[string]string
@@ -43,16 +40,16 @@ func TestQueueURLSendsJSON(t *testing.T) {
 	if sent["url"] != "https://example.com/s.png" || sent["name"] != "n" || sent["variant"] != "slim" {
 		t.Errorf("body = %v", sent)
 	}
-	if got.Job.ID != "job-1" || got.Job.Status != JobStatusWaiting {
+	if got.Job.ID != "job-1" || got.Job.Status != mineskin.JobStatusWaiting {
 		t.Errorf("job = %+v", got.Job)
 	}
 	if got.Meta.Breadcrumb != "crumb-q" || got.Meta.Status != 200 {
 		t.Errorf("meta = %+v", got.Meta)
 	}
-	wantRL := RateLimit{NextIn: 500 * time.Millisecond, Limit: 10, Remaining: 9,
-		Hour: WindowLimit{Limit: 100, Remaining: 99, Used: 1, Reset: time.Unix(1700003600, 0)}}
+	wantRL := mineskin.RateLimit{NextIn: 500 * time.Millisecond, Limit: 10, Remaining: 9,
+		Hour: mineskin.WindowLimit{Limit: 100, Remaining: 99, Used: 1, Reset: time.Unix(1700003600, 0)}}
 	assertRateLimit(t, got.RateLimit, wantRL)
-	if want := (Usage{CreditsUsed: 2, CreditsRemaining: 98}); got.Usage != want {
+	if want := (mineskin.Usage{CreditsUsed: 2, CreditsRemaining: 98}); got.Usage != want {
 		t.Errorf("usage = %+v, want %+v", got.Usage, want)
 	}
 }
@@ -76,7 +73,7 @@ func TestQueueUploadSendsMultipart(t *testing.T) {
 		writeJSON(200, queueFixture)(w, r)
 	})
 	_, err := newTestClient(t, srv.URL).Queue(context.Background(),
-		FromReader(strings.NewReader("PNGDATA")), GenerateOptions{Name: "up", Variant: VariantClassic})
+		mineskin.FromReader(strings.NewReader("PNGDATA")), mineskin.GenerateOptions{Name: "up", Variant: mineskin.VariantClassic})
 	if err != nil {
 		t.Fatalf("Queue() error = %v", err)
 	}
@@ -95,11 +92,11 @@ func TestGenerateDecodesSkin(t *testing.T) {
 		w.Header().Set("MineSkin-Breadcrumb", "crumb-g")
 		writeJSON(200, body)(w, r)
 	})
-	id, err := ParseUUID(testSkinID)
+	id, err := mineskin.ParseUUID(testSkinID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := newTestClient(t, srv.URL).Generate(context.Background(), FromUser(id), GenerateOptions{})
+	got, err := newTestClient(t, srv.URL).Generate(context.Background(), mineskin.FromUser(id), mineskin.GenerateOptions{})
 	if err != nil {
 		t.Fatalf("Generate() error = %v", err)
 	}
@@ -112,8 +109,8 @@ func TestGenerateDecodesSkin(t *testing.T) {
 	if got.Meta.Breadcrumb != "crumb-g" || got.Meta.Status != 200 {
 		t.Errorf("meta = %+v", got.Meta)
 	}
-	assertRateLimit(t, got.RateLimit, RateLimit{Limit: 5, Remaining: 4})
-	if want := (Usage{CreditsUsed: 1, CreditsRemaining: 9}); got.Usage != want {
+	assertRateLimit(t, got.RateLimit, mineskin.RateLimit{Limit: 5, Remaining: 4})
+	if want := (mineskin.Usage{CreditsUsed: 1, CreditsRemaining: 9}); got.Usage != want {
 		t.Errorf("usage = %+v, want %+v", got.Usage, want)
 	}
 }
@@ -121,11 +118,11 @@ func TestGenerateDecodesSkin(t *testing.T) {
 func TestQueueAbsentRateLimitIsZero(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(200, `{"success":true,"job":{"id":"j","status":"waiting"}}`))
-	got, err := newTestClient(t, srv.URL).Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
+	got, err := newTestClient(t, srv.URL).Queue(context.Background(), mineskin.FromURL("https://example.com/a.png"), mineskin.GenerateOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.RateLimit.NextAt.IsZero() || got.RateLimit != (RateLimit{}) || got.Usage != (Usage{}) {
+	if !got.RateLimit.NextAt.IsZero() || got.RateLimit != (mineskin.RateLimit{}) || got.Usage != (mineskin.Usage{}) {
 		t.Errorf("rateLimit=%+v usage=%+v, want zero", got.RateLimit, got.Usage)
 	}
 }
@@ -138,26 +135,26 @@ func TestQueueRejectsInvalidSourceWithoutRequest(t *testing.T) {
 		writeJSON(200, queueFixture)(w, r)
 	})
 	c := newTestClient(t, srv.URL)
-	sources := map[string]Source{
+	sources := map[string]mineskin.Source{
 		"nil":          nil,
-		"relative":     FromURL("/just/a/path"),
-		"unparsable":   FromURL("http://a b/"),
-		"nil reader":   FromReader(nil),
-		"empty path":   FromFile(""),
-		"nil image":    FromImage(nil),
-		"empty":        FromURL(""),
-		"no host":      FromURL("https://"),
-		"missing file": FromFile("/nonexistent/skin.png"),
+		"relative":     mineskin.FromURL("/just/a/path"),
+		"unparsable":   mineskin.FromURL("http://a b/"),
+		"nil reader":   mineskin.FromReader(nil),
+		"empty path":   mineskin.FromFile(""),
+		"nil image":    mineskin.FromImage(nil),
+		"empty":        mineskin.FromURL(""),
+		"no host":      mineskin.FromURL("https://"),
+		"missing file": mineskin.FromFile("/nonexistent/skin.png"),
 	}
 	for name, src := range sources {
 		t.Run(name, func(t *testing.T) {
 			for _, call := range []func() error{
-				func() error { _, err := c.Queue(context.Background(), src, GenerateOptions{}); return err },
-				func() error { _, err := c.Generate(context.Background(), src, GenerateOptions{}); return err },
+				func() error { _, err := c.Queue(context.Background(), src, mineskin.GenerateOptions{}); return err },
+				func() error { _, err := c.Generate(context.Background(), src, mineskin.GenerateOptions{}); return err },
 			} {
 				if err := call(); err == nil {
 					t.Error("error = nil, want error")
-				} else if name != "missing file" && !errors.Is(err, ErrInvalidInput) {
+				} else if name != "missing file" && !errors.Is(err, mineskin.ErrInvalidInput) {
 					t.Errorf("error = %v, want ErrInvalidInput", err)
 				}
 			}
@@ -171,8 +168,8 @@ func TestQueueRejectsInvalidSourceWithoutRequest(t *testing.T) {
 func TestQueueAPIError(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(429, `{"success":false,"errors":[{"code":"too_many_requests","message":"slow down"}],"job":"garbage","rateLimit":5}`))
-	got, err := newTestClient(t, srv.URL).Queue(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
-	var apiErr *APIError
+	got, err := newTestClient(t, srv.URL).Queue(context.Background(), mineskin.FromURL("https://example.com/a.png"), mineskin.GenerateOptions{})
+	var apiErr *mineskin.APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("error = %v, want *APIError", err)
 	}
@@ -191,9 +188,9 @@ func TestGenerateHonoursTimeout(t *testing.T) {
 		}
 	})
 	t.Cleanup(func() { close(release) })
-	c := newTestClient(t, srv.URL, WithTimeout(80*time.Millisecond))
+	c := newTestClient(t, srv.URL, mineskin.WithTimeout(80*time.Millisecond))
 	start := time.Now()
-	_, err := c.Generate(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
+	_, err := c.Generate(context.Background(), mineskin.FromURL("https://example.com/a.png"), mineskin.GenerateOptions{})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
 	}
@@ -201,7 +198,7 @@ func TestGenerateHonoursTimeout(t *testing.T) {
 	if !errors.As(err, &netErr) || !netErr.Timeout() {
 		t.Errorf("error = %v, want a net.Error with Timeout() == true", err)
 	}
-	if !IsRetryable(err) {
+	if !mineskin.IsRetryable(err) {
 		t.Error("IsRetryable(per-request timeout) = false, want true")
 	}
 	if got := strings.Count(err.Error(), "mineskin:"); got != 1 {
@@ -222,14 +219,14 @@ func TestCallerDeadlineIsNotRetryable(t *testing.T) {
 		}
 	})
 	t.Cleanup(func() { close(release) })
-	c := newTestClient(t, srv.URL, WithTimeout(time.Minute))
+	c := newTestClient(t, srv.URL, mineskin.WithTimeout(time.Minute))
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
-	_, err := c.Generate(ctx, FromURL("https://example.com/a.png"), GenerateOptions{})
+	_, err := c.Generate(ctx, mineskin.FromURL("https://example.com/a.png"), mineskin.GenerateOptions{})
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
 	}
-	if IsRetryable(err) {
+	if mineskin.IsRetryable(err) {
 		t.Error("IsRetryable(caller ctx deadline) = true, want false")
 	}
 }

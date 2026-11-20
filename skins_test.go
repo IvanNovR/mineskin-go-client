@@ -1,4 +1,4 @@
-package mineskin
+package mineskin_test
 
 import (
 	"context"
@@ -9,25 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client"
 )
-
-const testSkinID = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
-
-// testSkinUUID is testSkinID parsed.
-var testSkinUUID = fixtureUUID(testSkinID)
-
-// fixtureUUID parses s or panics; for test fixtures only.
-func fixtureUUID(s string) UUID {
-	id, err := ParseUUID(s)
-	if err != nil {
-		panic(err)
-	}
-	return id
-}
-
-const skinFixture = `{"success":true,"skin":{"uuid":"744c993e0e8a4f0b9b6a2f3c7a1b5d11","name":"Steve","variant":"slim","visibility":"unlisted",
-"texture":{"data":{"value":"VAL","signature":"SIG"},"hash":{"skin":"sh","cape":"ch"},"url":{"skin":"su","cape":"cu"}},
-"generator":{"timestamp":1700000000123,"duration":1500},"views":7,"duplicate":true}}`
 
 func TestGetSkinDecodesFullSkin(t *testing.T) {
 	t.Parallel()
@@ -40,8 +24,8 @@ func TestGetSkinDecodesFullSkin(t *testing.T) {
 		t.Fatalf("GetSkin() error = %v", err)
 	}
 	s := got.Skin
-	if s.UUID.String() != testSkinID || s.Name != "Steve" || s.Variant != VariantSlim ||
-		s.Visibility != VisibilityUnlisted || s.Views != 7 || !s.Duplicate {
+	if s.UUID.String() != testSkinID || s.Name != "Steve" || s.Variant != mineskin.VariantSlim ||
+		s.Visibility != mineskin.VisibilityUnlisted || s.Views != 7 || !s.Duplicate {
 		t.Errorf("skin = %+v", s)
 	}
 	if s.Texture.Data.Value != "VAL" || s.Texture.Data.Signature != "SIG" || s.Texture.Hash.Skin != "sh" ||
@@ -84,12 +68,12 @@ func TestGetSkinKeepsUnknownAndEmptyVariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Skin.Variant != VariantAuto || got.Skin.Visibility != Visibility("weird") {
+	if got.Skin.Variant != mineskin.VariantAuto || got.Skin.Visibility != mineskin.Visibility("weird") {
 		t.Errorf("skin = %+v", got.Skin)
 	}
 	srv2 := newTestServer(t, writeJSON(200, `{"success":true,"skin":{"variant":"future"}}`))
 	got, err = newTestClient(t, srv2.URL).GetSkin(context.Background(), testSkinUUID)
-	if err != nil || got.Skin.Variant != Variant("future") {
+	if err != nil || got.Skin.Variant != mineskin.Variant("future") {
 		t.Errorf("variant = %q err = %v", got.Skin.Variant, err)
 	}
 }
@@ -98,8 +82,8 @@ func TestGetSkinRejectsZeroUUIDWithoutRequest(t *testing.T) {
 	t.Parallel()
 	var hits atomic.Int32
 	srv := newTestServer(t, func(http.ResponseWriter, *http.Request) { hits.Add(1) })
-	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), UUID{})
-	if got != nil || !errors.Is(err, ErrInvalidInput) || err.Error() != "mineskin: invalid input: skin id is the zero UUID" {
+	got, err := newTestClient(t, srv.URL).GetSkin(context.Background(), mineskin.UUID{})
+	if got != nil || !errors.Is(err, mineskin.ErrInvalidInput) || err.Error() != "mineskin: invalid input: skin id is the zero UUID" {
 		t.Fatalf("got (%v, %v), want nil and ErrInvalidInput with the zero-UUID message", got, err)
 	}
 	if hits.Load() != 0 {
@@ -137,11 +121,11 @@ func TestGetSkinNotFoundIsAPIErrorNotParseError(t *testing.T) {
 	if got != nil {
 		t.Errorf("response = %+v, want nil", got)
 	}
-	var apiErr *APIError
+	var apiErr *mineskin.APIError
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("err = %T %v, want *APIError", err, err)
 	}
-	if !errors.Is(err, ErrNotFound) || apiErr.Meta.Status != 404 || apiErr.Message != "Skin not found" || apiErr.Code != "skin_not_found" {
+	if !errors.Is(err, mineskin.ErrNotFound) || apiErr.Meta.Status != 404 || apiErr.Message != "Skin not found" || apiErr.Code != "skin_not_found" {
 		t.Errorf("apiErr = %+v", apiErr)
 	}
 }
@@ -150,7 +134,7 @@ func TestGetSkinHTMLBadGateway(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, writeJSON(502, `<html>Bad Gateway</html>`))
 	_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
-	var ue *UnexpectedResponseError
+	var ue *mineskin.UnexpectedResponseError
 	if !errors.As(err, &ue) {
 		t.Fatalf("err = %T %v, want *UnexpectedResponseError", err, err)
 	}
@@ -195,7 +179,7 @@ func TestGeneratorInfoUnmarshalJSON(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			var g GeneratorInfo
+			var g mineskin.GeneratorInfo
 			err := g.UnmarshalJSON([]byte(tc.in))
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
@@ -220,7 +204,7 @@ func TestGetSkinWrongTypedPayloadOnErrorResponseIsAPIError(t *testing.T) {
 		body   string
 		is     error
 	}{
-		"404 skin string": {404, `{"success":false,"skin":"gone"}`, ErrNotFound},
+		"404 skin string": {404, `{"success":false,"skin":"gone"}`, mineskin.ErrNotFound},
 		"429 json error":  {429, `{"success":false,"skin":[1],"errors":[{"code":"rate_limit","message":"slow down"}]}`, nil},
 	}
 	for name, tc := range tests {
@@ -228,7 +212,7 @@ func TestGetSkinWrongTypedPayloadOnErrorResponseIsAPIError(t *testing.T) {
 			t.Parallel()
 			srv := newTestServer(t, writeJSON(tc.status, tc.body))
 			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
-			var apiErr *APIError
+			var apiErr *mineskin.APIError
 			if !errors.As(err, &apiErr) || apiErr.Meta.Status != tc.status {
 				t.Fatalf("err = %T %v, want *APIError %d", err, err, tc.status)
 			}
@@ -257,7 +241,7 @@ func TestGeneratorInfoDurationBounds(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			var g GeneratorInfo
+			var g mineskin.GeneratorInfo
 			err := g.UnmarshalJSON([]byte(tc.in))
 			if (err != nil) != tc.wantErr || (!tc.wantErr && g.Duration != tc.want) {
 				t.Errorf("Duration = %v, err = %v", g.Duration, err)

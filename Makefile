@@ -3,8 +3,15 @@ COVERAGE_MIN ?= 80
 # (Dependabot does not bump this one).
 GOLANGCI_LINT_VERSION ?= v2.15.0
 GOLANGCI_LINT = go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+# Keep in sync with the svu version in .github/workflows/release.yml and
+# release-preview.yml (Dependabot does not bump these).
+SVU_VERSION ?= v3.4.4
+SVU = go run github.com/caarlos0/svu/v3@$(SVU_VERSION)
+# Keep in sync with the actionlint version in .github/workflows/ci.yml.
+ACTIONLINT_VERSION ?= v1.7.12
+ACTIONLINT = go run github.com/rhysd/actionlint/cmd/actionlint@$(ACTIONLINT_VERSION)
 
-.PHONY: test race vet tidy lint cover check test-live
+.PHONY: test race vet tidy lint cover check test-live next-version actionlint
 
 test:
 	@go test ./...
@@ -34,10 +41,20 @@ cover:
 	@go tool cover -func=coverage.out | awk -v min="$(COVERAGE_MIN)" '{ print } /^total:/ { gsub("%", "", $$3); found = 1; if ($$3 + 0 < min + 0) { printf "coverage %s%% is below %s%%\n", $$3, min; fail = 1 } } END { if (!found) { print "no total line in coverage output"; exit 1 } exit fail }'
 	@go test -race -shuffle=on ./internal/tools/...
 
-check: vet tidy lint cover
+check: vet tidy lint cover actionlint
 
 # test-live runs the live tests (they consume API credits). The tests read
 # MINESKIN_API_KEY etc. from the environment and, if unset, from a KEY=VALUE
 # .env file that they parse themselves; .env is never run as shell code.
 test-live:
 	@go test -tags live -race -count=1 -run '^TestLive' ./...
+
+# actionlint checks the GitHub Actions workflows (it also runs shellcheck on
+# run: scripts when shellcheck is installed).
+actionlint:
+	@$(ACTIONLINT)
+
+# next-version prints the version that a merge into main would release now
+# (svu with .svu.yml; it equals the current tag when nothing is releasable).
+next-version:
+	@$(SVU) next

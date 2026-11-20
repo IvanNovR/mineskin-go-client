@@ -24,7 +24,7 @@ type PollInterval func(attempt int) time.Duration
 // error matching ErrInvalidInput if d is not greater than zero.
 func ConstantInterval(d time.Duration) (PollInterval, error) {
 	if d <= 0 {
-		return nil, newInvalidInputError("constant interval must be greater than zero")
+		return nil, invalidInput("constant interval must be greater than zero")
 	}
 	return func(int) time.Duration { return d }, nil
 }
@@ -44,13 +44,13 @@ func ConstantInterval(d time.Duration) (PollInterval, error) {
 func ExponentialInterval(initial, max time.Duration, multiplier float64, freeAttempts int) (PollInterval, error) {
 	switch {
 	case initial <= 0:
-		return nil, newInvalidInputError("initial interval must be greater than zero")
+		return nil, invalidInput("initial interval must be greater than zero")
 	case max < initial:
-		return nil, newInvalidInputError("max interval must not be below the initial interval")
+		return nil, invalidInput("max interval must not be below the initial interval")
 	case math.IsNaN(multiplier) || math.IsInf(multiplier, 0) || multiplier < 1:
-		return nil, newInvalidInputError("multiplier must be a finite number of at least 1")
+		return nil, invalidInput("multiplier must be a finite number of at least 1")
 	case freeAttempts < 0:
-		return nil, newInvalidInputError("free attempts must not be negative")
+		return nil, invalidInput("free attempts must not be negative")
 	}
 	return func(attempt int) time.Duration {
 		if attempt <= freeAttempts {
@@ -86,10 +86,10 @@ type PollOptions struct {
 // ErrInvalidInput if InitialDelay or MaxAttempts is negative.
 func (p PollOptions) withDefaults() (PollOptions, error) {
 	if p.InitialDelay < 0 {
-		return PollOptions{}, newInvalidInputError("poll initial delay must not be negative")
+		return PollOptions{}, invalidInput("poll initial delay must not be negative")
 	}
 	if p.MaxAttempts < 0 {
-		return PollOptions{}, newInvalidInputError("poll max attempts must not be negative")
+		return PollOptions{}, invalidInput("poll max attempts must not be negative")
 	}
 	if p.InitialDelay == 0 {
 		p.InitialDelay = DefaultPollInitialDelay

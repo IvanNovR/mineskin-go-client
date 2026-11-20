@@ -2,6 +2,7 @@ package mineskin
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -318,7 +319,7 @@ func TestUnexpectedResponseErrorUnwrapAndAs(t *testing.T) {
 		t.Error("200 must not be retryable")
 	}
 	var target *UnexpectedResponseError
-	wrapped := wrapClientError("outer", e)
+	wrapped := fmt.Errorf("mineskin: outer: %w", e)
 	if !errors.As(wrapped, &target) || target != e {
 		t.Error("errors.As must find the UnexpectedResponseError through a wrapper")
 	}

@@ -92,8 +92,9 @@ func TestDoNilContextIsInvalidInput(t *testing.T) {
 	c := newTestClient(t, srv.URL)
 	var nilCtx context.Context
 	_, err := c.do(nilCtx, http.MethodGet, "/v2/x", nil)
-	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("err = %v, want ErrInvalidInput", err)
+	var build *transport.BuildError
+	if !errors.As(err, &build) {
+		t.Fatalf("err = %v, want *transport.BuildError", err)
 	}
 	if hits.Load() != 0 {
 		t.Error("a request was sent for a nil context")
@@ -103,8 +104,13 @@ func TestDoNilContextIsInvalidInput(t *testing.T) {
 func TestDoInvalidPathIsInvalidInput(t *testing.T) {
 	c := newTestClient(t, "http://example.invalid")
 	_, err := c.do(context.Background(), http.MethodGet, "/v2/\x7f", nil)
+	var build *transport.BuildError
+	if !errors.As(err, &build) {
+		t.Fatalf("err = %v, want *transport.BuildError", err)
+	}
+	_, err = c.get(context.Background(), "/v2/\x7f", noopDecoder)
 	if !errors.Is(err, ErrInvalidInput) {
-		t.Fatalf("err = %v, want ErrInvalidInput", err)
+		t.Fatalf("get err = %v, want ErrInvalidInput", err)
 	}
 }
 
@@ -250,7 +256,7 @@ func TestTransportErrorsDoNotLeakAPIKey(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			opts := append([]Option{WithAPIKey(testAPIKey), WithLogger(captureLogger(&logs))}, tt.opts...)
 			c := newTestClient(t, closedURL, opts...)
-			_, err := c.do(context.Background(), http.MethodGet, "/v2/skins/abc", nil)
+			_, err := c.get(context.Background(), "/v2/skins/abc", noopDecoder)
 			if err == nil {
 				t.Fatalf("err = %v, want a error", err)
 			}

@@ -52,7 +52,7 @@ func TestJobFailedError(t *testing.T) {
 func TestNewSentinelsAreDistinct(t *testing.T) {
 	for name, s := range map[string]error{"ErrMaxAttempts": ErrMaxAttempts, "ErrJobNotCompleted": ErrJobNotCompleted} {
 		t.Run(name, func(t *testing.T) {
-			wrapped := wrapClientError("ctx", s)
+			wrapped := fmt.Errorf("mineskin: ctx: %w", s)
 			if !errors.Is(wrapped, s) {
 				t.Errorf("wrapped %v does not match %v", wrapped, s)
 			}

@@ -48,41 +48,19 @@ func TestAPIErrorAsThroughWrapper(t *testing.T) {
 	}
 }
 
-func TestClientErrorValidation(t *testing.T) {
-	err := newInvalidInputError("id must not be empty")
+func TestInvalidInputError(t *testing.T) {
+	err := invalidInput("id %q must not be empty", "x")
 	if !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("validation error must match ErrInvalidInput")
 	}
 	if errors.Is(err, ErrNotFound) {
 		t.Fatalf("validation error must not match ErrNotFound")
 	}
-	if got := err.Error(); got != "mineskin: id must not be empty" {
-		t.Fatalf("Error() = %q", got)
-	}
-	var ce *clientError
-	if !errors.As(err, &ce) || ce.Unwrap() != nil {
-		t.Fatalf("expected *clientError without cause")
-	}
-}
-
-func TestClientErrorWrapsCause(t *testing.T) {
-	err := wrapClientError("request failed", context.DeadlineExceeded)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("must match context.DeadlineExceeded")
-	}
-	if errors.Is(err, ErrInvalidInput) || errors.Is(err, ErrNotFound) {
-		t.Fatalf("transport error must not match ErrInvalidInput or ErrNotFound")
-	}
-	want := "mineskin: request failed: context deadline exceeded"
-	if got := err.Error(); got != want {
+	if got, want := err.Error(), `mineskin: invalid input: id "x" must not be empty`; got != want {
 		t.Fatalf("Error() = %q, want %q", got, want)
 	}
-}
-
-func TestWrapClientErrorNilCause(t *testing.T) {
-	err := wrapClientError("boom", nil)
-	if got := err.Error(); got != "mineskin: boom" {
-		t.Fatalf("Error() = %q", got)
+	if errors.Unwrap(err) != ErrInvalidInput { //nolint:errorlint // identity: a plain %w wrap
+		t.Fatalf("Unwrap() = %v, want ErrInvalidInput", errors.Unwrap(err))
 	}
 }
 

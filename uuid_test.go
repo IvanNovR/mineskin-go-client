@@ -115,3 +115,36 @@ func TestUUIDTextRoundTrip(t *testing.T) {
 		t.Errorf("UnmarshalText(nope) err = %v", err)
 	}
 }
+
+func TestUUIDIsZero(t *testing.T) {
+	parsed, err := ParseUUID(uuidDashed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		in   UUID
+		want bool
+	}{
+		{"zero value", UUID{}, true},
+		{"parsed nil UUID", mustParseUUID(t, "00000000-0000-0000-0000-000000000000"), true},
+		{"non-zero", parsed, false},
+		{"last byte set", UUID{15: 1}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.in.IsZero(); got != tt.want {
+				t.Errorf("IsZero() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func mustParseUUID(t *testing.T, s string) UUID {
+	t.Helper()
+	u, err := ParseUUID(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
+}

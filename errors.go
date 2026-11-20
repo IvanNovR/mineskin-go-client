@@ -75,39 +75,11 @@ func (e *APIError) Is(target error) bool {
 	return target == ErrNotFound && e.Status == http.StatusNotFound
 }
 
-// clientError describes a failure that happened on the client side: transport
-// problems, response parse failures and input validation. Its message never
-// contains request headers, so it cannot leak an API key.
-type clientError struct {
-	msg          string
-	err          error
-	invalidInput bool
-}
-
-// newInvalidInputError returns a validation error that matches ErrInvalidInput.
-func newInvalidInputError(msg string) error {
-	return &clientError{msg: msg, invalidInput: true}
-}
-
-// wrapClientError returns an error that wraps err, which may be nil.
-func wrapClientError(msg string, err error) error {
-	return &clientError{msg: msg, err: err}
-}
-
-// Error implements the error interface.
-func (e *clientError) Error() string {
-	if e.err == nil {
-		return "mineskin: " + e.msg
-	}
-	return fmt.Sprintf("mineskin: %s: %v", e.msg, e.err)
-}
-
-// Unwrap returns the underlying cause, if any.
-func (e *clientError) Unwrap() error { return e.err }
-
-// Is reports whether target is ErrInvalidInput for validation errors.
-func (e *clientError) Is(target error) bool {
-	return target == ErrInvalidInput && e.invalidInput
+// invalidInput returns an error wrapping ErrInvalidInput with a formatted
+// description. The description never contains the API key or the input that
+// failed validation.
+func invalidInput(format string, args ...any) error {
+	return fmt.Errorf("%w: "+format, append([]any{ErrInvalidInput}, args...)...)
 }
 
 // JobFailedError is returned when a job has the FAILED status. Use errors.As

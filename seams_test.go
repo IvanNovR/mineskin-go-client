@@ -91,7 +91,7 @@ func TestSeamServerDelayAgreesWithRateLimitDecoding(t *testing.T) {
 func TestSeamMapGroupErr(t *testing.T) {
 	const label = "GET /v2/x"
 	boom := errors.New("boom")
-	sent := &clientError{msg: label, err: boom}
+	build := &transport.BuildError{Err: errors.New("bad url")}
 	last := transport.Response{Status: 429, Header: http.Header{}, Body: []byte(`{"success":false}`)}
 
 	tests := []struct {
@@ -102,9 +102,16 @@ func TestSeamMapGroupErr(t *testing.T) {
 		{"throttle closed", throttle.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed) }},
 		{"tuner closed", ratelimit.ErrClosed, func(t *testing.T, got error) { mustIs(t, got, ErrClientClosed) }},
 		{"ctx error is wrapped", context.Canceled, func(t *testing.T, got error) { mustIs(t, got, context.Canceled) }},
-		{"send error passes through", sent, func(t *testing.T, got error) {
-			if got != error(sent) { //nolint:errorlint // identity: no double wrapping
-				t.Errorf("error = %v, want the same *clientError", got)
+		{"send error is wrapped once with the label", boom, func(t *testing.T, got error) {
+			mustIs(t, got, boom)
+			if want := "mineskin: GET /v2/x: boom"; got.Error() != want {
+				t.Errorf("error = %q, want %q", got, want)
+			}
+		}},
+		{"unbuildable request is invalid input", build, func(t *testing.T, got error) {
+			mustIs(t, got, ErrInvalidInput, build.Err)
+			if strings.Count(got.Error(), "mineskin:") != 1 {
+				t.Errorf("error = %q, want one prefix", got)
 			}
 		}},
 		{"gate skip passes through", ratelimit.ErrSkipped, func(t *testing.T, got error) {

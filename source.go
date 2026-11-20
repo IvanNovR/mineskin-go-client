@@ -27,7 +27,7 @@ const (
 
 // newUploadTooLargeError is the error for an upload over maxUploadBytes.
 func newUploadTooLargeError() error {
-	return newInvalidInputError("skin upload exceeds the 1 MiB limit")
+	return invalidInput("skin upload exceeds the 1 MiB limit")
 }
 
 // readUpload reads r up to maxUploadBytes. It reads at most one byte more, so
@@ -103,7 +103,7 @@ func newJSONBody(b jsonBody, opts *GenerateOptions) (*transport.Body, error) {
 	}
 	data, err := json.Marshal(b)
 	if err != nil {
-		return nil, wrapClientError("encode request body", err)
+		return nil, fmt.Errorf("mineskin: encode request body: %w", err)
 	}
 	return &transport.Body{ContentType: jsonContentType, Data: data}, nil
 }
@@ -117,10 +117,10 @@ func FromURL(u string) Source { return urlSource{url: u} }
 func (s urlSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
 	parsed, err := url.Parse(s.url)
 	if err != nil {
-		return nil, newInvalidInputError("invalid skin URL: cannot be parsed")
+		return nil, invalidInput("invalid skin URL: cannot be parsed")
 	}
 	if parsed.Scheme == "" || parsed.Host == "" {
-		return nil, newInvalidInputError("invalid skin URL: scheme and host are required")
+		return nil, invalidInput("invalid skin URL: scheme and host are required")
 	}
 	return newJSONBody(jsonBody{URL: s.url}, opts)
 }
@@ -146,11 +146,11 @@ func FromReader(r io.Reader) Source { return readerSource{r: r} }
 
 func (s readerSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
 	if s.r == nil {
-		return nil, newInvalidInputError("reader source is nil")
+		return nil, invalidInput("reader source is nil")
 	}
 	data, ok, err := readUpload(s.r)
 	if err != nil {
-		return nil, wrapClientError("read skin upload", err)
+		return nil, fmt.Errorf("mineskin: read skin upload: %w", err)
 	}
 	if !ok {
 		return nil, newUploadTooLargeError()
@@ -167,11 +167,11 @@ func FromFile(path string) Source { return fileSource{path: path} }
 
 func (s fileSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
 	if s.path == "" {
-		return nil, newInvalidInputError("file path is empty")
+		return nil, invalidInput("file path is empty")
 	}
 	data, ok, err := readFile(s.path)
 	if err != nil {
-		return nil, wrapClientError("read skin file", err)
+		return nil, fmt.Errorf("mineskin: read skin file: %w", err)
 	}
 	if !ok {
 		return nil, newUploadTooLargeError()
@@ -201,11 +201,11 @@ func FromImage(img image.Image) Source { return imageSource{img: img} }
 
 func (s imageSource) requestBody(opts *GenerateOptions) (*transport.Body, error) {
 	if s.img == nil {
-		return nil, newInvalidInputError("image is nil")
+		return nil, invalidInput("image is nil")
 	}
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, s.img); err != nil {
-		return nil, wrapClientError("encode skin image", err)
+		return nil, fmt.Errorf("mineskin: encode skin image: %w", err)
 	}
 	if buf.Len() > maxUploadBytes {
 		return nil, newUploadTooLargeError()
@@ -220,7 +220,7 @@ func newMultipartBody(data []byte, opts *GenerateOptions) (*transport.Body, erro
 	w := multipart.NewWriter(&buf)
 	for _, f := range opts.formFields() {
 		if err := w.WriteField(f[0], f[1]); err != nil {
-			return nil, wrapClientError("encode upload", err)
+			return nil, fmt.Errorf("mineskin: encode upload: %w", err)
 		}
 	}
 	part, err := w.CreatePart(textproto.MIMEHeader{
@@ -228,13 +228,13 @@ func newMultipartBody(data []byte, opts *GenerateOptions) (*transport.Body, erro
 		"Content-Type":        {uploadContentType},
 	})
 	if err != nil {
-		return nil, wrapClientError("encode upload", err)
+		return nil, fmt.Errorf("mineskin: encode upload: %w", err)
 	}
 	if _, err := part.Write(data); err != nil {
-		return nil, wrapClientError("encode upload", err)
+		return nil, fmt.Errorf("mineskin: encode upload: %w", err)
 	}
 	if err := w.Close(); err != nil {
-		return nil, wrapClientError("encode upload", err)
+		return nil, fmt.Errorf("mineskin: encode upload: %w", err)
 	}
 	return &transport.Body{ContentType: w.FormDataContentType(), Data: buf.Bytes()}, nil
 }

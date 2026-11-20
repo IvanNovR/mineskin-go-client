@@ -2,6 +2,7 @@ package mineskin
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -69,14 +70,14 @@ func handleResponse(raw transport.Response, decodeBody func(obj map[string]json.
 	}
 	meta, err := decodeEnvelope(raw, obj)
 	if err != nil {
-		return ResponseMeta{}, wrapClientError(parseFailureMessage, err)
+		return ResponseMeta{}, fmt.Errorf("mineskin: "+parseFailureMessage+": %w", err)
 	}
 	if !meta.Success {
 		return ResponseMeta{}, newAPIError(meta, obj, raw.Header, raw.Received)
 	}
 	if decodeBody != nil {
 		if err := decodeBody(obj, body); err != nil {
-			return ResponseMeta{}, wrapClientError(parseFailureMessage, err)
+			return ResponseMeta{}, fmt.Errorf("mineskin: "+parseFailureMessage+": %w", err)
 		}
 	}
 	return meta, nil

@@ -3,6 +3,7 @@ package mineskin
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // Close releases the client's resources and always returns nil. It is safe to
@@ -59,7 +60,7 @@ func (c *Client) requestContext(ctx context.Context) (context.Context, context.C
 // because Close cancelled merged while the caller's own ctx is still live.
 func closedOrSame(ctx, merged context.Context, label string, err error) error {
 	if ctx.Err() == nil && errors.Is(context.Cause(merged), ErrClientClosed) {
-		return wrapClientError(label, ErrClientClosed)
+		return fmt.Errorf("mineskin: %s: %w", label, ErrClientClosed)
 	}
 	return err
 }

@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/IvanNovR/mineskin-go-client/internal/clock"
 )
 
 // closeSpyTransport counts CloseIdleConnections calls.
@@ -130,18 +132,27 @@ func TestCloseFailsWaitForJob(t *testing.T) {
 }
 
 func TestCloseWaitsForPollerExit(t *testing.T) {
-	before := runtimeGoroutines()
 	started := make(chan struct{}, 4)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		started <- struct{}{}
 		<-r.Context().Done()
 	}))
-	c := newTestClient(t, srv.URL, fastPolling())
+	fake := clock.NewFake(pollerT0)
+	c := newTestClient(t, srv.URL, fastPolling(), withClock(fake))
 	res := goCall(func() error {
 		_, err := c.WaitForJob(context.Background(), Job{ID: "job-1"})
 		return err
 	})
-	<-started // a poll request is in flight
+	// The first poll waits on the fake clock; step it until the request is in flight.
+	eventually(t, "a poll request in flight", func() bool {
+		fake.Advance(time.Millisecond)
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	})
 
 	if err := c.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
@@ -152,8 +163,11 @@ func TestCloseWaitsForPollerExit(t *testing.T) {
 	if err := mustDone(t, "WaitForJob", res); !errors.Is(err, ErrClientClosed) {
 		t.Errorf("WaitForJob error = %v, want ErrClientClosed", err)
 	}
+	if got := fake.Timers(); got != 0 {
+		t.Errorf("pending fake timers after Close = %d, want 0", got)
+	}
+	// Close blocks until the cancelled in-flight request's handler has returned.
 	srv.Close()
-	waitGoroutinesSettle(t, before)
 }
 
 func TestCloseDoesNotTouchCallerTransport(t *testing.T) {

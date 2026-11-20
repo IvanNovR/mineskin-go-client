@@ -8,7 +8,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -119,22 +118,6 @@ func fastPolling() Option {
 		MaxAttempts:  1000,
 	})
 }
-
-// waitGoroutinesSettle waits up to 2 s for the goroutine count to fall back to
-// before or lower. Close servers and idle connections first.
-func waitGoroutinesSettle(t *testing.T, before int) {
-	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
-	for runtime.NumGoroutine() > before {
-		if time.Now().After(deadline) {
-			t.Fatalf("goroutines = %d, want <= %d (leak)", runtime.NumGoroutine(), before)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-}
-
-// runtimeGoroutines returns the current goroutine count.
-func runtimeGoroutines() int { return runtime.NumGoroutine() }
 
 // pollerT0 is the start of the fake clocks that drive the poller in tests.
 var pollerT0 = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

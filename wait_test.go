@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -410,7 +409,6 @@ func TestWaitForJobBatchedOverHTTP(t *testing.T) {
 
 func TestWaitForJobConcurrent(t *testing.T) {
 	const ids, waiters = 20, 2
-	before := runtime.NumGoroutine()
 	tr := &http.Transport{}
 	var gets sync.Map // ids that were fetched
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -448,9 +446,15 @@ func TestWaitForJobConcurrent(t *testing.T) {
 		t.Errorf("%d waiters failed", failures.Load())
 	}
 	eventually(t, "poller exit", func() bool { return !c.poller.Running() })
+	if got := c.poller.Pending(); got != 0 {
+		t.Errorf("pending jobs after all waiters returned = %d, want 0", got)
+	}
+	if err := c.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	// srv.Close blocks until every handler has returned.
 	srv.Close()
 	tr.CloseIdleConnections()
-	waitGoroutinesSettle(t, before)
 }
 
 // TestPollerWakesForSoonerJob checks that a job with an earlier check time

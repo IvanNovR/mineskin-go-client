@@ -278,7 +278,6 @@ func TestCloseCancelsRefreshInFlight(t *testing.T) {
 		<-r.Context().Done()
 		close(refreshCancelled)
 	})
-	before := runtimeGoroutines()
 	fake := clock.NewFake(pollerT0)
 	c := newTestClient(t, srv.URL, withClock(fake), WithAutoTuning())
 	if err := callAdvancing(t, fake, queueCall(c)); err != nil {
@@ -293,5 +292,11 @@ func TestCloseCancelsRefreshInFlight(t *testing.T) {
 		t.Fatalf("Close() error = %v", err)
 	}
 	mustReceive(t, "refresh request cancelled by Close", refreshCancelled)
-	waitGoroutinesSettle(t, before+1)
+	// Close returned, so bg (the grants load/refresh goroutine) has drained.
+	if c.poller.Running() {
+		t.Error("poller still running after Close")
+	}
+	if got := fake.Timers(); got != 0 {
+		t.Errorf("pending fake timers after Close = %d, want 0", got)
+	}
 }

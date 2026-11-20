@@ -115,7 +115,7 @@ func parseMultipart(t *testing.T, b *transport.Body) []multipartPart {
 func fastPolling() Option {
 	return WithJobPolling(PollOptions{
 		InitialDelay: time.Millisecond,
-		Interval:     func(int) time.Duration { return time.Millisecond },
+		Interval:     PollIntervalFunc(func(int) time.Duration { return time.Millisecond }),
 		MaxAttempts:  1000,
 	})
 }

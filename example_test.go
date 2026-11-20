@@ -151,3 +151,19 @@ func ExampleWithRateLimitRetries() {
 	fmt.Println(skin.Skin.Name, calls.Load())
 	// Output: Steve 2
 }
+
+func ExampleBackoff() {
+	backoff := mineskin.Backoff{
+		Initial: 200 * time.Millisecond, Max: 2 * time.Second,
+		Multiplier: 2.0, FreeAttempts: 3,
+	}
+	for _, attempt := range []int{1, 3, 4, 5, 7} {
+		fmt.Println(attempt, backoff.Wait(attempt))
+	}
+	// Output:
+	// 1 200ms
+	// 3 200ms
+	// 4 400ms
+	// 5 800ms
+	// 7 2s
+}

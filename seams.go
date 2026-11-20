@@ -183,7 +183,7 @@ func jobState(j Job) poll.State {
 
 // toPollOptions maps the resolved public polling options to the neutral ones.
 func toPollOptions(o PollOptions) poll.Options {
-	return poll.Options{InitialDelay: o.InitialDelay, Interval: o.Interval, MaxAttempts: o.MaxAttempts, UseETA: o.UseETA}
+	return poll.Options{InitialDelay: o.InitialDelay, Interval: o.Interval.Wait, MaxAttempts: o.MaxAttempts, UseETA: o.UseETA}
 }
 
 // mapPollErr turns the errors of internal/poll into the public contract: an

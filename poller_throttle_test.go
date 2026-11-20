@@ -70,7 +70,7 @@ func TestPollerMaxAttemptsIgnoresThrottleWait(t *testing.T) {
 		WithGetThrottle(Throttle{Interval: time.Nanosecond, Concurrency: 1}),
 		WithJobPolling(PollOptions{
 			InitialDelay: time.Millisecond, MaxAttempts: 2,
-			Interval: func(int) time.Duration { return time.Millisecond },
+			Interval: PollIntervalFunc(func(int) time.Duration { return time.Millisecond }),
 		}))
 	t.Cleanup(func() { _ = c.Close() })
 

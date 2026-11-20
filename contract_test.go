@@ -312,7 +312,7 @@ func closeWaitingCase() contractCase {
 
 // pollOnce is a fast polling configuration with the given interval function.
 func pollOnce(attempts int, interval func(int) time.Duration) Option {
-	return WithJobPolling(PollOptions{InitialDelay: time.Millisecond, MaxAttempts: attempts, Interval: interval})
+	return WithJobPolling(PollOptions{InitialDelay: time.Millisecond, MaxAttempts: attempts, Interval: PollIntervalFunc(interval)})
 }
 
 func waitFor(t *testing.T, srvBody string, opt Option) error {

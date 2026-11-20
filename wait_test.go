@@ -106,7 +106,7 @@ func TestWaitForJobMaxAttempts(t *testing.T) {
 	})
 	c := newTestClient(t, srv.URL, WithJobPolling(PollOptions{
 		InitialDelay: time.Millisecond, MaxAttempts: 3,
-		Interval: func(int) time.Duration { return time.Millisecond },
+		Interval: PollIntervalFunc(func(int) time.Duration { return time.Millisecond }),
 	}))
 
 	_, err := c.WaitForJob(waitCtx(t), Job{ID: "j1"})
@@ -385,7 +385,7 @@ func TestWaitForJobBatchedOverHTTP(t *testing.T) {
 	fake := clock.NewFake(pollerT0)
 	c := newTestClient(t, srv.URL, withClock(fake), WithJobPolling(PollOptions{
 		InitialDelay: 300 * time.Millisecond,
-		Interval:     func(int) time.Duration { return time.Millisecond },
+		Interval:     PollIntervalFunc(func(int) time.Duration { return time.Millisecond }),
 	}))
 
 	var wg sync.WaitGroup

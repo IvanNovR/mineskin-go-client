@@ -1,0 +1,258 @@
+# Release: every push to main runs the full CI (ci.yml via workflow_call) on the
+# exact pushed commit, computes the next version with svu (.svu.yml keeps v0),
+# creates the tag and the GitHub Release with generated notes, and prompts the
+# Go module proxy. The proxy job lives here because tags created with
+# GITHUB_TOKEN trigger no other workflow.
+#
+# Manual recovery (workflow_dispatch on main, see RELEASING.md):
+#   mode=retry       create the missing tag/Release for a main commit; an
+#                    explicit tag is only an assertion and must equal the
+#                    version svu computes (or the tag already on the commit).
+#   mode=proxy-only  prompt the proxy again for an existing tag.
+#
+# Hardening: actions are pinned to full commit SHAs, the workflow token has no
+# permissions by default and only the release job may write contents,
+# credentials are not persisted, and inputs reach scripts only through env:,
+# never through ${{ }} inside run:. Jobs that write are skipped unless the
+# repository variable RELEASE_AUTOMATION_READY is 'true' (CI still runs).
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: retry = create a missing tag/Release; proxy-only = prompt the Go proxy again
+        type: choice
+        options: [retry, proxy-only]
+        required: true
+        default: retry
+      tag:
+        description: Version tag (vX.Y.Z); optional for retry, required for proxy-only
+        type: string
+        required: false
+        default: ""
+      sha:
+        description: Full commit SHA on main for retry (default the head of main)
+        type: string
+        required: false
+        default: ""
+
+permissions: {}
+
+env:
+  GOTOOLCHAIN: local
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.resolve.outputs.mode }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve mode, commit and tag
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PUSH_SHA: ${{ github.sha }}
+          MODE_IN: ${{ inputs.mode }}
+          TAG_IN: ${{ inputs.tag }}
+          SHA_IN: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          tag_re='^v0\.[0-9]+\.[0-9]+$'
+          sha_re='^[0-9a-f]{40}$'
+
+          [ "$REF" = "refs/heads/main" ] || fail "Release runs only on main."
+          tag=""
+          case "$EVENT" in
+            push)
+              mode=push
+              sha=$PUSH_SHA
+              ;;
+            workflow_dispatch)
+              case "$MODE_IN" in
+                retry|proxy-only) mode=$MODE_IN ;;
+                *) fail "Input mode must be 'retry' or 'proxy-only'." ;;
+              esac
+              if [ -n "$TAG_IN" ]; then
+                [[ $TAG_IN =~ $tag_re ]] || fail "Input tag must match ${tag_re}."
+                tag=$TAG_IN
+              fi
+              if [ -n "$SHA_IN" ]; then
+                [[ $SHA_IN =~ $sha_re ]] || fail "Input sha must be a full 40-character lowercase commit SHA."
+              fi
+              if [ "$mode" = proxy-only ]; then
+                [ -n "$tag" ] || fail "Input tag is required for proxy-only."
+                sha=$(git rev-parse --verify --quiet "refs/tags/${tag}^{commit}") || fail "Tag ${tag} does not exist."
+                if [ -n "$SHA_IN" ] && [ "$SHA_IN" != "$sha" ]; then
+                  fail "Tag ${tag} points at ${sha}, not ${SHA_IN}."
+                fi
+              else
+                sha=${SHA_IN:-$(git rev-parse origin/main)}
+              fi
+              ;;
+            *)
+              fail "Unsupported event ${EVENT}."
+              ;;
+          esac
+
+          [[ $sha =~ $sha_re ]] || fail "Resolved commit ${sha} is not a full SHA."
+          git cat-file -e "${sha}^{commit}" 2>/dev/null || fail "Commit ${sha} does not exist."
+          git merge-base --is-ancestor "$sha" origin/main || fail "Commit ${sha} is not on main."
+
+          {
+            echo "mode=${mode}"
+            echo "sha=${sha}"
+            echo "tag=${tag}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Mode ${mode}, commit ${sha}${tag:+, tag ${tag}}."
+
+  ci:
+    needs: resolve
+    if: needs.resolve.outputs.mode != 'proxy-only'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.resolve.outputs.sha }}
+
+  release:
+    needs: [resolve, ci]
+    if: vars.RELEASE_AUTOMATION_READY == 'true' && needs.resolve.outputs.mode != 'proxy-only'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Install svu
+        # Keep in sync with SVU_VERSION in the Makefile.
+        run: go install github.com/caarlos0/svu/v3@v3.4.4
+      - name: Tag and release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MODE: ${{ needs.resolve.outputs.mode }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          TAG_IN: ${{ needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          tag_re='^v0\.[0-9]+\.[0-9]+$'
+
+          [ "$(git rev-parse HEAD)" = "$SHA" ] || fail "Checkout is not at ${SHA}."
+          cur=$(svu current)
+          next=$(svu next)
+          echo "svu current ${cur}, next ${next}."
+          [[ $next =~ $tag_re ]] || fail "svu computed ${next}, which is not a v0.x.y version; refusing to release."
+
+          # A version tag that already points at this commit (an earlier run
+          # created the tag but not the Release).
+          on_sha=""
+          while IFS= read -r t; do
+            if [[ $t =~ $tag_re ]]; then on_sha=$t; break; fi
+          done < <(git tag --points-at "$SHA" --sort=-version:refname)
+
+          if [ -n "$on_sha" ]; then
+            tag=$on_sha
+          elif [ "$next" = "$cur" ]; then
+            [ -z "$TAG_IN" ] || fail "Retry asserted ${TAG_IN}, but there are no releasable changes since ${cur}."
+            echo "No releasable changes since ${cur}; nothing to tag." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "tag=" >> "$GITHUB_OUTPUT"
+            exit 0
+          else
+            tag=$next
+            if git rev-parse --verify --quiet "refs/tags/${tag}" >/dev/null; then
+              fail "Tag ${tag} already exists on another commit; refusing to move it."
+            fi
+          fi
+
+          if [ -n "$TAG_IN" ] && [ "$TAG_IN" != "$tag" ]; then
+            fail "Retry asserted ${TAG_IN}, but the version for ${SHA} is ${tag}."
+          fi
+
+          if gh release view "$tag" --json tagName >/dev/null 2>&1; then
+            echo "Release ${tag} already exists; checking it."
+          else
+            args=(release create "$tag" --target "$SHA" --generate-notes)
+            if [ -n "$on_sha" ]; then args+=(--verify-tag); fi
+            gh "${args[@]}"
+          fi
+
+          # Post-release checks.
+          state=$(gh release view "$tag" --json tagName,isDraft,isPrerelease \
+            --jq '[.tagName, (.isDraft|tostring), (.isPrerelease|tostring)] | join(" ")')
+          [ "$state" = "${tag} false false" ] || fail "Release ${tag} is not a published, non-prerelease release: ${state}."
+          tag_sha=$(gh api "repos/${GH_REPO}/commits/${tag}" --jq .sha)
+          [ "$tag_sha" = "$SHA" ] || fail "Tag ${tag} points at ${tag_sha}, expected ${SHA}."
+          git merge-base --is-ancestor "$tag_sha" origin/main || fail "Tag ${tag} is not on main."
+
+          echo "Released ${tag} at ${SHA} (${MODE})." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+  proxy:
+    needs: [resolve, release]
+    if: ${{ !cancelled() && vars.RELEASE_AUTOMATION_READY == 'true' && (needs.release.outputs.tag != '' || needs.resolve.outputs.mode == 'proxy-only') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions: {}
+    steps:
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          cache: false
+      - name: Prompt the Go module proxy
+        env:
+          MODULE: github.com/IvanNovR/mineskin-go-client
+          TAG: ${{ needs.release.outputs.tag || needs.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          fail() { echo "::error::$1"; exit 1; }
+          [[ $TAG =~ ^v0\.[0-9]+\.[0-9]+$ ]] || fail "Tag '${TAG}' is not a v0.x.y version."
+
+          cd "$(mktemp -d)"
+          attempt=0
+          for delay in 10 30 60 120 300 0; do
+            attempt=$((attempt + 1))
+            if GOPROXY=https://proxy.golang.org GOFLAGS=-mod=mod go list -m -json "${MODULE}@${TAG}"; then
+              {
+                echo "${MODULE}@${TAG} is on the Go module proxy (attempt ${attempt})."
+                echo ""
+                echo "- https://proxy.golang.org/${MODULE}/@v/${TAG}.info"
+                echo "- https://pkg.go.dev/${MODULE}@${TAG}"
+              } | tee -a "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            if [ "$delay" -gt 0 ]; then
+              echo "Attempt ${attempt} failed; retrying in ${delay}s."
+              sleep "$delay"
+            fi
+          done
+          fail "The Go module proxy did not return ${MODULE}@${TAG} after ${attempt} attempts. The release stays; run the release workflow with mode=proxy-only and tag=${TAG}."

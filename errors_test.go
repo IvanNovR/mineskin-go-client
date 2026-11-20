@@ -96,7 +96,7 @@ func TestResponseMetaZeroValue(t *testing.T) {
 // values with no umbrella matching: no custom Is method, no shared target.
 func TestSentinelsArePlainErrors(t *testing.T) {
 	for name, s := range map[string]error{
-		"ErrMaxAttempts": ErrMaxAttempts, "ErrJobNotCompleted": ErrJobNotCompleted, "ErrClientClosed": ErrClientClosed,
+		"ErrMaxAttempts": ErrMaxAttempts, "ErrClientClosed": ErrClientClosed,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, ok := s.(interface{ Is(error) bool }); ok {

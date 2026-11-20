@@ -26,8 +26,8 @@ import (
 //
 // When more than a few jobs are pending, the poller checks them with one list
 // request. A job reported done by the list is completed with whatever the
-// follow-up GET returns, so a completed job may carry no result yet and
-// JobSkin on it may return ErrJobNotCompleted.
+// follow-up GET returns, so a completed job may carry no result yet: its
+// Job.Result is then the zero UUID, which GetSkin rejects.
 func (c *Client) WaitForJob(ctx context.Context, job Job) (*JobResponse, error) {
 	if ctx == nil {
 		return nil, invalidInput("context is nil")

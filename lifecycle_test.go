@@ -38,17 +38,14 @@ func TestCallsAfterCloseFailImmediately(t *testing.T) {
 	}
 	ctx := context.Background()
 	src := FromURL("https://example.com/s.png")
-	done := &JobResponse{Job: Job{ID: "job-1", Status: JobStatusCompleted, Result: UUID{1}}}
 	calls := map[string]func() error{
-		"GetSkin":       func() error { _, err := c.GetSkin(ctx, testSkinID); return err },
-		"GetSkinByUUID": func() error { _, err := c.GetSkinByUUID(ctx, UUID{1}); return err },
-		"GetUser":       func() error { _, err := c.GetUser(ctx); return err },
-		"GetJob":        func() error { _, err := c.GetJob(ctx, "job-1"); return err },
-		"ListJobs":      func() error { _, err := c.ListJobs(ctx); return err },
-		"Queue":         func() error { _, err := c.Queue(ctx, src, nil); return err },
-		"Generate":      func() error { _, err := c.Generate(ctx, src, nil); return err },
-		"WaitForJob":    func() error { _, err := c.WaitForJob(ctx, Job{ID: "job-1"}); return err },
-		"JobSkin":       func() error { _, err := c.JobSkin(ctx, done); return err },
+		"GetSkin":    func() error { _, err := c.GetSkin(ctx, testSkinUUID); return err },
+		"GetUser":    func() error { _, err := c.GetUser(ctx); return err },
+		"GetJob":     func() error { _, err := c.GetJob(ctx, "job-1"); return err },
+		"ListJobs":   func() error { _, err := c.ListJobs(ctx); return err },
+		"Queue":      func() error { _, err := c.Queue(ctx, src, nil); return err },
+		"Generate":   func() error { _, err := c.Generate(ctx, src, nil); return err },
+		"WaitForJob": func() error { _, err := c.WaitForJob(ctx, Job{ID: "job-1"}); return err },
 	}
 	for name, call := range calls {
 		err := call()

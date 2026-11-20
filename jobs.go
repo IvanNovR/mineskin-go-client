@@ -104,7 +104,9 @@ type JobResponse struct {
 	Meta ResponseMeta
 	// Job is the requested job.
 	Job Job
-	// Skin is the resulting skin when the response embeds it, or nil.
+	// Skin is the resulting skin when the response embeds it, or nil. When it
+	// is nil, fetch the skin of a completed job with
+	// c.GetSkin(ctx, resp.Job.Result).
 	Skin *Skin
 	// errs are the errors the API sent with the response; they become the
 	// Errors of the *JobFailedError of a failed job.
@@ -181,32 +183,4 @@ func validateJobID(id string) error {
 		return invalidInput("job id is empty or a dot segment")
 	}
 	return nil
-}
-
-// JobSkin returns the skin of a job. A failed job gives a *JobFailedError
-// without a request, even if the response embeds a skin. An embedded skin is
-// returned without a request; otherwise the skin named by the job result is
-// fetched with GetSkin and its errors are returned unchanged. A job without a
-// result gives ErrJobNotCompleted, and a nil response gives ErrInvalidInput.
-func (c *Client) JobSkin(ctx context.Context, r *JobResponse) (*Skin, error) {
-	if err := c.checkOpen(); err != nil {
-		return nil, err
-	}
-	if r == nil {
-		return nil, invalidInput("job response is nil")
-	}
-	if r.Job.Status == JobStatusFailed {
-		return nil, newJobFailedError(r)
-	}
-	if r.Skin != nil {
-		return r.Skin, nil
-	}
-	if r.Job.Result == (UUID{}) {
-		return nil, ErrJobNotCompleted
-	}
-	resp, err := c.GetSkin(ctx, r.Job.Result.String())
-	if err != nil {
-		return nil, err
-	}
-	return &resp.Skin, nil
 }

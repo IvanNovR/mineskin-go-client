@@ -58,7 +58,7 @@ func (s *seqServer) hits() int {
 }
 
 func skinCall(ctx context.Context, c *Client) func() error {
-	return func() error { _, err := c.GetSkin(ctx, testSkinID); return err }
+	return func() error { _, err := c.GetSkin(ctx, testSkinUUID); return err }
 }
 
 func TestRetryDefaultConstant(t *testing.T) {

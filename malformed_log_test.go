@@ -107,7 +107,7 @@ func TestAPIErrorMalformedDataAndRetryAfterAreLoggedOnce(t *testing.T) {
 	})
 	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
 
-	_, err := c.GetSkin(context.Background(), testSkinID)
+	_, err := c.GetSkin(context.Background(), testSkinUUID)
 
 	apiErr := asAPIError(t, err)
 	if apiErr.Code != "c" || apiErr.RetryAfter != 0 || apiErr.RateLimit != (RateLimit{}) || apiErr.Usage != (Usage{}) {
@@ -124,7 +124,7 @@ func TestAPIErrorGarbledRetryAfterIsLogged(t *testing.T) {
 	})
 	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)), WithRateLimitRetries(0))
 
-	_, err := c.GetSkin(context.Background(), testSkinID)
+	_, err := c.GetSkin(context.Background(), testSkinUUID)
 
 	if apiErr := asAPIError(t, err); apiErr.RetryAfter != 0 {
 		t.Errorf("RetryAfter = %v, want 0", apiErr.RetryAfter)
@@ -142,7 +142,7 @@ func TestAPIErrorValidOrAbsentRetryAfterIsNotLogged(t *testing.T) {
 			writeJSON(400, `{"success":false}`)(w, r)
 		})
 		c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
-		if _, err := c.GetSkin(context.Background(), testSkinID); err == nil {
+		if _, err := c.GetSkin(context.Background(), testSkinUUID); err == nil {
 			t.Fatal("GetSkin() error = nil, want an API error")
 		}
 	}
@@ -159,7 +159,7 @@ func TestUnexpectedResponseGarbledRetryAfterIsLogged(t *testing.T) {
 	})
 	c := newTestClient(t, srv.URL, WithLogger(captureLogger(&buf)))
 
-	_, err := c.GetSkin(context.Background(), testSkinID)
+	_, err := c.GetSkin(context.Background(), testSkinUUID)
 
 	var ue *UnexpectedResponseError
 	if !asError(err, &ue) || ue.RetryAfter != 0 {

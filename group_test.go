@@ -153,7 +153,7 @@ func generateCall(c *Client) func() error {
 func getCalls(c *Client) map[string]func() error {
 	ctx := context.Background()
 	return map[string]func() error{
-		keySkin: func() error { _, err := c.GetSkin(ctx, testSkinID); return err },
+		keySkin: func() error { _, err := c.GetSkin(ctx, testSkinUUID); return err },
 		keyUser: func() error { _, err := c.GetUser(ctx); return err },
 		keyJob:  func() error { _, err := c.GetJob(ctx, "job-1"); return err },
 		keyList: func() error { _, err := c.ListJobs(ctx); return err },
@@ -287,7 +287,7 @@ func TestQueuedCallReturnsCtxErr(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	cancelled := goCall(func() error { _, err := c.GetSkin(ctx, testSkinID); return err })
+	cancelled := goCall(func() error { _, err := c.GetSkin(ctx, testSkinUUID); return err })
 	waitWaiting(t, c.getGroup, 1)
 	other := goCall(getCalls(c)[keyUser])
 	waitWaiting(t, c.getGroup, 2)
@@ -339,7 +339,7 @@ func TestReleaseOnTransportError(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
 	defer cancel()
 	for i := range 3 {
-		if _, err := c.GetSkin(ctx, testSkinID); !errors.Is(err, boom) {
+		if _, err := c.GetSkin(ctx, testSkinUUID); !errors.Is(err, boom) {
 			t.Fatalf("call %d error = %v, want the transport error", i, err)
 		}
 	}

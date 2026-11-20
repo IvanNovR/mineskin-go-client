@@ -34,10 +34,6 @@ var (
 	// the maximum number of attempts.
 	ErrMaxAttempts = errors.New("mineskin: job polling reached max attempts")
 
-	// ErrJobNotCompleted matches the error returned by JobSkin when the job has
-	// no result yet.
-	ErrJobNotCompleted = errors.New("mineskin: job is not completed")
-
 	// ErrClientClosed matches the error returned by every call made after
 	// Client.Close, and by calls that Close interrupts while they are queued,
 	// waiting for a job or in flight.

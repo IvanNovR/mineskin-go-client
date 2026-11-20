@@ -15,6 +15,8 @@ import (
 
 const exampleSkinID = "744c993e-0e8a-4f0b-9b6a-2f3c7a1b5d11"
 
+var exampleSkinUUID, _ = mineskin.ParseUUID(exampleSkinID)
+
 // exampleServer fakes the MineSkin API so the examples run without a network.
 func exampleServer() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,11 +50,11 @@ func ExampleClient_WaitForJob() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	skin, err := c.JobSkin(ctx, done)
+	res, err := c.GetSkin(ctx, done.Job.Result)
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Println(skin.Name)
+	fmt.Println(res.Skin.Name)
 	// Output: Steve
 }
 
@@ -121,7 +123,7 @@ func ExampleClient_Close() {
 		log.Fatal(err)
 	}
 	// Calls after Close fail immediately.
-	_, err = c.GetSkin(context.Background(), exampleSkinID)
+	_, err = c.GetSkin(context.Background(), exampleSkinUUID)
 	fmt.Println(errors.Is(err, mineskin.ErrClientClosed))
 	// Output: true
 }
@@ -144,7 +146,7 @@ func ExampleWithRateLimitRetries() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	skin, err := c.GetSkin(context.Background(), exampleSkinID)
+	skin, err := c.GetSkin(context.Background(), exampleSkinUUID)
 	if err != nil {
 		log.Fatal(err)
 	}

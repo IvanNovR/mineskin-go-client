@@ -158,33 +158,23 @@ type SkinResponse struct {
 	Skin Skin
 }
 
-// GetSkin fetches a skin by its MineSkin skin id. The id must be a UUID in
-// dashed or undashed form (any letter case); it is a MineSkin skin id, not a
-// player UUID. An invalid id, including an empty one, fails with
-// ErrInvalidInput without sending a request. The request always uses the
-// canonical dashed lower-case form.
-func (c *Client) GetSkin(ctx context.Context, id string) (*SkinResponse, error) {
+// GetSkin fetches a skin by its MineSkin skin id. The id is a MineSkin skin
+// id, not a player UUID; use ParseUUID to convert a string, and
+// resp.Job.Result for the skin of a finished job. The zero UUID fails with
+// ErrInvalidInput without sending a request. The request uses the canonical
+// dashed lower-case form.
+func (c *Client) GetSkin(ctx context.Context, id UUID) (*SkinResponse, error) {
 	if err := c.checkOpen(); err != nil {
 		return nil, err
 	}
-	parsed, err := ParseUUID(id)
-	if err != nil {
-		return nil, err
+	if id.IsZero() {
+		return nil, invalidInput("skin id is the zero UUID")
 	}
-	wire, meta, err := getResponse[skinWire](ctx, c, skinsPathPrefix+url.PathEscape(parsed.String()), nil)
+	wire, meta, err := getResponse[skinWire](ctx, c, skinsPathPrefix+url.PathEscape(id.String()), nil)
 	if err != nil {
 		return nil, err
 	}
 	return &SkinResponse{Meta: meta, Skin: wire.Skin}, nil
-}
-
-// GetSkinByUUID fetches a skin by its MineSkin skin id, sent in dashed form.
-// The UUID is a MineSkin skin id, not a player UUID.
-func (c *Client) GetSkinByUUID(ctx context.Context, id UUID) (*SkinResponse, error) {
-	if err := c.checkOpen(); err != nil {
-		return nil, err
-	}
-	return c.GetSkin(ctx, id.String())
 }
 
 // skinWire is the wire shape of a skin lookup. An absent or null skin leaves

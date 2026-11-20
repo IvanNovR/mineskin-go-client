@@ -90,7 +90,7 @@ func apiNotFoundCase() contractCase {
 		name: "API 404",
 		run: func(t *testing.T) error {
 			srv := newTestServer(t, writeJSON(http.StatusNotFound, notFoundJSON))
-			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinID)
+			_, err := newTestClient(t, srv.URL).GetSkin(context.Background(), testSkinUUID)
 			return err
 		},
 		is:    []error{ErrNotFound},
@@ -200,7 +200,7 @@ func ctxCancelledQueuedCase() contractCase {
 			held := goCall(getCalls(c)[keySkin])
 			waitCount(t, srv, keySkin, 1)
 			ctx, cancel := context.WithCancel(context.Background())
-			res := goCall(func() error { _, err := c.GetSkin(ctx, testSkinID); return err })
+			res := goCall(func() error { _, err := c.GetSkin(ctx, testSkinUUID); return err })
 			cancel()
 			err := mustDone(t, "queued GetSkin", res)
 			srv.open(keySkin)
@@ -235,7 +235,7 @@ func ctxCancelledDuring429RetryCase() contractCase {
 				}, nil
 			})
 			c := newTestClient(t, "http://127.0.0.1:1", WithTransport(rt))
-			_, err := c.GetSkin(ctx, testSkinID)
+			_, err := c.GetSkin(ctx, testSkinUUID)
 			if got := sends.Load(); got != 2 {
 				t.Errorf("sends = %d, want 2", got)
 			}

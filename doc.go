@@ -8,14 +8,18 @@
 // Create a Client with NewClient and functional options (WithAPIKey,
 // WithBaseURL, WithUserAgent, WithTimeout, WithTransport, WithLogger,
 // WithJobPolling, WithGenerateThrottle, WithGetThrottle, WithAutoTuning), then
-// call GetSkin or GetSkinByUUID to fetch a skin by its MineSkin skin id, or
+// call GetSkin to fetch a skin by its MineSkin skin id (a UUID, see ParseUUID), or
 // GetUser to read the user and grants of the API key:
 //
 //	c, err := mineskin.NewClient(mineskin.WithAPIKey(key), mineskin.WithUserAgent("my-app/1.0"))
 //	if err != nil {
 //		// handle error
 //	}
-//	res, err := c.GetSkin(ctx, "c1a1982831874868a37f5be375d38d5b")
+//	id, err := mineskin.ParseUUID("c1a1982831874868a37f5be375d38d5b")
+//	if err != nil {
+//		// handle error
+//	}
+//	res, err := c.GetSkin(ctx, id)
 //
 // Every response has a Meta field (a ResponseMeta) with the HTTP status, API
 // warnings and messages, the breadcrumb and the mineskin-* headers.
@@ -36,13 +40,14 @@
 //	if err != nil {
 //		// handle error, e.g. *JobFailedError or ErrMaxAttempts
 //	}
-//	skin, err := c.JobSkin(ctx, done)
+//	res, err := c.GetSkin(ctx, done.Job.Result) // or done.Skin when it is not nil
 //
 // Queue returns as soon as the job is accepted. WaitForJob polls the job
 // until it is completed or failed; concurrent waits share one batched poller
 // that is configured with WithJobPolling (maximum attempts, intervals and
-// whether to follow the ETA of the job). JobSkin returns the skin of the
-// finished job, or a *JobFailedError. GetJob and ListJobs inspect jobs
+// whether to follow the ETA of the job). The skin of a finished job is
+// done.Skin when the response embeds it, otherwise GetSkin(ctx,
+// done.Job.Result); a failed job is a *JobFailedError. GetJob and ListJobs inspect jobs
 // without waiting.
 //
 // Generate does the same in a single request and returns the skin directly.
@@ -73,7 +78,7 @@
 // default. Requests belong to one of two groups. The generate group holds
 // Queue and Generate and starts at most one request per 200 ms
 // with one in flight. The get group holds
-// GetSkin, GetSkinByUUID, GetUser, GetJob and ListJobs, including the calls
+// GetSkin, GetUser, GetJob and ListJobs, including the calls
 // made while WaitForJob polls, and starts at most one request per 100 ms
 // with five in flight. Queued requests start in FIFO order, and a start
 // needs a free slot, the interval since the previous start and the group's

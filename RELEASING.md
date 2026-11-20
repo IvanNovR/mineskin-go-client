@@ -25,7 +25,7 @@ Never delete or re-tag a published version. Add a `retract vX.Y.Z // reason` dir
 
 These settings are expected on the GitHub repository:
 
-- Branch ruleset "Protect main": pull requests only, required status checks, the release preview check once it exists.
+- Branch ruleset "Protect main": pull requests only, required status checks including `branch-policy` and `release-preview`.
 - Tag ruleset for `v*`: no deletion and no update of tags (creation only by GitHub Actions).
 - Immutable releases enabled.
 - Dependabot alerts and security updates, and private vulnerability reporting enabled.
@@ -35,7 +35,54 @@ These settings are expected on the GitHub repository:
 
 ## Automation
 
-> Placeholder: the automated release flow, the kill switch and the recovery dispatches are documented here once the release workflow is merged.
+`.github/workflows/release.yml` runs on every push to `main`:
+
+1. **resolve** checks that the run is on `main` and that the commit is on `main`.
+2. **ci** runs the full CI (`ci.yml`) on that exact commit.
+3. **release** (only when CI passed) runs [svu](https://github.com/caarlos0/svu) v3.4.4 with `.svu.yml` (`v0: true`) to compute the next version, creates the tag and a GitHub Release with generated notes on that commit (not a draft, not a prerelease), and then checks the Release, that the tag points at the commit, and that the commit is on `main`.
+4. **proxy** asks `proxy.golang.org` for the new version, retrying with backoff for about 9 minutes. If it still fails, the job turns red but the release stays; see "Recovery".
+
+What gets released:
+
+- `fix` raises the patch; `feat` and breaking changes (`!` or a `BREAKING CHANGE:` footer) raise the minor. The workflow refuses any version that is not `v0.x.y`, so it never publishes v1 or later.
+- When nothing since the last tag is a `feat`, `fix` or breaking change (for example only `docs`, `test`, `ci`, `chore` or `perf`), the release job reports "No releasable changes" and ends green. CI still runs.
+- Several `feat`/`fix` commits in one promotion still raise the version only once.
+- svu reads the subject line of every commit since the last tag, including the commits merged from `dev`. It matches `feat:`, `fix:` and `<word>!:` anywhere in a subject, so a subject such as `test: cover prefix: handling` counts as a fix. Keep these words out of the middle of non-releasing subjects.
+
+To see the coming version locally, run `make next-version` on an up-to-date `dev` after `git fetch --tags` (svu needs Go 1.27.3 or later; `go run` downloads that toolchain if needed). The promotion title is not included there; the release preview below includes it.
+
+### Release preview
+
+`release-preview.yml` is a required check on pull requests into `main`. It runs the same svu on the pull request merged into `main`, plus an empty commit that carries the pull request title, and reports "Merging releases vX.Y.Z" or "No release (...)" in the job summary. It fails if the result is not a `v0.x.y` version. For the promotion to v0.1.0 it must say **Merging releases v0.1.0**; if it says anything else, stop and investigate.
+
+### Kill switch
+
+The jobs that write (release and proxy) run only when the repository variable `RELEASE_AUTOMATION_READY` is `true`. With any other value CI still runs on `main`, and nothing is tagged. Turn it off with:
+
+```sh
+gh variable set RELEASE_AUTOMATION_READY --body false
+```
+
+### Recovery
+
+Manual runs need `release.yml` on `main`, so they only work after the first promotion. Always run them on `main`; any other ref is refused.
+
+- **Missing tag or Release** (for example the release job failed after CI passed): run `retry`. It runs CI on the commit again, computes its version and creates whatever is missing; a tag or Release that already exists is checked, never moved or re-created. Without `sha` it uses the head of `main`.
+
+  ```sh
+  gh workflow run release.yml --ref main -f mode=retry
+  gh workflow run release.yml --ref main -f mode=retry -f sha=<full 40-character SHA on main> -f tag=vX.Y.Z
+  ```
+
+  `tag` is optional and only an assertion: the run is refused when it differs from the version svu computes for that commit (or from the tag already on it). A `tag` given when there is nothing to release is refused too; without `tag` that case just ends green.
+
+- **Version not on the Go proxy or pkg.go.dev**: run `proxy-only` for the existing tag. It skips CI and the release job.
+
+  ```sh
+  gh workflow run release.yml --ref main -f mode=proxy-only -f tag=vX.Y.Z
+  ```
+
+- Never delete or re-tag a published version; retract it instead (see "Retracting a version").
 
 ## Live tests
 

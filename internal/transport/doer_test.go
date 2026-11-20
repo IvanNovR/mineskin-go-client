@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -236,8 +237,15 @@ func TestDoTimeoutBoundsTheWholeExchange(t *testing.T) {
 	d.Timeout = 50 * time.Millisecond
 	start := time.Now()
 	_, err := d.Do(context.Background(), http.MethodGet, "/x", nil)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("error = %v, want context.DeadlineExceeded from the body read", err)
+	if !errors.Is(err, context.DeadlineExceeded) || !IsRequestTimeout(err) {
+		t.Fatalf("error = %v, want a request timeout wrapping context.DeadlineExceeded from the body read", err)
+	}
+	var ne net.Error
+	if !errors.As(err, &ne) || !ne.Timeout() {
+		t.Errorf("error = %v, want a net.Error with Timeout() == true", err)
+	}
+	if strings.Contains(err.Error(), "mineskin:") {
+		t.Errorf("error %q has the public prefix", err)
 	}
 	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("took %v, the timeout was not enforced", elapsed)
@@ -293,5 +301,16 @@ func TestDoTimeoutDeadlineOnlyWhenSet(t *testing.T) {
 				t.Errorf("request context has a deadline = %v, want %v", spy.hasDeadline, tt.want)
 			}
 		})
+	}
+}
+
+func TestDoCallerDeadlineIsNotARequestTimeout(t *testing.T) {
+	d := newDoer(t, func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() })
+	d.Timeout = time.Minute
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := d.Do(ctx, http.MethodGet, "/x", nil)
+	if !errors.Is(err, context.DeadlineExceeded) || IsRequestTimeout(err) {
+		t.Fatalf("error = %v, want the caller's deadline and not a request timeout", err)
 	}
 }

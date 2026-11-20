@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -186,14 +187,41 @@ func TestGenerateHonoursTimeout(t *testing.T) {
 	c := newTestClient(t, srv.URL, WithTimeout(80*time.Millisecond))
 	start := time.Now()
 	_, err := c.Generate(context.Background(), FromURL("https://example.com/a.png"), GenerateOptions{})
-	if err == nil {
-		t.Fatal("error = nil, want timeout")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
 	}
-	var netErr interface{ Timeout() bool }
-	if !errors.Is(err, context.DeadlineExceeded) && (!errors.As(err, &netErr) || !netErr.Timeout()) {
-		t.Errorf("error = %v, want deadline exceeded or net timeout", err)
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Errorf("error = %v, want a net.Error with Timeout() == true", err)
+	}
+	if !IsRetryable(err) {
+		t.Error("IsRetryable(per-request timeout) = false, want true")
+	}
+	if got := strings.Count(err.Error(), "mineskin:"); got != 1 {
+		t.Errorf("error %q has %d mineskin: prefixes, want 1", err, got)
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Errorf("took %v", time.Since(start))
+	}
+}
+
+func TestCallerDeadlineIsNotRetryable(t *testing.T) {
+	release := make(chan struct{})
+	srv := newTestServer(t, func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	})
+	t.Cleanup(func() { close(release) })
+	c := newTestClient(t, srv.URL, WithTimeout(time.Minute))
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	_, err := c.Generate(ctx, FromURL("https://example.com/a.png"), GenerateOptions{})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
+	}
+	if IsRetryable(err) {
+		t.Error("IsRetryable(caller ctx deadline) = true, want false")
 	}
 }

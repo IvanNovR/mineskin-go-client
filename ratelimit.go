@@ -44,8 +44,9 @@ type WindowLimit struct {
 	Remaining int
 	// Used is the number of requests used in the window.
 	Used int
-	// Reset is when the window resets. The API sends epoch milliseconds, like
-	// next.absolute.
+	// Reset is when the window resets. The API sends it as a UNIX epoch
+	// timestamp in seconds (the MineSkin V2 OpenAPI LimitInfo.reset), unlike
+	// next.absolute, which is in milliseconds.
 	Reset time.Time
 }
 
@@ -146,6 +147,18 @@ func (d *dropped) time(path string, v json.RawMessage) time.Time {
 	return time.UnixMilli(n)
 }
 
+// timeSeconds is like time, for a value in epoch seconds.
+func (d *dropped) timeSeconds(path string, v json.RawMessage) time.Time {
+	n, ok, err := optionalInt64(v)
+	if err != nil || !ok {
+		if isPresent(v) {
+			d.add(path)
+		}
+		return time.Time{}
+	}
+	return time.Unix(n, 0)
+}
+
 // window decodes a window object; anything else gives the zero value.
 func (d *dropped) window(path string, v json.RawMessage) WindowLimit {
 	var w windowWire
@@ -154,7 +167,7 @@ func (d *dropped) window(path string, v json.RawMessage) WindowLimit {
 	}
 	return WindowLimit{
 		Limit: d.int(path+".limit", w.Limit), Remaining: d.int(path+".remaining", w.Remaining),
-		Used: d.int(path+".used", w.Used), Reset: d.time(path+".reset", w.Reset),
+		Used: d.int(path+".used", w.Used), Reset: d.timeSeconds(path+".reset", w.Reset),
 	}
 }
 

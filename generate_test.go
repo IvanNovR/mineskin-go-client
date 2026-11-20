@@ -14,7 +14,7 @@ import (
 
 const queueFixture = `{"success":true,"job":{"id":"job-1","status":"waiting","timestamp":1700000000000},
 "rateLimit":{"next":{"relative":500},"limit":{"limit":10,"remaining":9,
-"hour":{"limit":100,"remaining":99,"used":1,"reset":1700003600000}}},
+"hour":{"limit":100,"remaining":99,"used":1,"reset":1700003600}}},
 "usage":{"credits":{"used":2,"remaining":98}}}`
 
 func TestQueueURLSendsJSON(t *testing.T) {
@@ -48,7 +48,7 @@ func TestQueueURLSendsJSON(t *testing.T) {
 		t.Errorf("meta = %+v", got.Meta)
 	}
 	wantRL := RateLimit{NextIn: 500 * time.Millisecond, Limit: 10, Remaining: 9,
-		Hour: WindowLimit{Limit: 100, Remaining: 99, Used: 1, Reset: time.UnixMilli(1700003600000)}}
+		Hour: WindowLimit{Limit: 100, Remaining: 99, Used: 1, Reset: time.Unix(1700003600, 0)}}
 	assertRateLimit(t, got.RateLimit, wantRL)
 	if want := (Usage{CreditsUsed: 2, CreditsRemaining: 98}); got.Usage != want {
 		t.Errorf("usage = %+v, want %+v", got.Usage, want)

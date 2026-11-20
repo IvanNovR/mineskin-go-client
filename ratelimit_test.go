@@ -18,13 +18,13 @@ func TestRateLimitUnmarshalJSON(t *testing.T) {
 			name: "full object",
 			raw: `{"next":{"absolute":1700000000123,"relative":2500},"delay":{"millis":1500,"seconds":9},` +
 				`"limit":{"limit":10,"remaining":4,` +
-				`"minute":{"limit":10,"remaining":4,"used":6,"reset":1700000060000},` +
-				`"hour":{"limit":100,"remaining":90,"used":10,"reset":1700003600000}}}`,
+				`"minute":{"limit":10,"remaining":4,"used":6,"reset":1700000060},` +
+				`"hour":{"limit":100,"remaining":90,"used":10,"reset":1700003600}}}`,
 			want: RateLimit{
 				NextAt: time.UnixMilli(1700000000123), NextIn: 2500 * time.Millisecond,
 				Delay: 1500 * time.Millisecond, Limit: 10, Remaining: 4,
-				Minute: WindowLimit{Limit: 10, Remaining: 4, Used: 6, Reset: time.UnixMilli(1700000060000)},
-				Hour:   WindowLimit{Limit: 100, Remaining: 90, Used: 10, Reset: time.UnixMilli(1700003600000)},
+				Minute: WindowLimit{Limit: 10, Remaining: 4, Used: 6, Reset: time.Unix(1700000060, 0)},
+				Hour:   WindowLimit{Limit: 100, Remaining: 90, Used: 10, Reset: time.Unix(1700003600, 0)},
 			},
 		},
 		{name: "only delay seconds", raw: `{"delay":{"seconds":3}}`, want: RateLimit{Delay: 3 * time.Second}},
@@ -44,6 +44,7 @@ func TestRateLimitUnmarshalJSON(t *testing.T) {
 		{name: "wrong typed delay", raw: `{"delay":[1]}`, want: RateLimit{}},
 		{name: "deprecated flat limit only", raw: `{"limit":{"limit":10,"remaining":4}}`, want: RateLimit{Limit: 10, Remaining: 4}},
 		{name: "windows without flat fields", raw: `{"limit":{"hour":{"limit":50,"remaining":7,"used":43}}}`, want: RateLimit{Hour: WindowLimit{Limit: 50, Remaining: 7, Used: 43}}},
+		{name: "reset is epoch seconds", raw: `{"limit":{"hour":{"reset":1763600000}}}`, want: RateLimit{Hour: WindowLimit{Reset: time.Unix(1763600000, 0)}}},
 		{name: "wrong typed window", raw: `{"limit":{"minute":"x","hour":[1]}}`, want: RateLimit{}},
 		{name: "null window", raw: `{"limit":{"minute":null}}`, want: RateLimit{}},
 		{name: "wrong typed window values", raw: `{"limit":{"hour":{"limit":"x","remaining":3,"used":1.5,"reset":"soon"}}}`, want: RateLimit{Hour: WindowLimit{Remaining: 3}}},

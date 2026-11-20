@@ -283,7 +283,7 @@ func TestLiveQueueURLAndWait(t *testing.T) {
 	t.Logf("queued job: id=%s status=%s timestamp=%s (unix ms %d) eta=%s (unix ms %d)",
 		q.Job.ID, q.Job.Status, q.Job.Timestamp.UTC().Format(time.RFC3339), q.Job.Timestamp.UnixMilli(),
 		q.Job.ETA.UTC().Format(time.RFC3339), q.Job.ETA.UnixMilli())
-	// The reset values show whether the API sends epoch milliseconds.
+	// The raw values let a live run confirm the unit of the window resets (epoch seconds).
 	t.Logf("rateLimit: %+v", q.RateLimit)
 
 	skin, err := c.JobSkin(ctx, res)
